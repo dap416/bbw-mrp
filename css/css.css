@@ -1,0 +1,143 @@
+/* Site-specific overrides on top of Berry */
+
+/* Header stat items */
+.header-stat {
+	text-align: right;
+	line-height: 1.2;
+	padding: 0 10px;
+	border-right: 1px solid #e0e0e0;
+}
+
+.header-stat:last-child {
+	border-right: none;
+}
+
+.header-stat-label {
+	font-size: 0.65rem;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: #8c8c8c;
+}
+
+.header-stat-value {
+	font-size: 0.9rem;
+	font-weight: 600;
+	color: #1a1a2e;
+}
+
+.header-stat.header-stat-highlight .header-stat-value {
+	color: #4680ff;
+}
+
+/* Keep all submenus permanently open */
+.pc-navbar .pc-hasmenu .pc-submenu {
+	display: block !important;
+	height: auto !important;
+	overflow: visible !important;
+}
+
+.hidden {
+	display: none;
+}
+
+.link {
+	cursor: pointer;
+	color: #4680ff;
+}
+
+.link:hover {
+	color: #2563eb;
+	text-decoration: underline;
+}
+
+.stat-card {
+	display: inline-block;
+	background: #fff;
+	border: 1px solid #e0e0e0;
+	border-radius: 8px;
+	padding: 10px 18px;
+	margin-right: 10px;
+	margin-bottom: 10px;
+	font-size: 14px;
+}
+
+.stat-card .stat-label {
+	color: #8c8c8c;
+	font-size: 12px;
+	margin-bottom: 2px;
+}
+
+.stat-card .stat-value {
+	font-weight: 600;
+	font-size: 16px;
+	color: #1a1a2e;
+}
+
+.stat-card.stat-highlight .stat-value {
+	color: #4680ff;
+}
+
+.manage-area {
+	background-color: #f8f9fa;
+	border-top: 3px solid #4680ff;
+	border-bottom: 3px solid #4680ff;
+	padding: 20px;
+}
+
+/* Category arrow rotation */
+.category-arrow {
+	display: inline-block;
+	transition: transform 0.2s ease;
+}
+
+.category-header.cat-open .category-arrow {
+	transform: rotate(90deg);
+}
+
+/* Expanded category rows — tint + left border accent */
+.category-row.cat-active > td,
+.category-row.cat-active > th {
+	background-color: #f5f7ff;
+}
+
+.category-row.cat-active > td:first-child,
+.category-row.cat-active > th:first-child {
+	border-left: 3px solid #4680ff;
+	padding-left: 18px;
+}
+
+/* Indent data rows (not the column-header row) */
+.category-row.cat-active:not(.table-light) > td:first-child {
+	padding-left: 24px;
+}
+
+/* Column header row inside expanded category */
+.category-row.cat-active.table-light > th {
+	background-color: #dde5ff;
+	color: #3a57c9;
+	font-size: 0.75rem;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	padding-top: 5px;
+	padding-bottom: 5px;
+}
+
+/* Compact part data rows */
+.category-row.cat-active:not(.table-light) > td {
+	padding-top: 5px;
+	padding-bottom: 5px;
+}
+
+/* Sticky category header when open */
+.category-header.cat-open > td:first-child {
+	border-left: 3px solid #4680ff;
+}
+
+.category-header.cat-open > td {
+	position: sticky;
+	top: 74px;
+	z-index: 10;
+	background-color: #fffbe6;
+	box-shadow: 0 2px 6px rgba(255, 193, 7, 0.15);
+}
+

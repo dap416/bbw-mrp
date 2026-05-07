@@ -1,0 +1,10 @@
+vendor/
+error_log
+.claude/
+includes/config.local.php
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

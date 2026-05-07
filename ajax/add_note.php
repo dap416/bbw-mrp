@@ -1,0 +1,12 @@
+<?php
+
+	require_once(__DIR__."/../includes/fns.php");
+
+	$dbLink = $mysqli = db_connect();
+
+	extract($_POST);
+
+	$now = date("Y-m-d H:i:s");
+
+	$dbLink->query("INSERT INTO `notes` (`date`,`ordid`,`note`) VALUES ('$now','$record','$note')");
+	echo date("m/d/y", strtotime($now)) . " - " . htmlspecialchars($note);
