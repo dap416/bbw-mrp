@@ -94,6 +94,15 @@
         </li>
         <?php } ?>
 
+        <?php if (has_access('build')) { ?>
+        <li class="pc-item">
+          <a href="/build.php" class="pc-link">
+            <span class="pc-micon"><i class="ti ti-box"></i></span>
+            <span class="pc-mtext">Packaging</span>
+          </a>
+        </li>
+        <?php } ?>
+
         <?php if (has_access('products')) { ?>
         <li class="pc-item">
           <a href="/products.php" class="pc-link">
@@ -104,12 +113,6 @@
         <?php } ?>
 
         <?php if (has_access('build')) { ?>
-        <li class="pc-item">
-          <a href="/build.php" class="pc-link">
-            <span class="pc-micon"><i class="ti ti-box"></i></span>
-            <span class="pc-mtext">Packaging</span>
-          </a>
-        </li>
         <li class="pc-item">
           <a href="/physical_inventory.php" class="pc-link">
             <span class="pc-micon"><i class="ti ti-clipboard-list"></i></span>
