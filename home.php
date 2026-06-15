@@ -33,12 +33,26 @@
 	$openOrders = (int)$db->query("SELECT COUNT(*) AS v FROM orders WHERE qty > recqty")->fetch()['v'];
 
 	// ── 1. ORDER RECOMMENDATIONS ──────────────────────────────────────────────
+	// ── BATCH PREFETCH for recommendation loops (avoids per-part N+1) ──
+	$ooUnposted = []; // on-order for orders not yet posted (postdate 0000-00-00)
+	foreach ($db->query("SELECT `partid`, SUM(`qty`)-SUM(`recqty`) AS v FROM `orders` WHERE `postdate` LIKE '0000-00-00%' GROUP BY `partid`") as $r) {
+		$ooUnposted[$r['partid']] = $r['v'];
+	}
+	$ooAny = []; // on-order across all orders for a part
+	foreach ($db->query("SELECT `partid`, SUM(`qty`)-SUM(`recqty`) AS v FROM `orders` GROUP BY `partid`") as $r) {
+		$ooAny[$r['partid']] = $r['v'];
+	}
+	$partsByNo = []; // full part row keyed by partno (for CS-* lookups)
+	foreach ($db->query("SELECT * FROM `parts`") as $r) {
+		$partsByNo[$r['partno']] = $r;
+	}
+
 	// ── CAMSHAFTS (CS-*) — same logic as stock_calc.php ─────────────────────
 	$recCams = []; $totalCamCount = 0; $cardArray = [];
 	$camsQ = $db->query("SELECT * FROM `parts` WHERE `partno` LIKE 'CS-%' ORDER BY `partno`");
 	while ($cam = $camsQ->fetch()) {
 		$camId  = $cam['id']; $camMOQ = max(1, (int)$cam['imoq']);
-		$camOO  = max(0, (float)($db->query("SELECT SUM(`qty`)-SUM(`recqty`) AS v FROM `orders` WHERE `partid`='$camId' AND `postdate` LIKE '0000-00-00%'")->fetch()['v'] ?? 0));
+		$camOO  = max(0, (float)($ooUnposted[$camId] ?? 0));
 		$toOrder = $cam['bsl'] - $cam['qoh'] - $camOO - $cam['omit'];
 		if ($toOrder > 0) {
 			$rounded = (floor($toOrder / $camMOQ) + 1) * $camMOQ;
@@ -95,13 +109,13 @@
 	$cardsQ = $db->query("SELECT * FROM `parts` WHERE `partno` LIKE 'CD-%' ORDER BY `partno` ASC");
 	while ($card = $cardsQ->fetch()) {
 		$partId = $card['id'];
-		$cardOO = (float)($db->query("SELECT COALESCE(SUM(`qty`)-SUM(`recqty`),0) AS v FROM `orders` WHERE `partid`='$partId'")->fetch()['v'] ?? 0);
+		$cardOO = (float)($ooAny[$partId] ?? 0);
 		if ($cardOO < 0) $cardOO = 0;
 		$camCode  = substr($card['partno'], 3);
-		$camInfo2 = $db->query("SELECT * FROM `parts` WHERE `partno`='CS-$camCode'")->fetch();
+		$camInfo2 = $partsByNo["CS-$camCode"] ?? false;
 		if (!$camInfo2) continue;
 		$camId2  = $camInfo2['id'];
-		$camOO2  = (float)($db->query("SELECT COALESCE(SUM(`qty`)-SUM(`recqty`),0) AS v FROM `orders` WHERE `partid`='$camId2'")->fetch()['v'] ?? 0);
+		$camOO2  = (float)($ooAny[$camId2] ?? 0);
 		$camEff2 = $camInfo2['qoh'] + $camOO2 + ($cardArray[$camId2] ?? 0);
 		$cardNeed = $camEff2 - ($card['qoh'] + $cardOO) - $camInfo2['omit'];
 		if ($cardNeed > 0) {
@@ -115,7 +129,7 @@
 	$amazonQ = $db->query("SELECT * FROM `parts` WHERE `partno` LIKE 'CDA-%' ORDER BY `partno` ASC");
 	while ($ac = $amazonQ->fetch()) {
 		$acMOQ = max(1, (int)($ac['imoq'] ?: 1000));
-		$acOO  = max(0, (float)($db->query("SELECT COALESCE(SUM(`qty`)-SUM(`recqty`),0) AS v FROM `orders` WHERE `partid`='{$ac['id']}'")->fetch()['v'] ?? 0));
+		$acOO  = max(0, (float)($ooAny[$ac['id']] ?? 0));
 		$acNeed = $ac['bsl'] - $ac['qoh'] - $acOO;
 		if ($acNeed > 0) {
 			$rounded = (floor($acNeed / $acMOQ) + 1) * $acMOQ;
@@ -210,19 +224,31 @@
 
 	// ── MONTHLY BUILD DEMAND ──────────────────────────────────────────────────
 	$buildLabels = []; $buildData = [];
+	$buildByMo = [];
+	foreach ($db->query("SELECT DATE_FORMAT(date,'%Y-%m') AS mo, COALESCE(SUM(ABS(qty)),0) AS v FROM trans WHERE type='BUILD' GROUP BY mo") as $r) {
+		$buildByMo[$r['mo']] = (int)$r['v'];
+	}
 	for ($i = 11; $i >= 0; $i--) {
 		$mo = date('Y-m', strtotime("-$i months"));
 		$buildLabels[] = date('M y', strtotime("-$i months"));
-		$buildData[] = (int)$db->query("SELECT COALESCE(SUM(ABS(qty)),0) AS v FROM trans WHERE type='BUILD' AND DATE_FORMAT(date,'%Y-%m')='$mo'")->fetch()['v'];
+		$buildData[] = $buildByMo[$mo] ?? 0;
 	}
 
 	// ── MONTHLY ORDERS vs PAYMENTS ────────────────────────────────────────────
 	$finLabels = []; $ordData = []; $payData = [];
+	$ordByMo = [];
+	foreach ($db->query("SELECT DATE_FORMAT(orderdate,'%Y-%m') AS mo, COALESCE(SUM(ordval),0) AS v FROM orders GROUP BY mo") as $r) {
+		$ordByMo[$r['mo']] = (float)$r['v'];
+	}
+	$payByMo = [];
+	foreach ($db->query("SELECT DATE_FORMAT(date,'%Y-%m') AS mo, COALESCE(SUM(amount),0) AS v FROM payments GROUP BY mo") as $r) {
+		$payByMo[$r['mo']] = (float)$r['v'];
+	}
 	for ($i = 11; $i >= 0; $i--) {
 		$mo = date('Y-m', strtotime("-$i months"));
 		$finLabels[] = date('M y', strtotime("-$i months"));
-		$ordData[] = (float)$db->query("SELECT COALESCE(SUM(ordval),0) AS v FROM orders WHERE DATE_FORMAT(orderdate,'%Y-%m')='$mo'")->fetch()['v'];
-		$payData[] = (float)$db->query("SELECT COALESCE(SUM(amount),0) AS v FROM payments WHERE DATE_FORMAT(date,'%Y-%m')='$mo'")->fetch()['v'];
+		$ordData[] = $ordByMo[$mo] ?? 0.0;
+		$payData[] = $payByMo[$mo] ?? 0.0;
 	}
 
 	// ── INVENTORY VALUE BY CATEGORY ───────────────────────────────────────────
