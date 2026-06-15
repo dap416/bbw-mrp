@@ -215,6 +215,50 @@
 			$grouped[$cat][] = $part;
 		}
 
+		// ── BATCH PREFETCH (avoids per-part N+1 queries inside the render loop) ──
+		$prefetchTwelveAgo = date("Y-m-d H:i:s", strtotime("12 months ago"));
+
+		// Manufacturers (once, reused for every part's dropdown + name lookup)
+		$allMfgs = $dbLink->query("SELECT `id`,`name` FROM `manufacturers` ORDER BY `name` ASC")->fetchAll();
+		$mfgNameMap = [];
+		foreach ($allMfgs as $m) { $mfgNameMap[$m['id']] = $m['name']; }
+
+		// On-order qty per part
+		$ooMap = [];
+		foreach ($dbLink->query("SELECT `partid`, SUM(`qty` - `recqty`) AS `oo` FROM `orders` WHERE `qty` > `recqty` GROUP BY `partid`") as $r) {
+			$ooMap[$r['partid']] = $r['oo'];
+		}
+
+		// 12-month BUILD demand per part
+		$demandMap = [];
+		foreach ($dbLink->query("SELECT `partid`, SUM(`qty`) AS `demand` FROM `trans` WHERE `type` = 'BUILD' AND `date` > '$prefetchTwelveAgo' GROUP BY `partid`") as $r) {
+			$demandMap[$r['partid']] = $r['demand'];
+		}
+
+		// Monthly BUILD totals per part (for the per-part chart)
+		$buildMonthMap = [];
+		foreach ($dbLink->query("SELECT `partid`, DATE_FORMAT(`date`, '%Y-%m') AS `mo`, SUM(`qty`) AS `qty` FROM `trans` WHERE `type` = 'BUILD' AND `date` > '$prefetchTwelveAgo' GROUP BY `partid`, `mo`") as $r) {
+			$buildMonthMap[$r['partid']][$r['mo']] = $r['qty'];
+		}
+
+		// Per-warehouse qty per part
+		$whQtyAll = [];
+		foreach ($dbLink->query("SELECT `part_id`, `warehouse_id`, `qty` FROM `part_warehouse_qty`") as $r) {
+			$whQtyAll[$r['part_id']][$r['warehouse_id']] = (int)$r['qty'];
+		}
+
+		// Last 20 transactions per part (single query, capped per part in PHP)
+		$transMap = [];
+		foreach ($dbLink->query("SELECT t.*, u.name AS user_name, w.name AS wh_name
+			FROM `trans` t
+			LEFT JOIN `users` u ON t.user_id = u.id
+			LEFT JOIN `warehouses` w ON w.id = t.warehouse_id
+			ORDER BY t.`partid` ASC, t.`date` DESC") as $r) {
+			$pid = $r['partid'];
+			if (!isset($transMap[$pid])) { $transMap[$pid] = []; }
+			if (count($transMap[$pid]) < 20) { $transMap[$pid][] = $r; }
+		}
+
 		// Define display order
 		$categoryOrder = ['Camshafts', 'Package Cards', 'Packaging', 'Rods', 'Splash Plates'];
 
@@ -262,10 +306,8 @@
 		<?php foreach ($grouped[$categoryName] as $part) {
 			extract($part);
 			$extVal = number_format($cost * $qoh, 2);
-			$onOrder = $dbLink->query("SELECT SUM(`qty` - `recqty`) AS `onorder` FROM `orders` WHERE `partid` = '$id' AND (`qty` > `recqty`)")->fetch()['onorder'] ?? 0;
-			$mfgOptions = $dbLink->query("SELECT `id`,`name` FROM `manufacturers` ORDER BY `name` ASC");
-			$mfgRow = $dbLink->query("SELECT `name` FROM `manufacturers` WHERE `id` = '$manufacturer'")->fetch();
-			$mfgName = $mfgRow['name'] ?? '';
+			$onOrder = $ooMap[$id] ?? 0;
+			$mfgName = $mfgNameMap[$manufacturer] ?? '';
 		?>
 
 			<tr class="category-row category-row-<?php echo $catSlug; ?>" action="showTrans" record="<?php echo $id; ?>" style="display:none; cursor:pointer;">
@@ -288,7 +330,7 @@
 			<?php
 			// GET BUILD HISTORY
 			$twelveMonthsAgo = date("Y-m-d H:i:s", strtotime("12 months ago"));
-			$twelveDemand = $dbLink->query("SELECT SUM(`qty`) AS `demand` FROM `trans` WHERE `type` = 'BUILD' AND `partid` = '$id' AND `date` > '$twelveMonthsAgo'")->fetch()['demand'] ?? 0;
+			$twelveDemand = $demandMap[$id] ?? 0;
 			$twelveDemand = $twelveDemand * -1;
 
 			// MONTHLY BUILD DATA FOR CHART
@@ -298,10 +340,9 @@
 				$chartMonthLabels[] = date('M Y', strtotime("-$i months"));
 				$chartMonthData[date('Y-m', strtotime("-$i months"))] = 0;
 			}
-			$buildByMonth = $dbLink->query("SELECT DATE_FORMAT(`date`, '%Y-%m') AS `mo`, SUM(`qty`) AS `qty` FROM `trans` WHERE `type` = 'BUILD' AND `partid` = '$id' AND `date` > '$twelveMonthsAgo' GROUP BY `mo`");
-			while ($row = $buildByMonth->fetch()) {
-				if (isset($chartMonthData[$row['mo']])) {
-					$chartMonthData[$row['mo']] = abs($row['qty']);
+			foreach (($buildMonthMap[$id] ?? []) as $mo => $moQty) {
+				if (isset($chartMonthData[$mo])) {
+					$chartMonthData[$mo] = abs($moQty);
 				}
 			}
 			// FUTURE DEMAND CHART — three linked lines:
@@ -412,7 +453,7 @@
 						</div>
 
 						<?php
-						$whQtysAdj = $dbLink->query("SELECT pwq.warehouse_id, pwq.qty FROM part_warehouse_qty pwq WHERE pwq.part_id = '$id'")->fetchAll(PDO::FETCH_KEY_PAIR);
+						$whQtysAdj = $whQtyAll[$id] ?? [];
 						$whQtysAdjJson = htmlspecialchars(json_encode($whQtysAdj), ENT_QUOTES);
 						$firstWH = $warehouses[0] ?? null;
 						$firstWHQty = $firstWH ? ((int)($whQtysAdj[$firstWH['id']] ?? 0)) : $qoh;
@@ -481,7 +522,7 @@
 							</div>
 							<select id="<?php echo $id; ?>editManufacturer" class="form-select form-select-sm" style="width:220px">
 								<option value="0">No Manufacturer</option>
-								<?php while($mfgOpt = $mfgOptions->fetch()) { ?>
+								<?php foreach($allMfgs as $mfgOpt) { ?>
 								<option value="<?php echo $mfgOpt['id']; ?>" <?php echo ((int)$manufacturer === (int)$mfgOpt['id']) ? 'selected' : ''; ?>><?php echo htmlspecialchars($mfgOpt['name']); ?></option>
 								<?php } ?>
 							</select>
@@ -542,11 +583,7 @@
 
 			<!-- Per-warehouse qty breakdown -->
 			<?php
-			$whQtys = $dbLink->query("SELECT pwq.warehouse_id, pwq.qty, w.name AS wh_name
-			    FROM part_warehouse_qty pwq JOIN warehouses w ON w.id = pwq.warehouse_id
-			    WHERE pwq.part_id = '$id' ORDER BY w.name ASC")->fetchAll();
-			$whQtyMap = [];
-			foreach ($whQtys as $wq) { $whQtyMap[$wq['warehouse_id']] = (int)$wq['qty']; }
+			$whQtyMap = $whQtyAll[$id] ?? [];
 			?>
 			<?php if (count($warehouses) > 1): ?>
 			<div class="mt-3 mb-2">
@@ -595,13 +632,7 @@
 
 			<?php
 
-			$trans = $dbLink->query("SELECT t.*, u.name AS user_name, w.name AS wh_name
-			    FROM `trans` t
-			    LEFT JOIN `users` u ON t.user_id = u.id
-			    LEFT JOIN `warehouses` w ON w.id = t.warehouse_id
-			    WHERE t.`partid` = '$id' ORDER BY t.`date` DESC LIMIT 0,20");
-
-			while($transrecord = $trans->fetch()) {
+			foreach (($transMap[$id] ?? []) as $transrecord) {
 
 				$transType = $transrecord['type'];
 				$transDate = date("m/d/y", strtotime($transrecord['date']));
