@@ -88,6 +88,21 @@
 	")->fetchAll();
 
 	// Build materials array from picks
+	// Prefetch all build lines for the picked products in one query (avoids per-pick N+1)
+	$buildLinesByProd = [];
+	$pickProdIds = array_values(array_unique(array_map(fn($l) => (int)$l['prodid'], $picks)));
+	if (!empty($pickProdIds)) {
+		$inList = implode(',', $pickProdIds);
+		foreach ($db->query("
+			SELECT b.*, p.partno, p.`desc`
+			FROM build b JOIN parts p ON p.id = b.partid
+			WHERE b.prodid IN ($inList)
+			ORDER BY b.prodid ASC, p.partno ASC
+		") as $bl) {
+			$buildLinesByProd[$bl['prodid']][] = $bl;
+		}
+	}
+
 	$compArray   = [];
 	$pickSummary = [];
 	foreach ($picks as $line) {
@@ -95,12 +110,7 @@
 		$prodName = $line['prodname'];
 		$pickSummary[$prodName] = ($pickSummary[$prodName] ?? 0) + $pickQty;
 
-		$buildLines = $db->query("
-			SELECT b.*, p.partno, p.`desc`
-			FROM build b JOIN parts p ON p.id = b.partid
-			WHERE b.prodid = '{$line['prodid']}'
-			ORDER BY p.partno ASC
-		")->fetchAll();
+		$buildLines = $buildLinesByProd[$line['prodid']] ?? [];
 		foreach ($buildLines as $bl) {
 			$pid = $bl['partid'];
 			$compArray[$pid]['partno'] = $bl['partno'];

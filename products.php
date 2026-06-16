@@ -9,7 +9,12 @@
 
 	$products = $dbLink->query("SELECT * FROM `products` ORDER BY `name` ASC");
 
-	$parts = $dbLink->query("SELECT * FROM `parts` ORDER BY `partno` ASC");
+	// ── BATCH PREFETCH (avoids per-product N+1 queries inside the loop) ──
+	$allPartsList = $dbLink->query("SELECT * FROM `parts` ORDER BY `partno` ASC")->fetchAll();
+	$partCostById = [];
+	foreach ($allPartsList as $p) { $partCostById[$p['id']] = $p['cost']; }
+	$buildByProd = [];
+	foreach ($dbLink->query("SELECT * FROM `build`") as $b) { $buildByProd[$b['prodid']][] = $b; }
 
 	?>
 
@@ -61,17 +66,13 @@
 			<td>
 				<?php
 			
-					$parts = $dbLink->query("SELECT * FROM `build` WHERE `prodid` = '$prodId'");
-
 					$totalCost = false;
 
-					while($part = $parts->fetch()) {
+					foreach (($buildByProd[$prodId] ?? []) as $part) {
 
 						$partId = $part['partid'];
 
-						$partInfo = $dbLink->query("SELECT * FROM `parts` WHERE `id` = '$partId'")->fetch();
-
-						$partCost = $partInfo['cost'];
+						$partCost = $partCostById[$partId] ?? null;
 
 						$totalCost += $partCost;
 
@@ -106,8 +107,7 @@
 						<select action="addCompSelect" record="<?php echo $prodId; ?>" class="form-select form-select-sm">
 							<option value="">Add Component...</option>
 							<?php
-							$parts = $dbLink->query("SELECT * FROM `parts` ORDER BY `partno` ASC");
-							while($part = $parts->fetch()) { ?>
+							foreach ($allPartsList as $part) { ?>
 							<option value="<?php echo $part['id']; ?>"><?php echo $part['partno'].' - '.$part['desc']; ?></option>
 							<?php } ?>
 						</select>
