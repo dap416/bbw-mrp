@@ -21,6 +21,43 @@
 		$pausedIds = array_values(array_filter(array_map('intval', explode(',', $_GET['paused']))));
 	}
 
+	// ── BATCH PREFETCH (avoids per-part N+1 queries inside the order loops) ──
+	$pfTwelveAgo = date("Y-m-d H:i:s", strtotime("12 months ago"));
+	$pfSixAgo    = date("Y-m-d H:i:s", strtotime("6 months ago"));
+
+	$ooUnposted = []; // on-order for orders not yet posted (cams)
+	foreach ($dbLink->query("SELECT `partid`, SUM(`qty`)-SUM(`recqty`) AS v FROM `orders` WHERE `postdate` LIKE '0000-00-00%' GROUP BY `partid`") as $r) {
+		$ooUnposted[$r['partid']] = $r['v'];
+	}
+	$ooPositive = []; // on-order summing only orders with positive remaining (plates/packaging)
+	foreach ($dbLink->query("SELECT `partid`, SUM(`qty`-`recqty`) AS v FROM `orders` WHERE (`qty`-`recqty`) > 0 GROUP BY `partid`") as $r) {
+		$ooPositive[$r['partid']] = $r['v'];
+	}
+	$ooAny = []; // on-order across all orders for a part (cards/amazon)
+	foreach ($dbLink->query("SELECT `partid`, SUM(`qty`)-SUM(`recqty`) AS v FROM `orders` GROUP BY `partid`") as $r) {
+		$ooAny[$r['partid']] = $r['v'];
+	}
+	$demand12 = []; // 12-month BUILD demand per part
+	foreach ($dbLink->query("SELECT `partid`, SUM(`qty`) AS demand FROM `trans` WHERE `type`='BUILD' AND `date` > '$pfTwelveAgo' GROUP BY `partid`") as $r) {
+		$demand12[$r['partid']] = $r['demand'];
+	}
+	$demand6 = []; // 6-month BUILD demand per part
+	foreach ($dbLink->query("SELECT `partid`, SUM(`qty`) AS demand FROM `trans` WHERE `type`='BUILD' AND `date` > '$pfSixAgo' GROUP BY `partid`") as $r) {
+		$demand6[$r['partid']] = $r['demand'];
+	}
+	$buildYears = []; // distinct calendar years with BUILD activity per part
+	foreach ($dbLink->query("SELECT `partid`, COUNT(DISTINCT YEAR(`date`)) AS y FROM `trans` WHERE `type`='BUILD' GROUP BY `partid`") as $r) {
+		$buildYears[$r['partid']] = $r['y'];
+	}
+	$buildByMonth = []; // per-part monthly BUILD demand (SUM*-1) keyed by month number
+	foreach ($dbLink->query("SELECT `partid`, MONTH(`date`) AS mo, SUM(`qty`)*-1 AS demand FROM `trans` WHERE `type`='BUILD' GROUP BY `partid`, MONTH(`date`)") as $r) {
+		$buildByMonth[$r['partid']][(int)$r['mo']] = $r['demand'];
+	}
+	$partsByNo = []; // full part row keyed by partno (for CS-* lookups in cards loop)
+	foreach ($dbLink->query("SELECT * FROM `parts`") as $r) {
+		$partsByNo[$r['partno']] = $r;
+	}
+
 ?>
 
 <div class="mb-4 d-flex align-items-center justify-content-between">
@@ -66,16 +103,11 @@
 		$camMOQ  = $cam['imoq'];
 		$camOmit = $cam['omit'];
 
-		$onOrder = $dbLink->query("SELECT SUM(`qty`) - SUM(`recqty`) AS `onorder` FROM `orders` WHERE `partid` = '$camId' AND `postdate` LIKE '0000-00-00%'")->fetch();
-		$onOrder = max(0, $onOrder['onorder'] ?? 0);
+		$onOrder = max(0, $ooUnposted[$camId] ?? 0);
 
-		$twelveMonthsAgo = date("Y-m-d H:i:s", strtotime("12 months ago"));
-		$twelveDemand = $dbLink->query("SELECT SUM(`qty`) AS `demand` FROM `trans` WHERE `type` = 'BUILD' AND `partid` = '$camId' AND `date` > '$twelveMonthsAgo'")->fetch();
-		$twelveDemand = ($twelveDemand['demand'] ?? 0) * -1;
+		$twelveDemand = ($demand12[$camId] ?? 0) * -1;
 
-		$sixMonthsAgo = date("Y-m-d H:i:s", strtotime("6 months ago"));
-		$sixDemand = $dbLink->query("SELECT SUM(`qty`) AS `demand` FROM `trans` WHERE `type` = 'BUILD' AND `partid` = '$camId' AND `date` > '$sixMonthsAgo'")->fetch();
-		$sixDemand = ($sixDemand['demand'] ?? 0) * -1;
+		$sixDemand = ($demand6[$camId] ?? 0) * -1;
 
 		$toOrder = $camBSL - $camOH - $onOrder;
 
@@ -111,13 +143,11 @@
 		$windowDays    = $camLeadTime + $safetyBuffer;
 		$monthsFwd     = $windowDays / 30.0;
 
-		$camYrs = $dbLink->query("SELECT COUNT(DISTINCT YEAR(`date`)) AS `y` FROM `trans` WHERE `type`='BUILD' AND `partid`='$camId'")->fetch();
-		$camNumYears = max(1, (int)($camYrs['y'] ?? 1));
+		$camNumYears = max(1, (int)($buildYears[$camId] ?? 1));
 
-		$camMonthQ = $dbLink->query("SELECT MONTH(`date`) AS `mo`, SUM(`qty`)*-1 AS `demand` FROM `trans` WHERE `type`='BUILD' AND `partid`='$camId' GROUP BY MONTH(`date`)");
 		$avgByMonth = array_fill(1, 12, 0.0);
-		while ($mrow = $camMonthQ->fetch()) {
-			$avgByMonth[(int)$mrow['mo']] = (float)$mrow['demand'] / $camNumYears;
+		foreach (($buildByMonth[$camId] ?? []) as $mo => $moDemand) {
+			$avgByMonth[(int)$mo] = (float)$moDemand / $camNumYears;
 		}
 
 		$projection = [];
@@ -322,15 +352,11 @@
 		$ppWindowDays = $ppLeadTime + $safetyBuffer;
 		$ppMonthsFwd  = $ppWindowDays / 30.0;
 
-		$ppOO = max(0, (float)($dbLink->query("SELECT SUM(`qty` - `recqty`) AS `v` FROM `orders` WHERE `partid` = '$ppId' AND (`qty` - `recqty`) > 0")->fetch()['v'] ?? 0));
+		$ppOO = max(0, (float)($ooPositive[$ppId] ?? 0));
 
-		$ppTwelveMonthsAgo = date("Y-m-d H:i:s", strtotime("12 months ago"));
-		$ppTwelveDemand = $dbLink->query("SELECT SUM(`qty`) AS `demand` FROM `trans` WHERE `type` = 'BUILD' AND `partid` = '$ppId' AND `date` > '$ppTwelveMonthsAgo'")->fetch();
-		$ppTwelveDemand = ($ppTwelveDemand['demand'] ?? 0) * -1;
+		$ppTwelveDemand = ($demand12[$ppId] ?? 0) * -1;
 
-		$ppSixMonthsAgo = date("Y-m-d H:i:s", strtotime("6 months ago"));
-		$ppSixDemand = $dbLink->query("SELECT SUM(`qty`) AS `demand` FROM `trans` WHERE `type` = 'BUILD' AND `partid` = '$ppId' AND `date` > '$ppSixMonthsAgo'")->fetch();
-		$ppSixDemand = ($ppSixDemand['demand'] ?? 0) * -1;
+		$ppSixDemand = ($demand6[$ppId] ?? 0) * -1;
 
 		$ppToOrder = $ppBSL - $ppQOH - $ppOO;
 		$ppToOrderRounded = 0;
@@ -352,13 +378,11 @@
 		}
 
 		// Seasonal breakdown for explain row
-		$ppYrs = $dbLink->query("SELECT COUNT(DISTINCT YEAR(`date`)) AS `y` FROM `trans` WHERE `type`='BUILD' AND `partid`='$ppId'")->fetch();
-		$ppNumYears = max(1, (int)($ppYrs['y'] ?? 1));
+		$ppNumYears = max(1, (int)($buildYears[$ppId] ?? 1));
 
-		$ppMonthQ = $dbLink->query("SELECT MONTH(`date`) AS `mo`, SUM(`qty`)*-1 AS `demand` FROM `trans` WHERE `type`='BUILD' AND `partid`='$ppId' GROUP BY MONTH(`date`)");
 		$ppAvgByMonth = array_fill(1, 12, 0.0);
-		while ($mrow = $ppMonthQ->fetch()) {
-			$ppAvgByMonth[(int)$mrow['mo']] = (float)$mrow['demand'] / $ppNumYears;
+		foreach (($buildByMonth[$ppId] ?? []) as $mo => $moDemand) {
+			$ppAvgByMonth[(int)$mo] = (float)$moDemand / $ppNumYears;
 		}
 
 		$ppProjection = [];
@@ -604,17 +628,17 @@
 		$partNum  = $card['partno'];
 		$partDesc = $card['desc'];
 
-		$cardOO = $dbLink->query("SELECT SUM(`qty`) - SUM(`recqty`) AS `v` FROM `orders` WHERE `partid` = '$partId'")->fetch()['v'] ?? 0;
+		$cardOO = $ooAny[$partId] ?? 0;
 		if (!$cardOO) $cardOO = 0;
 		$cardEffective = $cardOH + $cardOO;
 
 		$camCode   = substr($partNum, 3);
 		$camPartNum = "CS-" . $camCode;
-		$camInfo   = $dbLink->query("SELECT * FROM `parts` WHERE `partno` = '$camPartNum'")->fetch();
+		$camInfo   = $partsByNo[$camPartNum] ?? false;
 		$camOH     = $camInfo['qoh'] ?? 0;
 		$camId     = $camInfo['id'] ?? null;
 		$camOmit   = $camInfo['omit'] ?? 0;
-		$camOO     = $camId ? ($dbLink->query("SELECT SUM(`qty`) - SUM(`recqty`) AS `v` FROM `orders` WHERE `partid` = '$camId'")->fetch()['v'] ?? 0) : 0;
+		$camOO     = $camId ? ($ooAny[$camId] ?? 0) : 0;
 		$camEffective = $camOH + $camOO + ($cardArray[$camId] ?? 0);
 
 		$cardOrder = $camEffective - $cardEffective - $camOmit;
@@ -696,7 +720,7 @@
 		$acDesc = $ac['desc'];
 		$acMOQ  = $ac['imoq'] ?: 1000;
 
-		$acOO = (float)($dbLink->query("SELECT SUM(`qty`) - SUM(`recqty`) AS `v` FROM `orders` WHERE `partid` = '$acId'")->fetch()['v'] ?? 0);
+		$acOO = (float)($ooAny[$acId] ?? 0);
 		if ($acOO < 0) $acOO = 0;
 
 		$acToOrder = $acBSL - $acOH - $acOO;
