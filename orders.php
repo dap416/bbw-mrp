@@ -108,6 +108,16 @@
 
 			<?php
 
+			// ── BATCH PREFETCH (avoids per-order N+1 queries inside the loop) ──
+			$partsById = [];
+			foreach ($dbLink->query("SELECT * FROM `parts`") as $r) { $partsById[$r['id']] = $r; }
+			$notesByOrder = [];
+			foreach ($dbLink->query("SELECT * FROM `notes` ORDER BY `date` DESC") as $r) { $notesByOrder[$r['ordid']][] = $r; }
+			$paymentsByOrder = [];
+			foreach ($dbLink->query("SELECT * FROM `payments` ORDER BY `date` DESC") as $r) { $paymentsByOrder[$r['ordid']][] = $r; }
+			$postByOrder = [];
+			foreach ($dbLink->query("SELECT * FROM `ordpost` ORDER BY `date` DESC") as $r) { $postByOrder[$r['ordid']][] = $r; }
+
 			$openOrders = $dbLink->query("SELECT * FROM `orders` WHERE `postdate` = '0000-00-00 00:00:00' AND `recqty` < `qty` ORDER BY `orderdate` ASC");
 
 			if ($openOrders->rowCount() === 0) {
@@ -118,7 +128,7 @@
 
 				$partId = $order['partid'];
 				$orderId = $order['id'];
-				$partInfo = $dbLink->query("SELECT * FROM `parts` WHERE `id` = '$partId'")->fetch();
+				$partInfo = $partsById[$partId] ?? [];
 				$partName = $partInfo['partno'].' - '.$partInfo['desc'];
 				$orderQty = $order['qty'];
 				$recQty = $order['recqty'];
@@ -211,8 +221,7 @@
 									<div class="fw-semibold small text-muted mb-1">Notes</div>
 									<div id="<?php echo $orderId; ?>notesList" class="small">
 									<?php
-									$notes = $dbLink->query("SELECT * FROM `notes` WHERE `ordid` = '$orderId' ORDER BY `date` DESC");
-									while ($note = $notes->fetch()) {
+									foreach (($notesByOrder[$orderId] ?? []) as $note) {
 										echo '<div>'.date("m/d/y", strtotime($note['date'])).' — '.htmlspecialchars($note['note']).'</div>';
 									}
 									?>
@@ -224,8 +233,7 @@
 									<div class="fw-semibold small text-muted mb-1">Payments</div>
 									<div class="small" id="<?php echo $orderId; ?>paymentsList">
 									<?php
-									$payments = $dbLink->query("SELECT * FROM `payments` WHERE `ordid` = '$orderId' ORDER BY `date` DESC");
-									while ($payment = $payments->fetch()) {
+									foreach (($paymentsByOrder[$orderId] ?? []) as $payment) {
 										echo '<div>'.date("m/d/y", strtotime($payment['date'])).' — $'.$payment['amount'].' — '.$payment['ref'].'</div>';
 									}
 									?>
@@ -237,11 +245,11 @@
 									<div class="fw-semibold small text-muted mb-1">Shipments Received</div>
 									<div class="small" id="<?php echo $orderId; ?>shipmentsList">
 									<?php
-									$received = $dbLink->query("SELECT * FROM `ordpost` WHERE `ordid` = '$orderId' ORDER BY `date` DESC");
-									if ($received->rowCount() === 0) {
+									$orderPostings = $postByOrder[$orderId] ?? [];
+									if (count($orderPostings) === 0) {
 										echo '<em class="text-muted">No shipments posted yet.</em>';
 									}
-									while ($posting = $received->fetch()) {
+									foreach ($orderPostings as $posting) {
 										echo '<div class="d-flex align-items-center gap-2 mb-1">'.
 											'<span>'.date("m/d/y", strtotime($posting['date'])).' — QTY: '.$posting['qty'].' — '.$posting['ref'].'</span>'.
 											'<button class="btn btn-outline-danger btn-sm py-0 px-1 undo-shipment" style="font-size:0.7rem;line-height:1.4;" data-postid="'.$posting['id'].'" data-orderid="'.$orderId.'">Undo</button>'.
