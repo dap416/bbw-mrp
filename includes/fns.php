@@ -58,6 +58,11 @@
 					PDO::ATTR_EMULATE_PREPARES   => false,
 				]
 			);
+			// This app was built for MySQL's legacy permissive mode and stores
+			// '0000-00-00 00:00:00' zero-dates throughout. Clear sql_mode so a
+			// server running in strict / NO_ZERO_DATE mode does not reject those
+			// values (which otherwise throws "Incorrect DATETIME value" fatals).
+			$pdo->exec("SET SESSION sql_mode = ''");
 			// Sync MySQL session timezone to Pacific Time (handles DST)
 			$offsetSec = (new DateTimeZone('America/Los_Angeles'))->getOffset(new DateTime('now', new DateTimeZone('UTC')));
 			$sign      = $offsetSec >= 0 ? '+' : '-';

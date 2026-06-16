@@ -1,9 +1,4 @@
 <?php
-	// TEMP DIAGNOSTIC — surface any runtime error on the Packaging page. Remove after debugging.
-	ini_set('display_errors', 1);
-	ini_set('display_startup_errors', 1);
-	error_reporting(E_ALL);
-
 	require_once(__DIR__."/includes/fns.php");
 	require_login();
 	if (!has_access('build')) {
