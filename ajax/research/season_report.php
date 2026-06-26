@@ -10,11 +10,6 @@
 
 	header('Content-Type: application/json');
 
-	if (!anthropic_is_configured()) {
-		echo json_encode(['error' => 'No Anthropic API key configured. Add one on the Integrations page.']);
-		exit;
-	}
-
 	try {
 		$db = db_connect();
 		$data = build_season_dataset($db);
@@ -23,42 +18,129 @@
 		exit;
 	}
 
-	$system =
-"You are the demand-planning analyst for Blue Bird Waterfowl / THE ANIMATOR, a small US manufacturer of waterfowl motion-decoy conversion kits (Animators) plus accessories it resells (protective cases, replacement wings, splash plates, etc.).
+	if (empty($data['meta']['shopify_connected'])) {
+		echo json_encode(['error' => 'Connect Shopify first (Integrations page) so prior-year sales can be read.']);
+		exit;
+	}
+	if (!empty($data['meta']['shopify_error'])) {
+		echo json_encode(['error' => 'Shopify error: ' . $data['meta']['shopify_error']]);
+		exit;
+	}
 
-You produce a SEASON READINESS REPORT with EXACTLY THREE sections, in this order:
-1. July–September (pre-season ramp; includes summer tradeshows)
-2. October–December (Q4 — the main duck-season rush; be most rigorous here)
-3. January–March (slow season as duck season closes)
+	$seasons   = $data['seasons'];
+	$animators = $data['animators'];
+	$fgoods    = $data['finished_goods'];
+	$raws      = $data['raw_materials'];
 
-Baseline demand for each section = the prior-year sales for that same calendar window (provided per SKU). Apply NO growth percentage. The data JSON gives, per season: each animator product's prior-year unit sales, current Shopify stock, and bill-of-materials; the shared raw materials (on-hand, on-order, MOQ, lead time in days, unit cost, manufacturer); non-animator finished goods (cases, wings, plates) with prior-year sales and current stock; and last year's July–August point-of-sale (tradeshow) spike days.
+	// ── Deterministic, time-phased readiness ──────────────────────────────────
+	// FP stock is consumed quarter by quarter; the remaining demand each quarter
+	// is what must be built (animators) or re-ordered (finished goods). Build
+	// needs are exploded through BOMs into a single raw-material order list.
+	$summary  = [];   // per season key
+	$rawNeed  = [];   // partno => total units of that part needed across the year
+	foreach ($seasons as $s) {
+		$summary[$s['key']] = [
+			'key' => $s['key'], 'label' => $s['label'], 'prior_window' => $s['prior_window'] ?? '',
+			'animator_demand' => 0, 'animator_in_stock' => 0, 'animator_to_build' => 0,
+			'fg_demand' => 0, 'fg_in_stock' => 0, 'fg_to_order' => 0, 'fg_items' => [],
+		];
+	}
 
-Rules:
-- ONLY animator products have raw materials. For animators: units_to_build for a season = max(0, prior-year demand − projected on-hand finished stock entering that season). Explode units_to_build through each BOM, sum per part across all animators, and keep a RUNNING raw-material inventory across the three seasons in order (start = on_hand + on_order). When a part would run short before a season, recommend a purchase order = the shortfall ROUNDED UP to a whole multiple of that part's MOQ. Respect lead time: if lead_time_days means an order placed today won't arrive before that season starts, say so explicitly (order now / already tight). Group raw-material POs BY MANUFACTURER.
-- Everything that is NOT an animator (cases, wings, etc.) has no raw materials — recommend ordering the FINISHED item directly: order qty for a season = max(0, prior-year sales − stock on hand entering the season). Deplete stock across seasons in order. Give an explicit list ('order N x <product/sku>').
-- For July–September, factor in the tradeshow POS spikes: call out the spike dates and roughly how much extra POS demand to expect, and make sure stock is staged before them.
-- Each section MUST include: a one-line readiness verdict (Ready / Tight / Short), the key numbers, Suggested Actions (bullets), and Suggested Purchase Orders (a Markdown table). End the whole report with a 'Order Now' summary: the POs that must be placed today because of lead time, with estimated total cost.
-- Be concrete and numeric. If Shopify isn't connected or a product has no prior-year sales, say so rather than inventing numbers. Use clear Markdown headings and tables.";
+	foreach ($animators as $a) {
+		$stock = max(0, (int)($a['in_stock'] ?? 0));
+		foreach ($seasons as $s) {
+			$d   = (int)($a['prior_year_sales'][$s['key']] ?? 0);
+			$summary[$s['key']]['animator_demand']   += $d;
+			$summary[$s['key']]['animator_in_stock'] += $stock; // entering stock snapshot
+			$ship  = min($stock, $d); $stock -= $ship;
+			$build = $d - $ship;
+			$summary[$s['key']]['animator_to_build'] += $build;
+			if ($build > 0) {
+				foreach (($a['bom'] ?? []) as $b) {
+					$rawNeed[$b['part']] = ($rawNeed[$b['part']] ?? 0) + $build * (int)$b['qty_per_unit'];
+				}
+			}
+		}
+	}
 
-	$userText =
-		"Produce the three-section Season Readiness Report.\n\n" .
-		"Business data (JSON):\n" .
-		json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+	foreach ($fgoods as $g) {
+		$stock = max(0, (int)($g['in_stock'] ?? 0));
+		foreach ($seasons as $s) {
+			$d = (int)($g['prior_year_sales'][$s['key']] ?? 0);
+			$summary[$s['key']]['fg_demand']   += $d;
+			$summary[$s['key']]['fg_in_stock'] += $stock;
+			$ship  = min($stock, $d); $stock -= $ship;
+			$order = $d - $ship;
+			$summary[$s['key']]['fg_to_order'] += $order;
+			if ($order > 0) {
+				$summary[$s['key']]['fg_items'][] = ['sku' => $g['sku'], 'product' => $g['product'], 'order' => $order];
+			}
+		}
+	}
 
-	$res = anthropic_message($system, $userText, 8000);
-	if (!empty($res['error'])) { echo json_encode(['error' => $res['error']]); exit; }
+	// Verdict per season
+	foreach ($summary as $k => &$row) {
+		usort($row['fg_items'], fn($x, $y) => $y['order'] <=> $x['order']);
+		$row['fg_items'] = array_slice($row['fg_items'], 0, 10);
+		$demand = $row['animator_demand'] + $row['fg_demand'];
+		$short  = $row['animator_to_build'] + $row['fg_to_order'];
+		$cov = $demand > 0 ? ($demand - $short) / $demand : 1;
+		$row['status'] = $cov >= 0.99 ? 'ready' : ($cov >= 0.75 ? 'tight' : 'short');
+	}
+	unset($row);
 
-	// Chart series: prior-year units per season, split animators vs finished goods.
+	// ── Raw-material order list (whole horizon), rounded to MOQ ───────────────
+	$rawOrders = []; $rawTotalCost = 0.0;
+	foreach ($raws as $rm) {
+		$need  = (int)($rawNeed[$rm['part']] ?? 0);
+		$avail = (int)$rm['on_hand'] + (int)$rm['on_order'];
+		$short = max(0, $need - $avail);
+		if ($short <= 0) continue;
+		$moq   = max(1, (int)$rm['moq']);
+		$order = (int)(ceil($short / $moq) * $moq);
+		$cost  = $order * (float)$rm['unit_cost'];
+		$rawTotalCost += $cost;
+		$rawOrders[] = [
+			'part' => $rm['part'], 'description' => $rm['description'], 'manufacturer' => $rm['manufacturer'],
+			'need' => $need, 'on_hand' => (int)$rm['on_hand'], 'on_order' => (int)$rm['on_order'],
+			'short' => $short, 'order_qty' => $order, 'lead_time_days' => (int)$rm['lead_time_days'],
+			'unit_cost' => (float)$rm['unit_cost'], 'cost' => $cost,
+		];
+	}
+	usort($rawOrders, fn($a, $b) => strcasecmp($a['manufacturer'], $b['manufacturer']) ?: ($b['cost'] <=> $a['cost']));
+
+	// Chart series: prior-year units per season (animators vs other)
 	$labels = []; $anim = []; $fg = [];
-	foreach ($data['seasons'] as $s) {
+	foreach ($seasons as $s) {
 		$labels[] = $s['label'];
-		$a = 0; foreach ($data['animators'] as $p) $a += (int)($p['prior_year_sales'][$s['key']] ?? 0);
-		$g = 0; foreach ($data['finished_goods'] as $p) $g += (int)($p['prior_year_sales'][$s['key']] ?? 0);
-		$anim[] = $a; $fg[] = $g;
+		$anim[] = $summary[$s['key']]['animator_demand'];
+		$fg[]   = $summary[$s['key']]['fg_demand'];
+	}
+
+	// ── Optional AI narrative (detailed actions / lead-time timing) ────────────
+	$report = null; $reportNote = null;
+	if (anthropic_is_configured()) {
+		$system =
+"You are the demand-planning analyst for Blue Bird Waterfowl / THE ANIMATOR. You are given a JSON snapshot plus a pre-computed, time-phased readiness summary for three seasons (Jul–Sep, Oct–Dec, Jan–Mar) compared to prior-year sales with no growth. The deterministic numbers (units to build, units to order, raw-material order quantities already rounded to MOQ) are authoritative — do NOT recompute or contradict them. Your job is the JUDGMENT layer: for each season give a short readiness narrative and concrete Suggested Actions, focusing on LEAD TIME — which raw-material POs must be placed NOW so parts arrive before they're needed, grouped by manufacturer. Then list the finished goods (cases, wings, etc.) to order. Call out the Jul–Aug tradeshow POS spikes. End with an 'Order Now' list (the lead-time-critical POs) and the estimated total. Be concise, concrete, Markdown with small tables.";
+
+		$userText = "Readiness summary + raw orders (authoritative):\n" .
+			json_encode(['summary' => array_values($summary), 'raw_orders' => $rawOrders, 'raw_total_cost' => $rawTotalCost,
+			             'tradeshow' => $data['tradeshow_prior_year_jul_aug']], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) .
+			"\n\nFull data snapshot:\n" . json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+
+		$res = anthropic_message($system, $userText, 6000);
+		if (!empty($res['error'])) $reportNote = $res['error'];
+		else $report = $res['text'];
+	} else {
+		$reportNote = 'Connect a Claude API key on the Integrations page for the detailed action plan and lead-time timing.';
 	}
 
 	echo json_encode([
-		'report'  => $res['text'],
-		'charts'  => ['labels' => $labels, 'animators' => $anim, 'finished_goods' => $fg],
-		'tradeshow' => $data['tradeshow_prior_year_jul_aug'],
+		'summary'        => array_values($summary),
+		'raw_orders'     => $rawOrders,
+		'raw_total_cost' => $rawTotalCost,
+		'charts'         => ['labels' => $labels, 'animators' => $anim, 'finished_goods' => $fg],
+		'tradeshow'      => $data['tradeshow_prior_year_jul_aug'],
+		'report'         => $report,
+		'report_note'    => $reportNote,
 	]);

@@ -124,57 +124,6 @@
 		if ($s !== '') $usedSkus[$s] = true;
 	}
 
-	// ── Annual goal planning ─────────────────────────────────────────────────
-	// For each product: credit finished stock already on hand against the goal,
-	// explode the remaining units-to-build through the BOM, and aggregate the
-	// gross part requirement across every product. Subtracting parts on hand
-	// gives the shopping list to hit the year's targets.
-	$goalRows  = [];   // per-product planner rows
-	$partNeed  = [];   // partid => required parts across all goals
-	$anyGoals  = false;
-	foreach ($products as $p) {
-		$goal  = $hasGoalCol ? (int)($p['annual_goal'] ?? 0) : 0;
-		$sku   = $p['shopify_sku'] ?? '';
-		$found = $sku !== '' && isset($shopSkus[$sku]);
-		$stock = $found ? (int)$shopSkus[$sku]['qty'] : null;
-		$credit  = ($stock !== null && $stock > 0) ? $stock : 0; // only credit positive on-hand
-		$toBuild = max(0, $goal - $credit);
-		$lines   = $bomByProd[$p['id']] ?? [];
-		$hasBom  = !empty($lines);
-		if ($goal > 0) $anyGoals = true;
-
-		if ($toBuild > 0 && $hasBom) {
-			foreach ($lines as $l) {
-				$pid = $l['partid'];
-				if (!isset($partNeed[$pid])) {
-					$partNeed[$pid] = [
-						'partno' => $l['partno'],
-						'desc'   => $l['desc'],
-						'cost'   => (float)$l['cost'],
-						'qoh'    => (int)$l['qoh'],
-						'need'   => 0,
-					];
-				}
-				$partNeed[$pid]['need'] += $toBuild * (int)$l['qty'];
-			}
-		}
-
-		$goalRows[] = [
-			'p'       => $p,
-			'goal'    => $goal,
-			'stock'   => $stock,
-			'toBuild' => $toBuild,
-			'hasBom'  => $hasBom,
-		];
-	}
-	ksort($partNeed);
-
-	$totalOrderCost = 0.0;
-	foreach ($partNeed as $pn) {
-		$toOrder = max(0, $pn['need'] - $pn['qoh']);
-		$totalOrderCost += $toOrder * $pn['cost'];
-	}
-
 	require_once(__DIR__."/includes/header.php");
 ?>
 
@@ -191,7 +140,7 @@
 <div class="mb-4 d-flex align-items-center justify-content-between flex-wrap gap-2">
 	<div>
 		<h2 class="fw-bold mb-0">Research</h2>
-		<div class="text-muted small">Compare live Shopify stock against what you can build from raw materials on hand.</div>
+		<div class="text-muted small">Season readiness — prior-year sales vs. finished &amp; raw stock, and what to order, by quarter.</div>
 	</div>
 	<div class="d-flex align-items-center gap-2">
 		<?php
@@ -283,35 +232,43 @@
 </div>
 </div>
 
-<!-- ── SEASON READINESS REPORT ──────────────────────────────────────────── -->
+<!-- ── SEASON READINESS ─────────────────────────────────────────────────── -->
 <div class="card mb-4" style="border-top:3px solid #2ca87f;">
 <div class="card-body">
 
 	<div class="panel-header mb-2">
-		<span class="panel-title">Season Readiness Report</span>
-		<button id="seasonBtn" class="btn btn-sm btn-success"<?php echo $aiReady ? '' : ' disabled'; ?>>
-			<i class="ti ti-report-analytics me-1"></i>Generate Report
+		<span class="panel-title">Season Readiness</span>
+		<button id="seasonBtn" class="btn btn-sm btn-success"<?php echo ($shopConfigured && !$shopErr) ? '' : ' disabled'; ?>>
+			<i class="ti ti-report-analytics me-1"></i>Check Readiness
 		</button>
 	</div>
 
 	<p class="text-muted small mb-2">
-		Three sections — <strong>Jul–Sep</strong>, <strong>Oct–Dec</strong>, <strong>Jan–Mar</strong> — scoring how prepared you are vs. last year (no growth):
-		raw-material POs by manufacturer for Animators, and finished-goods orders (cases, wings, etc.) for everything else.
+		How prepared you are for each quarter vs. <strong>last year's sales (no growth)</strong> — comparing prior-year demand to
+		your finished-product stock and raw materials, and what to order. Three quarters:
+		<strong>Jul–Sep</strong>, <strong>Oct–Dec</strong> (duck season), <strong>Jan–Mar</strong>.
 	</p>
-	<?php if (!$aiReady): ?>
-	<div class="alert alert-info mb-0"><a href="/integrations.php">Connect a Claude API key</a> to enable this report.</div>
+	<?php if (!$shopConfigured): ?>
+	<div class="alert alert-info mb-0"><a href="/integrations.php">Connect Shopify</a> to read prior-year sales.</div>
 	<?php endif; ?>
 
 	<span id="seasonStatus" class="small text-muted"></span>
 
+	<!-- Three quarter readiness cards -->
+	<div id="seasonSummary" class="row g-3 mt-1" style="display:none;"></div>
+
+	<!-- Chart + tradeshow -->
 	<div id="seasonCharts" class="row g-3 mt-1" style="display:none;">
 		<div class="col-12 col-lg-7"><canvas id="seasonChart" height="120"></canvas></div>
-		<div class="col-12 col-lg-5">
-			<div id="tradeshowBox" class="small"></div>
-		</div>
+		<div class="col-12 col-lg-5"><div id="tradeshowBox" class="small"></div></div>
 	</div>
 
+	<!-- Raw-material order list -->
+	<div id="rawOrders" class="mt-3" style="display:none;"></div>
+
+	<!-- Optional AI detail plan -->
 	<div id="seasonReport" class="mt-3" style="display:none; background:#faf9f7; border:1px solid #eee; border-radius:8px; padding:16px;"></div>
+	<div id="seasonReportNote" class="small text-muted mt-2"></div>
 
 </div>
 </div>
@@ -486,132 +443,6 @@
 </div>
 </div>
 
-<!-- ── ANNUAL GOAL PLANNER ──────────────────────────────────────────────── -->
-<?php if ($hasGoalCol): ?>
-<div class="card mb-4" style="border-top:3px solid #2ca87f;">
-<div class="card-body">
-
-	<div class="panel-header mb-3">
-		<span class="panel-title">Annual Goal Planner</span>
-		<span class="muted-pill">Units you want to produce this year</span>
-	</div>
-
-	<p class="text-muted small mb-3">
-		Set a yearly target per product. Finished stock already on hand (from Shopify) is credited against the
-		goal, and the remaining <strong>To Build</strong> drives the parts requirement below.
-	</p>
-
-	<div class="scroll-table">
-	<table class="table dash-table align-middle">
-		<thead><tr>
-			<th>Product</th>
-			<th style="width:200px;">Annual Goal</th>
-			<th class="text-center">In Stock</th>
-			<th class="text-center">To Build</th>
-			<th></th>
-		</tr></thead>
-		<tbody>
-		<?php foreach ($goalRows as $r): $p = $r['p']; ?>
-		<tr>
-			<td class="fw-semibold">
-				<?php echo htmlspecialchars($p['name']); ?>
-				<?php if (!$r['hasBom']): ?><span class="muted-pill ms-1">No BOM</span><?php endif; ?>
-			</td>
-			<td>
-				<input type="number" min="0" class="form-control form-control-sm goal-input" style="width:120px;"
-					data-id="<?php echo (int)$p['id']; ?>"
-					value="<?php echo (int)$r['goal']; ?>" />
-			</td>
-			<td class="text-center text-muted">
-				<?php echo $r['stock'] === null ? '—' : number_format($r['stock']); ?>
-			</td>
-			<td class="text-center fw-bold">
-				<?php echo $r['goal'] > 0 ? number_format($r['toBuild']) : '—'; ?>
-			</td>
-			<td>
-				<button class="btn btn-sm btn-primary goal-save" data-id="<?php echo (int)$p['id']; ?>">Save</button>
-			</td>
-		</tr>
-		<?php endforeach; ?>
-		<?php if (!$goalRows): ?>
-		<tr><td colspan="5" class="text-muted text-center py-3">No products found.</td></tr>
-		<?php endif; ?>
-		</tbody>
-	</table>
-	</div>
-
-</div>
-</div>
-
-<!-- ── PARTS REQUIRED FOR GOALS ─────────────────────────────────────────── -->
-<div class="card mb-4" style="border-top:3px solid #e58a00;">
-<div class="card-body">
-
-	<div class="panel-header mb-3">
-		<span class="panel-title">Parts Required for Annual Goals</span>
-		<?php if (!empty($partNeed)): ?>
-		<span class="muted-pill">Est. to order: $<?php echo number_format($totalOrderCost, 2); ?></span>
-		<?php endif; ?>
-	</div>
-
-	<?php if (!$anyGoals): ?>
-	<div class="text-center text-muted py-4">
-		<i class="ti ti-target" style="font-size:2rem;display:block;margin-bottom:8px;opacity:.4;"></i>
-		Set an annual goal above to see the parts you'll need.
-	</div>
-	<?php elseif (empty($partNeed)): ?>
-	<div class="text-center text-muted py-4">
-		<i class="ti ti-circle-check" style="font-size:2rem;display:block;margin-bottom:8px;opacity:.4;"></i>
-		Your finished-goods stock already covers every goal — nothing left to build.
-	</div>
-	<?php else: ?>
-	<p class="text-muted small mb-3">
-		Total parts needed to build every product up to its goal, after crediting finished stock on hand.
-		<strong>To Order</strong> is the shortfall after subtracting raw materials you already have.
-	</p>
-	<div class="scroll-table">
-	<table class="table dash-table align-middle">
-		<thead><tr>
-			<th>Part #</th>
-			<th>Description</th>
-			<th class="text-center">Required</th>
-			<th class="text-center">On Hand</th>
-			<th class="text-center">To Order</th>
-			<th class="text-end">Unit Cost</th>
-			<th class="text-end">Est. Cost</th>
-		</tr></thead>
-		<tbody>
-		<?php foreach ($partNeed as $pn):
-			$toOrder = max(0, $pn['need'] - $pn['qoh']);
-			$lineCost = $toOrder * $pn['cost'];
-		?>
-		<tr>
-			<td class="fw-semibold"><?php echo htmlspecialchars($pn['partno']); ?></td>
-			<td class="small"><?php echo htmlspecialchars($pn['desc']); ?></td>
-			<td class="text-center"><?php echo number_format($pn['need']); ?></td>
-			<td class="text-center text-muted"><?php echo number_format($pn['qoh']); ?></td>
-			<td class="text-center">
-				<span class="<?php echo $toOrder > 0 ? 'stat-neg' : 'stat-pos'; ?>"><?php echo number_format($toOrder); ?></span>
-			</td>
-			<td class="text-end text-muted">$<?php echo number_format($pn['cost'], 2); ?></td>
-			<td class="text-end fw-semibold"><?php echo $lineCost > 0 ? '$'.number_format($lineCost, 2) : '—'; ?></td>
-		</tr>
-		<?php endforeach; ?>
-		</tbody>
-		<tfoot>
-			<tr>
-				<td colspan="6" class="text-end fw-bold">Estimated total to order</td>
-				<td class="text-end fw-bold">$<?php echo number_format($totalOrderCost, 2); ?></td>
-			</tr>
-		</tfoot>
-	</table>
-	</div>
-	<?php endif; ?>
-
-</div>
-</div>
-<?php endif; ?>
-
 <!-- ── SKU MAPPING ──────────────────────────────────────────────────────── -->
 <?php if ($hasCol): ?>
 <div class="card mb-4" style="border-top:3px solid #4680ff;">
@@ -743,24 +574,6 @@
 		if (!applied) alert('No new suggestions to apply.');
 	});
 
-	$(document).on('click', '.goal-save', function() {
-		var $btn = $(this);
-		var id   = $btn.data('id');
-		var goal = $(".goal-input[data-id='" + id + "']").val();
-		$btn.prop('disabled', true).text('Saving…');
-		$.post('/ajax/research/set_goal.php', { id: id, goal: goal }, function(resp) {
-			if (resp === 'ok') {
-				location.reload();
-			} else {
-				alert('Could not save goal.');
-				$btn.prop('disabled', false).text('Save');
-			}
-		});
-	});
-
-	$(document).on('keypress', '.goal-input', function(e) {
-		if (e.which === 13) $(this).closest('tr').find('.goal-save').click();
-	});
 
 	// ── Planning Assistant ────────────────────────────────────────────────
 	$('#askBtn').on('click', function() {
@@ -794,17 +607,71 @@
 		});
 	});
 
-	// ── Season Readiness report ───────────────────────────────────────────
+	// ── Season Readiness ──────────────────────────────────────────────────
 	var seasonChartObj = null;
+	function verdictBadge(s) {
+		if (s === 'ready') return '<span class="badge bg-success">Ready</span>';
+		if (s === 'tight') return '<span class="badge bg-warning text-dark">Tight</span>';
+		return '<span class="badge bg-danger">Short</span>';
+	}
 	$('#seasonBtn').on('click', function() {
 		var $btn = $(this);
 		$btn.prop('disabled', true);
-		$('#seasonStatus').removeClass('text-danger').text('Crunching last year’s sales and building the report… (up to ~90s)');
-		$('#seasonReport').hide();
+		$('#seasonStatus').removeClass('text-danger').text('Crunching last year’s sales… (up to ~90s)');
+		$('#seasonReport').hide(); $('#seasonReportNote').text('');
 		$.ajax({ url: '/ajax/research/season_report.php', method: 'POST', dataType: 'json', timeout: 180000 })
 		.done(function(res) {
 			if (res.error) { $('#seasonStatus').addClass('text-danger').text(res.error); return; }
 			$('#seasonStatus').text('');
+
+			// Three quarter readiness cards
+			if (res.summary) {
+				var cards = '';
+				res.summary.forEach(function(q) {
+					cards += '<div class="col-12 col-md-4"><div class="card h-100" style="border-top:3px solid #4680ff;"><div class="card-body">' +
+						'<div class="d-flex justify-content-between align-items-start mb-2">' +
+						'<span class="fw-bold">' + esc(q.label) + '</span> ' + verdictBadge(q.status) + '</div>' +
+						'<table class="table table-sm mb-2"><tbody>' +
+						'<tr><td class="text-muted small">Animators — demand</td><td class="text-end fw-semibold">' + q.animator_demand + '</td></tr>' +
+						'<tr><td class="text-muted small">&nbsp;&nbsp;to build</td><td class="text-end ' + (q.animator_to_build>0?'stat-neg':'stat-pos') + '">' + q.animator_to_build + '</td></tr>' +
+						'<tr><td class="text-muted small">Other (cases/wings) — demand</td><td class="text-end fw-semibold">' + q.fg_demand + '</td></tr>' +
+						'<tr><td class="text-muted small">&nbsp;&nbsp;to order</td><td class="text-end ' + (q.fg_to_order>0?'stat-neg':'stat-pos') + '">' + q.fg_to_order + '</td></tr>' +
+						'</tbody></table>';
+					if (q.fg_items && q.fg_items.length) {
+						cards += '<div class="small fw-semibold text-muted">Order these:</div><ul class="small mb-0" style="padding-left:1.1rem;">';
+						q.fg_items.forEach(function(it){ cards += '<li>' + it.order + ' × <code>' + esc(it.sku) + '</code> <span class="text-muted">' + esc(it.product) + '</span></li>'; });
+						cards += '</ul>';
+					}
+					cards += '<div class="small text-muted mt-2">vs ' + esc(q.prior_window) + '</div>';
+					cards += '</div></div></div>';
+				});
+				$('#seasonSummary').html(cards).show();
+			}
+
+			// Raw-material order list
+			if (res.raw_orders) {
+				var ro = res.raw_orders, h = '';
+				if (!ro.length) {
+					h = '<div class="alert alert-success mb-0">Raw materials on hand + on order cover every animator build through the year. Nothing to order.</div>';
+				} else {
+					h = '<div class="panel-title mb-2">Raw Materials to Order <span class="muted-pill ms-1">Est. $' + (res.raw_total_cost||0).toFixed(2) + '</span></div>' +
+						'<div class="scroll-table"><table class="table dash-table align-middle"><thead><tr>' +
+						'<th>Manufacturer</th><th>Part</th><th>Description</th><th class="text-center">Need</th><th class="text-center">Have</th>' +
+						'<th class="text-center">Order (MOQ)</th><th class="text-center">Lead</th><th class="text-end">Est. Cost</th></tr></thead><tbody>';
+					ro.forEach(function(r){
+						h += '<tr><td class="small fw-semibold">' + esc(r.manufacturer) + '</td>' +
+							'<td class="fw-semibold">' + esc(r.part) + '</td>' +
+							'<td class="small text-muted">' + esc(r.description) + '</td>' +
+							'<td class="text-center">' + r.need + '</td>' +
+							'<td class="text-center text-muted">' + (r.on_hand + r.on_order) + '</td>' +
+							'<td class="text-center stat-neg">' + r.order_qty + '</td>' +
+							'<td class="text-center small">' + r.lead_time_days + 'd</td>' +
+							'<td class="text-end fw-semibold">$' + r.cost.toFixed(2) + '</td></tr>';
+					});
+					h += '</tbody></table></div>';
+				}
+				$('#rawOrders').html(h).show();
+			}
 
 			// Chart: prior-year units per season (animators vs other)
 			if (res.charts && typeof Chart !== 'undefined') {
@@ -837,8 +704,12 @@
 				$('#tradeshowBox').html(h);
 			}
 
-			var html = (typeof marked !== 'undefined') ? marked.parse(res.report) : res.report.replace(/\n/g,'<br>');
-			$('#seasonReport').html(html).show();
+			// Optional AI detail plan
+			if (res.report) {
+				var html = (typeof marked !== 'undefined') ? marked.parse(res.report) : res.report.replace(/\n/g,'<br>');
+				$('#seasonReport').html('<div class="fw-semibold mb-2">Detailed action plan & lead-time timing</div>' + html).show();
+			}
+			if (res.report_note) $('#seasonReportNote').text(res.report_note);
 		})
 		.fail(function(xhr, status) {
 			$('#seasonStatus').addClass('text-danger').text(
