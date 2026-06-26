@@ -576,8 +576,8 @@
 	</div>
 
 	<p class="text-muted small mb-3">
-		Type or pick the Shopify SKU that matches each product, then click Save. Print-on-demand items are hidden from the picker.
-		Leave blank and save to unlink.
+		Type or pick the Shopify SKU that matches each product — it <strong>saves automatically</strong> when you move off the field.
+		Print-on-demand items are hidden from the picker. Clear a field to unlink.
 	</p>
 
 	<?php if ($shopConfigured && !$shopErr): ?>
@@ -603,11 +603,12 @@
 				<input type="text" class="form-control form-control-sm sku-input map-input"
 					list="skuList"
 					data-id="<?php echo (int)$p['id']; ?>"
+					data-prev="<?php echo htmlspecialchars($p['shopify_sku'] ?? ''); ?>"
 					value="<?php echo htmlspecialchars($p['shopify_sku'] ?? ''); ?>"
 					placeholder="e.g. LDXL" />
 			</td>
 			<td>
-				<button class="btn btn-sm btn-primary map-save" data-id="<?php echo (int)$p['id']; ?>">Save</button>
+				<span class="map-status small" data-id="<?php echo (int)$p['id']; ?>"></span>
 			</td>
 		</tr>
 		<?php endforeach; ?>
@@ -623,23 +624,28 @@
 <?php endif; ?>
 
 <script>
-	$(document).on('click', '.map-save', function() {
-		var $btn = $(this);
-		var id   = $btn.data('id');
-		var sku  = $(".map-input[data-id='" + id + "']").val();
-		$btn.prop('disabled', true).text('Saving…');
+	// Auto-save SKU mapping on change (blur / datalist pick) — no button needed.
+	$(document).on('change', '.map-input', function() {
+		var $inp = $(this);
+		var id   = $inp.data('id');
+		var sku  = $.trim($inp.val());
+		if (sku === ($inp.data('prev') || '')) return;   // nothing changed
+		var $st  = $(".map-status[data-id='" + id + "']");
+		$st.removeClass('text-success text-danger').text('Saving…');
 		$.post('/ajax/research/set_sku.php', { id: id, sku: sku }, function(resp) {
-			if (resp === 'ok') {
-				location.reload();
+			if ($.trim(resp) === 'ok') {
+				$inp.data('prev', sku);
+				$st.addClass('text-success').text(sku === '' ? 'Unlinked' : 'Saved ✓');
+				setTimeout(function(){ $st.fadeOut(400, function(){ $(this).text('').show(); }); }, 1500);
 			} else {
-				alert('Could not save mapping.');
-				$btn.prop('disabled', false).text('Save');
+				$st.addClass('text-danger').text('Error');
 			}
-		});
+		}).fail(function(){ $st.addClass('text-danger').text('Failed'); });
 	});
 
-	$(document).on('keypress', '.map-input', function(e) {
-		if (e.which === 13) $(this).closest('tr').find('.map-save').click();
+	// Enter commits the field (triggers change/blur).
+	$(document).on('keydown', '.map-input', function(e) {
+		if (e.which === 13) { e.preventDefault(); $(this).blur(); }
 	});
 
 	$(document).on('click', '.goal-save', function() {
