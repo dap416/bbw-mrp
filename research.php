@@ -238,71 +238,88 @@
 <div class="card mb-4" style="border-top:3px solid #4680ff;">
 <div class="card-body">
 
-	<div class="panel-header mb-3">
-		<span class="panel-title">Large POs &amp; Tradeshows</span>
-		<span class="muted-pill"><?php echo count($planEvents); ?> event<?php echo count($planEvents) !== 1 ? 's' : ''; ?></span>
+	<div class="panel-header">
+		<span class="panel-title">
+			Large POs &amp; Tradeshows
+			<span class="muted-pill ms-1"><?php echo count($planEvents); ?> saved</span>
+		</span>
+		<button id="poToggle" class="btn btn-sm btn-outline-primary">
+			<i class="ti ti-plus me-1"></i>Add / Manage
+		</button>
 	</div>
 
-	<p class="text-muted small mb-3">
-		Add big purchase orders (that may repeat) and tradeshows so the planner accounts for those extraordinary spikes.
-		Put the products and quantities in the details box.
-	</p>
+	<div id="poPanel" style="display:none;" class="mt-3">
 
-	<div class="scroll-table mb-3">
-	<table class="table dash-table align-middle">
-		<thead><tr>
-			<th>Type</th><th>Name</th><th>Date</th><th>End</th><th>Repeats</th><th>Details</th><th></th>
-		</tr></thead>
-		<tbody id="eventRows">
-		<?php foreach ($planEvents as $ev): ?>
-		<tr data-id="<?php echo (int)$ev['id']; ?>">
-			<td><span class="muted-pill"><?php echo htmlspecialchars($ev['type']); ?></span></td>
-			<td class="fw-semibold"><?php echo htmlspecialchars($ev['name']); ?></td>
-			<td class="small"><?php echo htmlspecialchars($ev['event_date'] ?? '—'); ?></td>
-			<td class="small"><?php echo htmlspecialchars($ev['end_date'] ?? '—'); ?></td>
-			<td class="small"><?php echo $ev['repeats'] ? 'yearly' : '—'; ?></td>
-			<td class="small text-muted"><?php echo htmlspecialchars($ev['details'] ?? ''); ?></td>
-			<td><button class="btn btn-sm btn-outline-danger ev-del" data-id="<?php echo (int)$ev['id']; ?>">Remove</button></td>
-		</tr>
-		<?php endforeach; ?>
-		<?php if (!$planEvents): ?>
-		<tr id="noEventsRow"><td colspan="7" class="text-muted text-center py-3">No events yet.</td></tr>
-		<?php endif; ?>
-		</tbody>
-	</table>
-	</div>
+		<!-- Find POs from Shopify -->
+		<div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
+			<button id="poDetect" class="btn btn-sm btn-primary">
+				<i class="ti ti-search me-1"></i>Find POs from Shopify
+			</button>
+			<span class="small text-muted">Scans your orders for wholesale / large-quantity orders you can add as a PO.</span>
+			<span id="poDetectStatus" class="small"></span>
+		</div>
+		<div id="poCandidates" class="mb-3"></div>
 
-	<div class="row g-2 align-items-end">
-		<div class="col-6 col-md-2">
-			<label class="form-label small fw-semibold mb-1">Type</label>
-			<select id="evType" class="form-select form-select-sm">
-				<option value="po">PO</option>
-				<option value="tradeshow">Tradeshow</option>
-			</select>
+		<!-- Saved events -->
+		<div class="scroll-table mb-3">
+		<table class="table dash-table align-middle">
+			<thead><tr>
+				<th>Type</th><th>Name</th><th>Date</th><th>End</th><th>Repeats</th><th>Details</th><th></th>
+			</tr></thead>
+			<tbody id="eventRows">
+			<?php foreach ($planEvents as $ev): ?>
+			<tr data-id="<?php echo (int)$ev['id']; ?>">
+				<td><span class="muted-pill"><?php echo htmlspecialchars($ev['type']); ?></span></td>
+				<td class="fw-semibold"><?php echo htmlspecialchars($ev['name']); ?></td>
+				<td class="small"><?php echo htmlspecialchars($ev['event_date'] ?? '—'); ?></td>
+				<td class="small"><?php echo htmlspecialchars($ev['end_date'] ?? '—'); ?></td>
+				<td class="small"><?php echo $ev['repeats'] ? 'yearly' : '—'; ?></td>
+				<td class="small text-muted"><?php echo htmlspecialchars($ev['details'] ?? ''); ?></td>
+				<td><button class="btn btn-sm btn-outline-danger ev-del" data-id="<?php echo (int)$ev['id']; ?>">Remove</button></td>
+			</tr>
+			<?php endforeach; ?>
+			<?php if (!$planEvents): ?>
+			<tr id="noEventsRow"><td colspan="7" class="text-muted text-center py-3">No events yet.</td></tr>
+			<?php endif; ?>
+			</tbody>
+		</table>
 		</div>
-		<div class="col-6 col-md-3">
-			<label class="form-label small fw-semibold mb-1">Name</label>
-			<input id="evName" class="form-control form-control-sm" placeholder="e.g. Cabela's PO" />
-		</div>
-		<div class="col-6 col-md-2">
-			<label class="form-label small fw-semibold mb-1">Date</label>
-			<input id="evDate" type="date" class="form-control form-control-sm" />
-		</div>
-		<div class="col-6 col-md-2">
-			<label class="form-label small fw-semibold mb-1">End (optional)</label>
-			<input id="evEnd" type="date" class="form-control form-control-sm" />
-		</div>
-		<div class="col-6 col-md-2">
-			<label class="form-label small fw-semibold mb-1">Details</label>
-			<input id="evDetails" class="form-control form-control-sm" placeholder="e.g. 500x LDA, 250x MEA" />
-		</div>
-		<div class="col-6 col-md-1">
-			<div class="form-check mb-1">
-				<input class="form-check-input" type="checkbox" id="evRepeats">
-				<label class="form-check-label small" for="evRepeats">Yearly</label>
+
+		<!-- Manual add -->
+		<div class="small fw-semibold text-muted mb-2">Or add one manually</div>
+		<div class="row g-2 align-items-end">
+			<div class="col-6 col-md-2">
+				<label class="form-label small fw-semibold mb-1">Type</label>
+				<select id="evType" class="form-select form-select-sm">
+					<option value="po">PO</option>
+					<option value="tradeshow">Tradeshow</option>
+				</select>
 			</div>
-			<button id="evAdd" class="btn btn-sm btn-primary w-100">Add</button>
+			<div class="col-6 col-md-3">
+				<label class="form-label small fw-semibold mb-1">Name</label>
+				<input id="evName" class="form-control form-control-sm" placeholder="e.g. Cabela's PO" />
+			</div>
+			<div class="col-6 col-md-2">
+				<label class="form-label small fw-semibold mb-1">Date</label>
+				<input id="evDate" type="date" class="form-control form-control-sm" />
+			</div>
+			<div class="col-6 col-md-2">
+				<label class="form-label small fw-semibold mb-1">End (optional)</label>
+				<input id="evEnd" type="date" class="form-control form-control-sm" />
+			</div>
+			<div class="col-6 col-md-2">
+				<label class="form-label small fw-semibold mb-1">Details</label>
+				<input id="evDetails" class="form-control form-control-sm" placeholder="e.g. 500x LDA, 250x MEA" />
+			</div>
+			<div class="col-6 col-md-1">
+				<div class="form-check mb-1">
+					<input class="form-check-input" type="checkbox" id="evRepeats">
+					<label class="form-check-label small" for="evRepeats">Yearly</label>
+				</div>
+				<button id="evAdd" class="btn btn-sm btn-primary w-100">Add</button>
+			</div>
 		</div>
+
 	</div>
 
 </div>
@@ -644,6 +661,58 @@
 	});
 
 	// ── Planning events ───────────────────────────────────────────────────
+	$('#poToggle').on('click', function() {
+		$('#poPanel').slideToggle(150);
+	});
+
+	$('#poDetect').on('click', function() {
+		var $btn = $(this);
+		$btn.prop('disabled', true);
+		$('#poDetectStatus').removeClass('text-danger').text('Scanning Shopify…');
+		$('#poCandidates').empty();
+		$.ajax({ url: '/ajax/research/detect_pos.php', method: 'POST', dataType: 'json', timeout: 120000 })
+		.done(function(res) {
+			if (res.error) { $('#poDetectStatus').addClass('text-danger').text(res.error); return; }
+			var c = res.candidates || [];
+			if (!c.length) { $('#poDetectStatus').text('No wholesale / large orders found.'); return; }
+			$('#poDetectStatus').text(c.length + ' found — click Add on any to track it.');
+			var html = '<div class="scroll-table"><table class="table dash-table align-middle">' +
+				'<thead><tr><th>Date</th><th>Order</th><th>Channel</th><th class="text-center">Units</th><th>Products</th><th></th></tr></thead><tbody>';
+			c.forEach(function(o, i) {
+				html += '<tr>' +
+					'<td class="small">' + (o.date || '—') + '</td>' +
+					'<td class="fw-semibold small">' + esc(o.label) + '</td>' +
+					'<td><span class="muted-pill">' + esc(o.channel) + '</span></td>' +
+					'<td class="text-center fw-bold">' + o.qty + '</td>' +
+					'<td class="small text-muted">' + esc(o.details) + '</td>' +
+					'<td><button class="btn btn-sm btn-success po-add" data-i="' + i + '">Add as PO</button></td>' +
+					'</tr>';
+			});
+			html += '</tbody></table></div>';
+			$('#poCandidates').html(html);
+			$('#poCandidates').data('cands', c);
+		})
+		.fail(function(xhr) {
+			$('#poDetectStatus').addClass('text-danger').text('Scan failed (' + (xhr.status || 'no response') + ').');
+		})
+		.always(function() { $btn.prop('disabled', false); });
+	});
+
+	$(document).on('click', '.po-add', function() {
+		var $btn = $(this);
+		var o = ($('#poCandidates').data('cands') || [])[$btn.data('i')];
+		if (!o) return;
+		$btn.prop('disabled', true).text('Adding…');
+		$.post('/ajax/research/event_save.php', {
+			type: 'po', name: o.label, event_date: o.date, repeats: 0, details: o.details
+		}, function(resp) {
+			if ($.trim(resp) === 'ok') { location.reload(); }
+			else { alert('Could not add: ' + resp); $btn.prop('disabled', false).text('Add as PO'); }
+		});
+	});
+
+	function esc(s) { return $('<div>').text(s == null ? '' : s).html(); }
+
 	$('#evAdd').on('click', function() {
 		var name = $.trim($('#evName').val());
 		if (!name) { alert('Enter a name.'); return; }
