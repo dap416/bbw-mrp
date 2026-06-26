@@ -14,8 +14,8 @@
 		exit;
 	}
 
-	// A "PO candidate" is an order that looks like wholesale/bulk: it came through
-	// a wholesale channel (draft/Collective) OR moved a large quantity of units.
+	// A "PO candidate" is any order that moved a large quantity of units
+	// (>= the threshold below), regardless of which channel it came through.
 	$BIG_QTY = (int)($_POST['min_qty'] ?? 30);
 	$cutoff  = date('Y-m-d', strtotime('-24 months'));
 
@@ -49,7 +49,6 @@
 			if (!empty($n['cancelledAt'])) continue;
 
 			$chan = shopify_channel_label($n['sourceName'] ?? '');
-			$isWholesaleChan = (strpos($chan, 'wholesale') !== false);
 
 			$qty = 0; $parts = [];
 			foreach ($n['lineItems']['edges'] as $le) {
@@ -61,7 +60,7 @@
 				$parts[] = $liQty . 'x ' . $label;
 			}
 
-			if (!$isWholesaleChan && $qty < $BIG_QTY) continue; // not a PO-sized order
+			if ($qty < $BIG_QTY) continue; // not a PO-sized order (applies to every channel)
 
 			$who  = $n['customer']['displayName'] ?? '';
 			$name = trim(($who !== '' ? $who : $chan) . ' ' . ($n['name'] ?? ''));
