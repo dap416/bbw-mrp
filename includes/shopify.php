@@ -97,8 +97,11 @@
 			if ($body === false) {
 				return ['error' => 'Could not reach Shopify: ' . $curlErr];
 			}
-			if ($httpCode === 401 || $httpCode === 403) {
-				return ['error' => 'Shopify rejected the access token (HTTP ' . $httpCode . '). Check the token and that it has the read_products and read_inventory scopes.'];
+			if ($httpCode === 401) {
+				return ['error' => 'Shopify rejected the credentials (HTTP 401). The token is invalid for this store — make sure you pasted the Admin API access token (starts with shpat_, not the API key or secret) and that the store domain matches the store that token belongs to.'];
+			}
+			if ($httpCode === 403) {
+				return ['error' => 'Shopify accepted the token but denied access (HTTP 403). Add the read_products and read_inventory scopes to the app, then reinstall it and use the new token.'];
 			}
 
 			$json = json_decode($body, true);
