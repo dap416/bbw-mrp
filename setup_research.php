@@ -25,6 +25,15 @@ run($db,
     "ALTER TABLE products ADD COLUMN annual_goal INT NOT NULL DEFAULT 0",
     $log, "Add annual_goal column to products");
 
+// Key-value settings table (stores Shopify credentials entered in the app)
+run($db,
+    "CREATE TABLE IF NOT EXISTS settings (
+        skey       VARCHAR(64) NOT NULL PRIMARY KEY,
+        sval       TEXT,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB",
+    $log, "Create settings table");
+
 ?><!doctype html><html><head><title>Research Setup</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
 </head><body class="p-4">

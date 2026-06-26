@@ -154,6 +154,15 @@
         </li>
         <?php } ?>
 
+        <?php if (in_array($_SESSION['user_role'] ?? '', ['admin', 'master'], true)) { ?>
+        <li class="pc-item">
+          <a href="/integrations.php" class="pc-link">
+            <span class="pc-micon"><i class="ti ti-plug-connected"></i></span>
+            <span class="pc-mtext">Integrations</span>
+          </a>
+        </li>
+        <?php } ?>
+
       </ul>
     </div>
   </div>

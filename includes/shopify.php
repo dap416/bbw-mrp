@@ -8,8 +8,46 @@
 	 * See includes/config.local.example.php for setup instructions.
 	 */
 
+	/** Read a value from the key-value settings table (safe if table is missing). */
+	function setting_get($db, $key, $default = null) {
+		try {
+			$stmt = $db->prepare("SELECT sval FROM settings WHERE skey = ?");
+			$stmt->execute([$key]);
+			$r = $stmt->fetch();
+			return ($r && $r['sval'] !== null) ? $r['sval'] : $default;
+		} catch (Throwable $e) { return $default; }
+	}
+
+	/** Upsert a value into the settings table. */
+	function setting_set($db, $key, $val) {
+		$stmt = $db->prepare("INSERT INTO settings (skey, sval, updated_at) VALUES (?, ?, NOW())
+		                      ON DUPLICATE KEY UPDATE sval = VALUES(sval), updated_at = NOW()");
+		$stmt->execute([$key, $val]);
+	}
+
+	/**
+	 * Effective Shopify credentials. Values saved in the app (settings table)
+	 * take precedence; anything in config.local.php is used as a fallback.
+	 * Cached per request so repeated API calls don't re-query the DB.
+	 */
 	function shopify_config() {
-		return app_config('shopify') ?: [];
+		static $cfg = null;
+		if ($cfg !== null) return $cfg;
+
+		$cfg = app_config('shopify') ?: [];
+		try {
+			$db = db_connect();
+			if ($db) {
+				$d = setting_get($db, 'shopify_domain');
+				$t = setting_get($db, 'shopify_token');
+				$v = setting_get($db, 'shopify_api_version');
+				if ($d !== null && $d !== '') $cfg['domain']      = $d;
+				if ($t !== null && $t !== '') $cfg['token']       = $t;
+				if ($v !== null && $v !== '') $cfg['api_version'] = $v;
+			}
+		} catch (Throwable $e) { /* settings table not migrated yet — use file config */ }
+
+		return $cfg;
 	}
 
 	/** True only when a real domain + token have been filled in. */
@@ -83,6 +121,21 @@
 
 			return $json;
 		}
+	}
+
+	/**
+	 * Quick connectivity check. Returns ['ok' => bool, 'name' => string, 'error' => string].
+	 */
+	function shopify_test_connection() {
+		$res = shopify_graphql('{ shop { name myshopifyDomain } }');
+		if (!empty($res['error'])) {
+			return ['ok' => false, 'name' => '', 'error' => $res['error']];
+		}
+		$shop = $res['data']['shop'] ?? null;
+		if (!$shop) {
+			return ['ok' => false, 'name' => '', 'error' => 'Connected, but no shop data returned.'];
+		}
+		return ['ok' => true, 'name' => $shop['name'] ?? '', 'error' => ''];
 	}
 
 	/**

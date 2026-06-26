@@ -152,13 +152,8 @@
 <?php if (!$shopConfigured): ?>
 <div class="alert alert-info">
 	<h6 class="fw-bold mb-1">Connect your Shopify store</h6>
-	<p class="mb-1">Live stock numbers will appear once Shopify credentials are added to <code>includes/config.local.php</code>.</p>
-	<ol class="mb-0 small">
-		<li>In Shopify admin: <strong>Settings → Apps and sales channels → Develop apps → Create an app</strong>.</li>
-		<li>Under <strong>Configuration → Admin API</strong>, grant scopes <code>read_products</code> and <code>read_inventory</code>.</li>
-		<li><strong>Install</strong> the app, then copy the <strong>Admin API access token</strong> (starts with <code>shpat_</code>).</li>
-		<li>Paste the token, your <code>*.myshopify.com</code> domain into the <code>shopify</code> block of <code>config.local.php</code> (see <code>config.local.example.php</code>).</li>
-	</ol>
+	<p class="mb-2">Live stock numbers will appear once you add your Shopify store domain and access token.</p>
+	<a href="/integrations.php" class="btn btn-sm btn-info">Open Integrations Settings</a>
 </div>
 <?php elseif ($shopErr): ?>
 <div class="alert alert-danger">
