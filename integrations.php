@@ -107,19 +107,30 @@
 		var $btn = $(this);
 		$btn.prop('disabled', true).text('Saving…');
 		$('#statusMsg').removeClass('text-success text-danger').text('');
-		$.post('/ajax/research/save_integration.php', {
-			domain:      $('#shopDomain').val(),
-			token:       $('#shopToken').val(),
-			api_version: $('#shopVersion').val()
-		}, function(resp) {
-			if (resp === 'ok') {
+		$.ajax({
+			url: '/ajax/research/save_integration.php',
+			method: 'POST',
+			timeout: 15000,
+			data: {
+				domain:      $('#shopDomain').val(),
+				token:       $('#shopToken').val(),
+				api_version: $('#shopVersion').val()
+			}
+		}).done(function(resp) {
+			if ($.trim(resp) === 'ok') {
 				$('#statusMsg').addClass('text-success').text('Saved.');
 				$('#shopToken').val('');
 				setTimeout(function(){ location.reload(); }, 700);
 			} else {
-				$('#statusMsg').addClass('text-danger').text('Could not save (' + resp + ').');
+				$('#statusMsg').addClass('text-danger').text('Could not save: ' + resp);
 				$btn.prop('disabled', false).text('Save');
 			}
+		}).fail(function(xhr, status) {
+			var msg = (status === 'timeout')
+				? 'Save timed out — the server took too long to respond.'
+				: 'Save failed (' + (xhr.status || 'no response') + '). ' + ($.trim(xhr.responseText) || '');
+			$('#statusMsg').addClass('text-danger').text(msg);
+			$btn.prop('disabled', false).text('Save');
 		});
 	});
 
