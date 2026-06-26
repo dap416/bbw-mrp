@@ -359,6 +359,53 @@
 		];
 	}
 
+	/**
+	 * Point-of-sale units per day in a window (for tradeshow-spike detection).
+	 * Returns ['error'=>..., 'by_date'=>[YYYY-MM-DD => units], 'total'=>int].
+	 */
+	function shopify_pos_by_date($since, $until) {
+		$query = '
+		query($cursor: String, $q: String!) {
+		  orders(first: 100, after: $cursor, query: $q, sortKey: CREATED_AT) {
+		    pageInfo { hasNextPage endCursor }
+		    edges { node {
+		      createdAt
+		      sourceName
+		      cancelledAt
+		      lineItems(first: 30) { edges { node { quantity } } }
+		    } }
+		  }
+		}';
+
+		$q = "created_at:>=$since AND created_at:<=$until";
+		$byDate = []; $total = 0; $cursor = null; $pages = 0;
+
+		do {
+			$res = shopify_graphql($query, ['cursor' => $cursor, 'q' => $q]);
+			if (!empty($res['error'])) return ['error' => $res['error'], 'by_date' => [], 'total' => 0];
+			$o = $res['data']['orders'] ?? null;
+			if ($o === null) return ['error' => 'Malformed Shopify response.', 'by_date' => [], 'total' => 0];
+
+			foreach ($o['edges'] as $oe) {
+				$n = $oe['node'];
+				if (!empty($n['cancelledAt'])) continue;
+				if (shopify_channel_label($n['sourceName'] ?? '') !== 'pos') continue;
+				$date = substr($n['createdAt'] ?? '', 0, 10);
+				$qty = 0;
+				foreach ($n['lineItems']['edges'] as $le) $qty += (int)($le['node']['quantity'] ?? 0);
+				if ($qty <= 0) continue;
+				$byDate[$date] = ($byDate[$date] ?? 0) + $qty;
+				$total += $qty;
+			}
+
+			$cursor  = $o['pageInfo']['endCursor']  ?? null;
+			$hasNext = $o['pageInfo']['hasNextPage'] ?? false;
+			$pages++;
+		} while ($hasNext && $pages < 20);
+
+		return ['error' => null, 'by_date' => $byDate, 'total' => $total];
+	}
+
 	/** Map a Shopify sourceName to a friendly channel label. */
 	function shopify_channel_label($source) {
 		$s = strtolower($source);

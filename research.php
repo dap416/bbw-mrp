@@ -234,6 +234,39 @@
 </div>
 </div>
 
+<!-- ── SEASON READINESS REPORT ──────────────────────────────────────────── -->
+<div class="card mb-4" style="border-top:3px solid #2ca87f;">
+<div class="card-body">
+
+	<div class="panel-header mb-2">
+		<span class="panel-title">Season Readiness Report</span>
+		<button id="seasonBtn" class="btn btn-sm btn-success"<?php echo $aiReady ? '' : ' disabled'; ?>>
+			<i class="ti ti-report-analytics me-1"></i>Generate Report
+		</button>
+	</div>
+
+	<p class="text-muted small mb-2">
+		Three sections — <strong>Jul–Sep</strong>, <strong>Oct–Dec</strong>, <strong>Jan–Mar</strong> — scoring how prepared you are vs. last year (no growth):
+		raw-material POs by manufacturer for Animators, and finished-goods orders (cases, wings, etc.) for everything else.
+	</p>
+	<?php if (!$aiReady): ?>
+	<div class="alert alert-info mb-0"><a href="/integrations.php">Connect a Claude API key</a> to enable this report.</div>
+	<?php endif; ?>
+
+	<span id="seasonStatus" class="small text-muted"></span>
+
+	<div id="seasonCharts" class="row g-3 mt-1" style="display:none;">
+		<div class="col-12 col-lg-7"><canvas id="seasonChart" height="120"></canvas></div>
+		<div class="col-12 col-lg-5">
+			<div id="tradeshowBox" class="small"></div>
+		</div>
+	</div>
+
+	<div id="seasonReport" class="mt-3" style="display:none; background:#faf9f7; border:1px solid #eee; border-radius:8px; padding:16px;"></div>
+
+</div>
+</div>
+
 <!-- ── PLANNING EVENTS (POs + TRADESHOWS) ───────────────────────────────── -->
 <div class="card mb-4" style="border-top:3px solid #4680ff;">
 <div class="card-body">
@@ -658,6 +691,59 @@
 		}).always(function() {
 			$btn.prop('disabled', false);
 		});
+	});
+
+	// ── Season Readiness report ───────────────────────────────────────────
+	var seasonChartObj = null;
+	$('#seasonBtn').on('click', function() {
+		var $btn = $(this);
+		$btn.prop('disabled', true);
+		$('#seasonStatus').removeClass('text-danger').text('Crunching last year’s sales and building the report… (up to ~90s)');
+		$('#seasonReport').hide();
+		$.ajax({ url: '/ajax/research/season_report.php', method: 'POST', dataType: 'json', timeout: 180000 })
+		.done(function(res) {
+			if (res.error) { $('#seasonStatus').addClass('text-danger').text(res.error); return; }
+			$('#seasonStatus').text('');
+
+			// Chart: prior-year units per season (animators vs other)
+			if (res.charts && typeof Chart !== 'undefined') {
+				$('#seasonCharts').show();
+				var ctx = document.getElementById('seasonChart').getContext('2d');
+				if (seasonChartObj) seasonChartObj.destroy();
+				seasonChartObj = new Chart(ctx, {
+					type: 'bar',
+					data: {
+						labels: res.charts.labels,
+						datasets: [
+							{ label: 'Animators', data: res.charts.animators, backgroundColor: '#2ca87f' },
+							{ label: 'Cases / Wings / Other', data: res.charts.finished_goods, backgroundColor: '#4680ff' }
+						]
+					},
+					options: { responsive: true, plugins: { title: { display: true, text: 'Prior-year units sold by season' } },
+						scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } } }
+				});
+			}
+
+			// Tradeshow spike box
+			if (res.tradeshow) {
+				var t = res.tradeshow, h = '<div class="fw-semibold mb-1">Prior-year Jul–Aug POS (tradeshows)</div>';
+				h += '<div class="text-muted mb-1">Total POS units: <strong>' + (t.total || 0) + '</strong></div>';
+				if (t.top_days && t.top_days.length) {
+					h += '<div class="small text-muted">Biggest POS days:</div><ul class="small mb-0">';
+					t.top_days.forEach(function(d){ h += '<li>' + d.date + ' — ' + d.units + ' units</li>'; });
+					h += '</ul>';
+				}
+				$('#tradeshowBox').html(h);
+			}
+
+			var html = (typeof marked !== 'undefined') ? marked.parse(res.report) : res.report.replace(/\n/g,'<br>');
+			$('#seasonReport').html(html).show();
+		})
+		.fail(function(xhr, status) {
+			$('#seasonStatus').addClass('text-danger').text(
+				status === 'timeout' ? 'Timed out — try again.' : 'Failed (' + (xhr.status || 'no response') + ').');
+		})
+		.always(function() { $btn.prop('disabled', false); });
 	});
 
 	// ── Planning events ───────────────────────────────────────────────────
