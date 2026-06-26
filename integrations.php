@@ -17,13 +17,15 @@
 	try { $db->query("SELECT 1 FROM settings LIMIT 1"); $settingsReady = true; }
 	catch (Throwable $e) { $settingsReady = false; }
 
-	$curDomain  = $settingsReady ? (string)setting_get($db, 'shopify_domain', '') : '';
-	$curVersion = $settingsReady ? (string)setting_get($db, 'shopify_api_version', '') : '';
-	$curToken   = $settingsReady ? (string)setting_get($db, 'shopify_token', '') : '';
+	$curDomain   = $settingsReady ? (string)setting_get($db, 'shopify_domain', '') : '';
+	$curVersion  = $settingsReady ? (string)setting_get($db, 'shopify_api_version', '') : '';
+	$curClientId = $settingsReady ? (string)setting_get($db, 'shopify_client_id', '') : '';
+	$curSecret   = $settingsReady ? (string)setting_get($db, 'shopify_client_secret', '') : '';
 	if ($curVersion === '') $curVersion = '2025-01';
 
-	$tokenSet  = ($curToken !== '' && strpos($curToken, 'CHANGE_ME') === false);
-	$tokenMask = $tokenSet ? '••••••••' . substr($curToken, -4) : '';
+	$secretSet  = ($curSecret !== '' && strpos($curSecret, 'CHANGE_ME') === false);
+	$secretMask = $secretSet ? '••••••••' . substr($curSecret, -4) : '';
+	$connected  = ($curDomain !== '' && $curClientId !== '' && $secretSet);
 
 	require_once(__DIR__."/includes/header.php");
 ?>
@@ -48,8 +50,8 @@
 
 			<div class="panel-header mb-3">
 				<span class="panel-title">Shopify</span>
-				<?php if ($tokenSet): ?>
-				<span class="badge bg-success">Token saved</span>
+				<?php if ($connected): ?>
+				<span class="badge bg-success">Credentials saved</span>
 				<?php else: ?>
 				<span class="badge bg-secondary">Not connected</span>
 				<?php endif; ?>
@@ -60,14 +62,21 @@
 				<input type="text" id="shopDomain" class="form-control"
 					value="<?php echo htmlspecialchars($curDomain); ?>"
 					placeholder="your-store.myshopify.com" />
-				<div class="form-text">Use the <code>.myshopify.com</code> admin domain (not bluebirdwaterfowl.com).</div>
+				<div class="form-text">Use the <code>.myshopify.com</code> domain (not bluebirdwaterfowl.com).</div>
 			</div>
 
 			<div class="mb-3">
-				<label class="form-label small fw-semibold">Admin API access token</label>
-				<input type="password" id="shopToken" class="form-control" autocomplete="off"
-					placeholder="<?php echo $tokenSet ? 'Saved ('.htmlspecialchars($tokenMask).') — leave blank to keep' : 'shpat_…'; ?>" />
-				<div class="form-text">Starts with <code>shpat_</code>. Leave blank to keep the current token.</div>
+				<label class="form-label small fw-semibold">Client ID</label>
+				<input type="text" id="shopClientId" class="form-control" autocomplete="off"
+					value="<?php echo htmlspecialchars($curClientId); ?>"
+					placeholder="from the app's Settings tab" />
+			</div>
+
+			<div class="mb-3">
+				<label class="form-label small fw-semibold">Client secret</label>
+				<input type="password" id="shopClientSecret" class="form-control" autocomplete="off"
+					placeholder="<?php echo $secretSet ? 'Saved ('.htmlspecialchars($secretMask).') — leave blank to keep' : 'from the app\'s Settings tab'; ?>" />
+				<div class="form-text">Leave blank to keep the current secret. The MRP fetches and refreshes the access token automatically.</div>
 			</div>
 
 			<div class="mb-3">
@@ -89,13 +98,14 @@
 	<div class="col-12 col-lg-5">
 		<div class="card">
 		<div class="card-body">
-			<h6 class="fw-bold mb-2">How to get a token</h6>
+			<h6 class="fw-bold mb-2">How to get these credentials</h6>
+			<p class="small text-muted mb-2">Shopify now uses the <strong>Dev Dashboard</strong> (<code>dev.shopify.com/dashboard</code>) for this — the old "Develop apps" token flow is gone.</p>
 			<ol class="small text-muted mb-0" style="padding-left:1.1rem;">
-				<li class="mb-1">In Shopify admin: <strong>Settings → Apps and sales channels → Develop apps → Create an app</strong>.</li>
-				<li class="mb-1">Open <strong>Configuration → Admin API integration → Configure</strong> and grant the scopes <code>read_products</code> and <code>read_inventory</code>, then Save.</li>
-				<li class="mb-1">Click <strong>Install app</strong> (top right).</li>
-				<li class="mb-1">Under <strong>API credentials</strong>, reveal and copy the <strong>Admin API access token</strong> (<code>shpat_…</code>).</li>
-				<li>Paste it here with your <code>.myshopify.com</code> domain and Save.</li>
+				<li class="mb-1">Open your app (e.g. <strong>MRP</strong>) in the <strong>Dev Dashboard</strong>.</li>
+				<li class="mb-1">Go to the <strong>Versions</strong> tab and add the scopes <code>read_products</code> and <code>read_inventory</code>, then save/release.</li>
+				<li class="mb-1">On the app's <strong>Home/Overview</strong>, click <strong>Install app</strong> and select your store.</li>
+				<li class="mb-1">Open the <strong>Settings</strong> tab and copy the <strong>Client ID</strong> and <strong>Client secret</strong>.</li>
+				<li>Paste both here with your <code>.myshopify.com</code> domain and Save.</li>
 			</ol>
 		</div>
 		</div>
@@ -112,14 +122,15 @@
 			method: 'POST',
 			timeout: 15000,
 			data: {
-				domain:      $('#shopDomain').val(),
-				token:       $('#shopToken').val(),
-				api_version: $('#shopVersion').val()
+				domain:        $('#shopDomain').val(),
+				client_id:     $('#shopClientId').val(),
+				client_secret: $('#shopClientSecret').val(),
+				api_version:   $('#shopVersion').val()
 			}
 		}).done(function(resp) {
 			if ($.trim(resp) === 'ok') {
 				$('#statusMsg').addClass('text-success').text('Saved.');
-				$('#shopToken').val('');
+				$('#shopClientSecret').val('');
 				setTimeout(function(){ location.reload(); }, 700);
 			} else {
 				$('#statusMsg').addClass('text-danger').text('Could not save: ' + resp);

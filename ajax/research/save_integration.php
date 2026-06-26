@@ -20,9 +20,10 @@
 			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		) ENGINE=InnoDB");
 
-		$domain  = trim($_POST['domain']      ?? '');
-		$version = trim($_POST['api_version'] ?? '');
-		$token   = trim($_POST['token']       ?? '');
+		$domain   = trim($_POST['domain']        ?? '');
+		$version  = trim($_POST['api_version']   ?? '');
+		$clientId = trim($_POST['client_id']     ?? '');
+		$secret   = trim($_POST['client_secret'] ?? '');
 
 		// Normalize domain — accept a pasted URL and reduce to the host.
 		$domain = preg_replace('#^https?://#i', '', $domain);
@@ -30,12 +31,18 @@
 
 		setting_set($db, 'shopify_domain', $domain);
 		setting_set($db, 'shopify_api_version', $version !== '' ? $version : '2025-01');
+		setting_set($db, 'shopify_client_id', $clientId);
 
-		// Only overwrite the token when a new one is actually entered, so saving
-		// the form without re-typing it doesn't wipe the stored token.
-		if ($token !== '') {
-			setting_set($db, 'shopify_token', $token);
+		// Only overwrite the secret when a new one is entered, so saving the
+		// form without re-typing it doesn't wipe the stored secret.
+		if ($secret !== '') {
+			setting_set($db, 'shopify_client_secret', $secret);
 		}
+
+		// Credentials changed — drop any cached access token so the next call
+		// fetches a fresh one with the new credentials/scopes.
+		setting_set($db, 'shopify_token', '');
+		setting_set($db, 'shopify_token_expires', '0');
 
 		echo 'ok';
 	} catch (Throwable $e) {

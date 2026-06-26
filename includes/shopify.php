@@ -38,25 +38,114 @@
 		try {
 			$db = db_connect();
 			if ($db) {
-				$d = setting_get($db, 'shopify_domain');
-				$t = setting_get($db, 'shopify_token');
-				$v = setting_get($db, 'shopify_api_version');
-				if ($d !== null && $d !== '') $cfg['domain']      = $d;
-				if ($t !== null && $t !== '') $cfg['token']       = $t;
-				if ($v !== null && $v !== '') $cfg['api_version'] = $v;
+				$map = [
+					'shopify_domain'        => 'domain',
+					'shopify_api_version'   => 'api_version',
+					'shopify_client_id'     => 'client_id',
+					'shopify_client_secret' => 'client_secret',
+					'shopify_token'         => 'token',          // legacy/static or cached
+					'shopify_token_expires' => 'token_expires',  // cache expiry (unix)
+				];
+				foreach ($map as $key => $field) {
+					$val = setting_get($db, $key);
+					if ($val !== null && $val !== '') $cfg[$field] = $val;
+				}
 			}
 		} catch (Throwable $e) { /* settings table not migrated yet — use file config */ }
 
 		return $cfg;
 	}
 
-	/** True only when a real domain + token have been filled in. */
+	/** True when we have a domain plus either Client ID/secret or a static token. */
 	function shopify_is_configured() {
 		$c = shopify_config();
-		return !empty($c['domain'])
-			&& !empty($c['token'])
-			&& strpos($c['token'], 'CHANGE_ME') === false
-			&& strpos($c['domain'], 'your-store') === false;
+		if (empty($c['domain']) || strpos($c['domain'], 'your-store') !== false) return false;
+
+		$hasClient = !empty($c['client_id']) && !empty($c['client_secret'])
+			&& strpos((string)$c['client_secret'], 'CHANGE_ME') === false;
+		$hasStatic = !empty($c['token']) && strpos((string)$c['token'], 'CHANGE_ME') === false;
+
+		return $hasClient || $hasStatic;
+	}
+
+	/**
+	 * Exchange Client ID/secret for a short-lived Admin API token
+	 * (Dev Dashboard "client credentials" grant). Returns
+	 * ['token' => ..., 'expires' => unix] or ['error' => ...].
+	 */
+	function shopify_fetch_token($c) {
+		$url  = "https://{$c['domain']}/admin/oauth/access_token";
+		$post = http_build_query([
+			'grant_type'    => 'client_credentials',
+			'client_id'     => $c['client_id'],
+			'client_secret' => $c['client_secret'],
+		]);
+
+		$ch = curl_init($url);
+		curl_setopt_array($ch, [
+			CURLOPT_RETURNTRANSFER => true,
+			CURLOPT_POST           => true,
+			CURLOPT_POSTFIELDS     => $post,
+			CURLOPT_HTTPHEADER     => ['Content-Type: application/x-www-form-urlencoded'],
+			CURLOPT_TIMEOUT        => 30,
+		]);
+		$body = curl_exec($ch);
+		$code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+		$err  = curl_error($ch);
+		curl_close($ch);
+
+		if ($body === false) return ['error' => 'Could not reach Shopify: ' . $err];
+
+		$j = json_decode($body, true);
+		if ($code === 401 || $code === 403) {
+			return ['error' => 'Shopify rejected the Client ID/secret (HTTP ' . $code . '). Check the credentials, and make sure the app is installed on this store and in the same organization.'];
+		}
+		if (!is_array($j) || empty($j['access_token'])) {
+			$msg = (is_array($j) && !empty($j['error_description'])) ? $j['error_description']
+				 : ((is_array($j) && !empty($j['error'])) ? $j['error'] : 'Unexpected token response (HTTP ' . $code . ').');
+			return ['error' => 'Could not get an access token: ' . $msg];
+		}
+
+		return ['token' => $j['access_token'], 'expires' => time() + (int)($j['expires_in'] ?? 86399)];
+	}
+
+	/**
+	 * Resolve a usable Admin API access token. Prefers a cached client-credentials
+	 * token, refreshing it when expired; falls back to a static token. Returns
+	 * ['token' => string] or ['error' => string].
+	 */
+	function shopify_access_token() {
+		static $resolved = null;
+		if ($resolved !== null) return $resolved;
+
+		$c = shopify_config();
+
+		// Dev Dashboard apps: client credentials grant.
+		if (!empty($c['client_id']) && !empty($c['client_secret']) && !empty($c['domain'])) {
+			$cached = $c['token'] ?? '';
+			$exp    = (int)($c['token_expires'] ?? 0);
+			if ($cached !== '' && $exp > time() + 120) {       // 2-min safety buffer
+				return $resolved = ['token' => $cached];
+			}
+
+			$fetched = shopify_fetch_token($c);
+			if (!empty($fetched['error'])) return $resolved = ['error' => $fetched['error']];
+
+			try {
+				$db = db_connect();
+				if ($db) {
+					setting_set($db, 'shopify_token', $fetched['token']);
+					setting_set($db, 'shopify_token_expires', (string)$fetched['expires']);
+				}
+			} catch (Throwable $e) { /* cache write best-effort */ }
+
+			return $resolved = ['token' => $fetched['token']];
+		}
+
+		// Legacy static token (admin-created custom apps).
+		if (!empty($c['token'])) return $resolved = ['token' => $c['token']];
+
+		return $resolved = ['error' => 'Shopify is not configured.'];
 	}
 
 	/**
@@ -66,9 +155,13 @@
 	 */
 	function shopify_graphql($query, $variables = []) {
 		$c = shopify_config();
-		if (empty($c['domain']) || empty($c['token'])) {
-			return ['error' => 'Shopify is not configured. Add a "shopify" block to includes/config.local.php.'];
+		if (empty($c['domain'])) {
+			return ['error' => 'Shopify is not configured. Add your store domain and credentials on the Integrations page.'];
 		}
+
+		$auth = shopify_access_token();
+		if (!empty($auth['error'])) return ['error' => $auth['error']];
+		$token = $auth['token'];
 
 		$version = $c['api_version'] ?? '2025-01';
 		$url     = "https://{$c['domain']}/admin/api/{$version}/graphql.json";
@@ -85,7 +178,7 @@
 				CURLOPT_POSTFIELDS     => $payload,
 				CURLOPT_HTTPHEADER     => [
 					'Content-Type: application/json',
-					'X-Shopify-Access-Token: ' . $c['token'],
+					'X-Shopify-Access-Token: ' . $token,
 				],
 				CURLOPT_TIMEOUT        => 30,
 			]);
@@ -98,10 +191,10 @@
 				return ['error' => 'Could not reach Shopify: ' . $curlErr];
 			}
 			if ($httpCode === 401) {
-				return ['error' => 'Shopify rejected the credentials (HTTP 401). The token is invalid for this store — make sure you pasted the Admin API access token (starts with shpat_, not the API key or secret) and that the store domain matches the store that token belongs to.'];
+				return ['error' => 'Shopify rejected the credentials (HTTP 401). Check the Client ID/secret and that the app is installed on this store.'];
 			}
 			if ($httpCode === 403) {
-				return ['error' => 'Shopify accepted the token but denied access (HTTP 403). Add the read_products and read_inventory scopes to the app, then reinstall it and use the new token.'];
+				return ['error' => 'Shopify denied access (HTTP 403). Add the read_products and read_inventory scopes to the app (Versions tab), then reinstall it.'];
 			}
 
 			$json = json_decode($body, true);

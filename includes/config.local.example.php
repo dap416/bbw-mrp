@@ -17,13 +17,16 @@
 		],
 
 		// Shopify Admin API — used by the Research page to read live store
-		// inventory. Create a Custom App in your Shopify admin
-		// (Settings → Apps and sales channels → Develop apps → Create an app),
-		// grant the Admin API scopes `read_products` and `read_inventory`,
-		// install it, then copy the Admin API access token (starts with shpat_).
+		// inventory. Easiest path: enter these on the in-app Integrations page
+		// (stored in the DB) instead of here. Shopify now uses the Dev Dashboard
+		// (dev.shopify.com/dashboard): create an app, add the read_products and
+		// read_inventory scopes, install it on your store, then copy the
+		// Client ID and Client secret from the app's Settings tab. The MRP
+		// exchanges them for a short-lived access token automatically.
 		'shopify' => [
-			'domain'      => 'your-store.myshopify.com', // the *.myshopify.com domain, not the public domain
-			'token'       => 'CHANGE_ME',                // Admin API access token (shpat_...)
-			'api_version' => '2025-01',
+			'domain'        => 'your-store.myshopify.com', // the *.myshopify.com domain
+			'client_id'     => 'CHANGE_ME',
+			'client_secret' => 'CHANGE_ME',
+			'api_version'   => '2025-01',
 		],
 	];
