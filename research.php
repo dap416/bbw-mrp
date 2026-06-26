@@ -6,8 +6,18 @@
 		deny_access();
 	}
 	require_once(__DIR__."/includes/shopify.php");
+	require_once(__DIR__."/includes/anthropic.php");
 
 	$db = db_connect();
+
+	$aiReady = anthropic_is_configured();
+	$defaultTarget = date('Y-m-d', strtotime('+90 days'));
+
+	// Planning events (POs + tradeshows)
+	$planEvents = [];
+	try {
+		$planEvents = $db->query("SELECT * FROM planning_events ORDER BY event_date ASC, id ASC")->fetchAll();
+	} catch (Throwable $e) { $planEvents = []; }
 
 	// ── Has the migration been run? ──────────────────────────────────────────
 	$hasCol = false;       // shopify_sku column present
@@ -180,6 +190,123 @@
 	<p class="mb-0 small"><?php echo htmlspecialchars($shopErr); ?></p>
 </div>
 <?php endif; ?>
+
+<!-- ── PLANNING ASSISTANT (AI CHAT) ─────────────────────────────────────── -->
+<div class="card mb-4" style="border-top:3px solid #d97757;">
+<div class="card-body">
+
+	<div class="panel-header mb-2">
+		<span class="panel-title">Planning Assistant</span>
+		<?php if (!$aiReady): ?>
+		<a href="/integrations.php" class="badge bg-secondary text-decoration-none">Connect Claude →</a>
+		<?php endif; ?>
+	</div>
+
+	<?php if (!$aiReady): ?>
+	<div class="alert alert-info mb-0">
+		<p class="mb-2">Ask plain-English ordering questions once you connect a Claude API key.</p>
+		<a href="/integrations.php" class="btn btn-sm btn-info">Open Integrations Settings</a>
+	</div>
+	<?php else: ?>
+
+	<p class="text-muted small mb-2">
+		Ask things like <em>"How much do I need to order to survive until Oct 1 vs last year's sales?"</em>
+		It considers your Shopify sales history, finished &amp; raw inventory, BOMs, MOQ, lead times, and the POs/tradeshows below.
+	</p>
+
+	<div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
+		<label class="small fw-semibold text-muted">Plan through:</label>
+		<input type="date" id="planTarget" class="form-control form-control-sm" style="width:170px;"
+			value="<?php echo htmlspecialchars($defaultTarget); ?>" />
+	</div>
+
+	<textarea id="planQuestion" class="form-control mb-2" rows="2"
+		placeholder="Ask a planning question…"></textarea>
+
+	<div class="d-flex align-items-center gap-2">
+		<button id="askBtn" class="btn btn-primary btn-sm">Ask</button>
+		<span id="askStatus" class="small text-muted"></span>
+	</div>
+
+	<div id="askAnswer" class="mt-3" style="display:none; background:#faf9f7; border:1px solid #eee; border-radius:8px; padding:16px;"></div>
+	<?php endif; ?>
+
+</div>
+</div>
+
+<!-- ── PLANNING EVENTS (POs + TRADESHOWS) ───────────────────────────────── -->
+<div class="card mb-4" style="border-top:3px solid #4680ff;">
+<div class="card-body">
+
+	<div class="panel-header mb-3">
+		<span class="panel-title">Large POs &amp; Tradeshows</span>
+		<span class="muted-pill"><?php echo count($planEvents); ?> event<?php echo count($planEvents) !== 1 ? 's' : ''; ?></span>
+	</div>
+
+	<p class="text-muted small mb-3">
+		Add big purchase orders (that may repeat) and tradeshows so the planner accounts for those extraordinary spikes.
+		Put the products and quantities in the details box.
+	</p>
+
+	<div class="scroll-table mb-3">
+	<table class="table dash-table align-middle">
+		<thead><tr>
+			<th>Type</th><th>Name</th><th>Date</th><th>End</th><th>Repeats</th><th>Details</th><th></th>
+		</tr></thead>
+		<tbody id="eventRows">
+		<?php foreach ($planEvents as $ev): ?>
+		<tr data-id="<?php echo (int)$ev['id']; ?>">
+			<td><span class="muted-pill"><?php echo htmlspecialchars($ev['type']); ?></span></td>
+			<td class="fw-semibold"><?php echo htmlspecialchars($ev['name']); ?></td>
+			<td class="small"><?php echo htmlspecialchars($ev['event_date'] ?? '—'); ?></td>
+			<td class="small"><?php echo htmlspecialchars($ev['end_date'] ?? '—'); ?></td>
+			<td class="small"><?php echo $ev['repeats'] ? 'yearly' : '—'; ?></td>
+			<td class="small text-muted"><?php echo htmlspecialchars($ev['details'] ?? ''); ?></td>
+			<td><button class="btn btn-sm btn-outline-danger ev-del" data-id="<?php echo (int)$ev['id']; ?>">Remove</button></td>
+		</tr>
+		<?php endforeach; ?>
+		<?php if (!$planEvents): ?>
+		<tr id="noEventsRow"><td colspan="7" class="text-muted text-center py-3">No events yet.</td></tr>
+		<?php endif; ?>
+		</tbody>
+	</table>
+	</div>
+
+	<div class="row g-2 align-items-end">
+		<div class="col-6 col-md-2">
+			<label class="form-label small fw-semibold mb-1">Type</label>
+			<select id="evType" class="form-select form-select-sm">
+				<option value="po">PO</option>
+				<option value="tradeshow">Tradeshow</option>
+			</select>
+		</div>
+		<div class="col-6 col-md-3">
+			<label class="form-label small fw-semibold mb-1">Name</label>
+			<input id="evName" class="form-control form-control-sm" placeholder="e.g. Cabela's PO" />
+		</div>
+		<div class="col-6 col-md-2">
+			<label class="form-label small fw-semibold mb-1">Date</label>
+			<input id="evDate" type="date" class="form-control form-control-sm" />
+		</div>
+		<div class="col-6 col-md-2">
+			<label class="form-label small fw-semibold mb-1">End (optional)</label>
+			<input id="evEnd" type="date" class="form-control form-control-sm" />
+		</div>
+		<div class="col-6 col-md-2">
+			<label class="form-label small fw-semibold mb-1">Details</label>
+			<input id="evDetails" class="form-control form-control-sm" placeholder="e.g. 500x LDA, 250x MEA" />
+		</div>
+		<div class="col-6 col-md-1">
+			<div class="form-check mb-1">
+				<input class="form-check-input" type="checkbox" id="evRepeats">
+				<label class="form-check-label small" for="evRepeats">Yearly</label>
+			</div>
+			<button id="evAdd" class="btn btn-sm btn-primary w-100">Add</button>
+		</div>
+	</div>
+
+</div>
+</div>
 
 <!-- ── COMPARISON TABLE ─────────────────────────────────────────────────── -->
 <div class="card research-card mb-4">
@@ -483,6 +610,73 @@
 	$(document).on('keypress', '.goal-input', function(e) {
 		if (e.which === 13) $(this).closest('tr').find('.goal-save').click();
 	});
+
+	// ── Planning Assistant ────────────────────────────────────────────────
+	$('#askBtn').on('click', function() {
+		var q = $.trim($('#planQuestion').val());
+		if (!q) { $('#askStatus').text('Enter a question first.'); return; }
+		var $btn = $(this);
+		$btn.prop('disabled', true);
+		$('#askStatus').removeClass('text-danger').text('Thinking… (this can take up to a minute)');
+		$('#askAnswer').hide();
+		$.ajax({
+			url: '/ajax/research/ask.php',
+			method: 'POST',
+			dataType: 'json',
+			timeout: 180000,
+			data: { question: q, target_date: $('#planTarget').val() }
+		}).done(function(res) {
+			if (res.answer) {
+				var html = (typeof marked !== 'undefined') ? marked.parse(res.answer)
+					: res.answer.replace(/\n/g, '<br>');
+				$('#askAnswer').html(html).show();
+				$('#askStatus').text('');
+			} else {
+				$('#askStatus').addClass('text-danger').text(res.error || 'No answer returned.');
+			}
+		}).fail(function(xhr, status) {
+			$('#askStatus').addClass('text-danger').text(
+				status === 'timeout' ? 'Timed out — try a narrower question.'
+				: 'Request failed (' + (xhr.status || 'no response') + ').');
+		}).always(function() {
+			$btn.prop('disabled', false);
+		});
+	});
+
+	// ── Planning events ───────────────────────────────────────────────────
+	$('#evAdd').on('click', function() {
+		var name = $.trim($('#evName').val());
+		if (!name) { alert('Enter a name.'); return; }
+		var $btn = $(this);
+		$btn.prop('disabled', true).text('…');
+		$.post('/ajax/research/event_save.php', {
+			type:       $('#evType').val(),
+			name:       name,
+			event_date: $('#evDate').val(),
+			end_date:   $('#evEnd').val(),
+			repeats:    $('#evRepeats').is(':checked') ? 1 : 0,
+			details:    $('#evDetails').val()
+		}, function(resp) {
+			if ($.trim(resp) === 'ok') { location.reload(); }
+			else { alert('Could not save: ' + resp); $btn.prop('disabled', false).text('Add'); }
+		}).fail(function(xhr) {
+			alert('Save failed: ' + ($.trim(xhr.responseText) || xhr.status));
+			$btn.prop('disabled', false).text('Add');
+		});
+	});
+
+	$(document).on('click', '.ev-del', function() {
+		if (!confirm('Remove this event?')) return;
+		var id = $(this).data('id');
+		$.post('/ajax/research/event_delete.php', { id: id }, function(resp) {
+			if ($.trim(resp) === 'ok') {
+				$("tr[data-id='" + id + "']").remove();
+			} else { alert('Could not remove.'); }
+		});
+	});
 </script>
+
+<!-- Markdown renderer for assistant answers -->
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
 
 <?php require_once(__DIR__."/includes/footer.php"); ?>

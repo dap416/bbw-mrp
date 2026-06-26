@@ -34,6 +34,20 @@ run($db,
     ) ENGINE=InnoDB",
     $log, "Create settings table");
 
+// Planning events — large POs and tradeshows the demand planner considers
+run($db,
+    "CREATE TABLE IF NOT EXISTS planning_events (
+        id          INT AUTO_INCREMENT PRIMARY KEY,
+        type        VARCHAR(20)  NOT NULL DEFAULT 'po',
+        name        VARCHAR(255) NOT NULL,
+        event_date  DATE         DEFAULT NULL,
+        end_date    DATE         DEFAULT NULL,
+        repeats     TINYINT(1)   NOT NULL DEFAULT 0,
+        details     TEXT,
+        created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB",
+    $log, "Create planning_events table");
+
 ?><!doctype html><html><head><title>Research Setup</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
 </head><body class="p-4">

@@ -295,3 +295,76 @@
 
 		return ['error' => null, 'skus' => $bySku];
 	}
+
+	/**
+	 * Aggregate units sold per SKU between two dates (ISO YYYY-MM-DD).
+	 * Also tallies units by sales channel so the planner can separate online,
+	 * point-of-sale (tradeshows), and wholesale demand. Returns
+	 * ['error'=>..., 'by_sku'=>[sku=>qty], 'by_channel'=>[chan=>qty],
+	 *  'orders'=>int, 'truncated'=>bool].
+	 */
+	function shopify_sales_in_range($since, $until) {
+		$query = '
+		query($cursor: String, $q: String!) {
+		  orders(first: 100, after: $cursor, query: $q, sortKey: CREATED_AT) {
+		    pageInfo { hasNextPage endCursor }
+		    edges {
+		      node {
+		        createdAt
+		        sourceName
+		        cancelledAt
+		        lineItems(first: 30) {
+		          edges { node { quantity sku } }
+		        }
+		      }
+		    }
+		  }
+		}';
+
+		$q = "created_at:>=$since AND created_at:<=$until";
+		$bySku = []; $byChannel = []; $cursor = null; $pages = 0; $orders = 0;
+
+		do {
+			$res = shopify_graphql($query, ['cursor' => $cursor, 'q' => $q]);
+			if (!empty($res['error'])) return ['error' => $res['error'], 'by_sku' => [], 'by_channel' => []];
+			$o = $res['data']['orders'] ?? null;
+			if ($o === null) return ['error' => 'Malformed Shopify orders response.', 'by_sku' => [], 'by_channel' => []];
+
+			foreach ($o['edges'] as $oe) {
+				$n = $oe['node'];
+				if (!empty($n['cancelledAt'])) continue;
+				$orders++;
+				$chan = shopify_channel_label($n['sourceName'] ?? '');
+				foreach ($n['lineItems']['edges'] as $le) {
+					$li  = $le['node'];
+					$sku = trim((string)($li['sku'] ?? ''));
+					$qty = (int)($li['quantity'] ?? 0);
+					if ($sku === '' || $qty <= 0) continue;
+					$bySku[$sku]      = ($bySku[$sku] ?? 0) + $qty;
+					$byChannel[$chan] = ($byChannel[$chan] ?? 0) + $qty;
+				}
+			}
+
+			$cursor  = $o['pageInfo']['endCursor']  ?? null;
+			$hasNext = $o['pageInfo']['hasNextPage'] ?? false;
+			$pages++;
+		} while ($hasNext && $pages < 40);
+
+		return [
+			'error'      => null,
+			'by_sku'     => $bySku,
+			'by_channel' => $byChannel,
+			'orders'     => $orders,
+			'truncated'  => ($hasNext && $pages >= 40),
+		];
+	}
+
+	/** Map a Shopify sourceName to a friendly channel label. */
+	function shopify_channel_label($source) {
+		$s = strtolower($source);
+		if ($s === 'pos' || strpos($s, 'point') !== false) return 'pos';
+		if ($s === 'web') return 'online';
+		if (strpos($s, 'draft') !== false) return 'draft/wholesale';
+		if (strpos($s, 'collective') !== false) return 'collective/wholesale';
+		return $source !== '' ? $source : 'other';
+	}

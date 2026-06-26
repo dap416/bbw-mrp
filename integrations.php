@@ -27,6 +27,12 @@
 	$secretMask = $secretSet ? '••••••••' . substr($curSecret, -4) : '';
 	$connected  = ($curDomain !== '' && $curClientId !== '' && $secretSet);
 
+	$curAiKey   = $settingsReady ? (string)setting_get($db, 'anthropic_api_key', '') : '';
+	$curAiModel = $settingsReady ? (string)setting_get($db, 'anthropic_model', '') : '';
+	if ($curAiModel === '') $curAiModel = 'claude-opus-4-8';
+	$aiKeySet   = ($curAiKey !== '' && strpos($curAiKey, 'CHANGE_ME') === false);
+	$aiKeyMask  = $aiKeySet ? '••••••••' . substr($curAiKey, -4) : '';
+
 	require_once(__DIR__."/includes/header.php");
 ?>
 
@@ -112,6 +118,60 @@
 	</div>
 </div>
 
+<div class="row g-4 mt-1">
+	<div class="col-12 col-lg-7">
+		<div class="card" style="border-top:3px solid #d97757;">
+		<div class="card-body">
+
+			<div class="panel-header mb-3">
+				<span class="panel-title">Claude (Planning Assistant)</span>
+				<?php if ($aiKeySet): ?>
+				<span class="badge bg-success">Key saved</span>
+				<?php else: ?>
+				<span class="badge bg-secondary">Not connected</span>
+				<?php endif; ?>
+			</div>
+
+			<p class="text-muted small mb-3">Powers the plain-English planning assistant on the Research page.</p>
+
+			<div class="mb-3">
+				<label class="form-label small fw-semibold">Anthropic API key</label>
+				<input type="password" id="aiKey" class="form-control" autocomplete="off"
+					placeholder="<?php echo $aiKeySet ? 'Saved ('.htmlspecialchars($aiKeyMask).') — leave blank to keep' : 'sk-ant-…'; ?>" />
+				<div class="form-text">Starts with <code>sk-ant-</code>. Leave blank to keep the current key.</div>
+			</div>
+
+			<div class="mb-3">
+				<label class="form-label small fw-semibold">Model</label>
+				<input type="text" id="aiModel" class="form-control" style="max-width:260px;"
+					value="<?php echo htmlspecialchars($curAiModel); ?>" />
+				<div class="form-text">Default <code>claude-opus-4-8</code> (most capable). Use <code>claude-sonnet-4-6</code> or <code>claude-haiku-4-5</code> to cut cost.</div>
+			</div>
+
+			<div class="d-flex align-items-center gap-2">
+				<button id="aiSaveBtn" class="btn btn-primary">Save</button>
+				<span id="aiStatusMsg" class="ms-2 small"></span>
+			</div>
+
+		</div>
+		</div>
+	</div>
+
+	<div class="col-12 col-lg-5">
+		<div class="card">
+		<div class="card-body">
+			<h6 class="fw-bold mb-2">How to get an API key</h6>
+			<ol class="small text-muted mb-0" style="padding-left:1.1rem;">
+				<li class="mb-1">Go to <strong>console.anthropic.com</strong> and sign in.</li>
+				<li class="mb-1">Add a little billing credit under <strong>Billing</strong> (pay-as-you-go).</li>
+				<li class="mb-1">Open <strong>Settings → API Keys → Create Key</strong>.</li>
+				<li>Copy the key (<code>sk-ant-…</code>) and paste it here, then Save.</li>
+			</ol>
+		</div>
+		</div>
+	</div>
+</div>
+
 <script>
 	$('#saveBtn').on('click', function() {
 		var $btn = $(this);
@@ -159,6 +219,36 @@
 			$('#statusMsg').addClass('text-danger').text('Connection test failed.');
 		}).always(function() {
 			$btn.prop('disabled', false).text('Test Connection');
+		});
+	});
+
+	$('#aiSaveBtn').on('click', function() {
+		var $btn = $(this);
+		$btn.prop('disabled', true).text('Saving…');
+		$('#aiStatusMsg').removeClass('text-success text-danger').text('');
+		$.ajax({
+			url: '/ajax/research/save_integration.php',
+			method: 'POST',
+			timeout: 15000,
+			data: {
+				anthropic_api_key: $('#aiKey').val(),
+				anthropic_model:   $('#aiModel').val()
+			}
+		}).done(function(resp) {
+			if ($.trim(resp) === 'ok') {
+				$('#aiStatusMsg').addClass('text-success').text('Saved.');
+				$('#aiKey').val('');
+				setTimeout(function(){ location.reload(); }, 700);
+			} else {
+				$('#aiStatusMsg').addClass('text-danger').text('Could not save: ' + resp);
+				$btn.prop('disabled', false).text('Save');
+			}
+		}).fail(function(xhr, status) {
+			var msg = (status === 'timeout')
+				? 'Save timed out.'
+				: 'Save failed (' + (xhr.status || 'no response') + '). ' + ($.trim(xhr.responseText) || '');
+			$('#aiStatusMsg').addClass('text-danger').text(msg);
+			$btn.prop('disabled', false).text('Save');
 		});
 	});
 </script>
