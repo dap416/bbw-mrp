@@ -20,6 +20,11 @@ run($db,
     "ALTER TABLE products ADD COLUMN shopify_sku VARCHAR(100) DEFAULT NULL",
     $log, "Add shopify_sku column to products");
 
+// Add annual_goal to products (errors harmlessly if it already exists)
+run($db,
+    "ALTER TABLE products ADD COLUMN annual_goal INT NOT NULL DEFAULT 0",
+    $log, "Add annual_goal column to products");
+
 ?><!doctype html><html><head><title>Research Setup</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
 </head><body class="p-4">
