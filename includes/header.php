@@ -112,6 +112,15 @@
         </li>
         <?php } ?>
 
+        <?php if (has_access('research')) { ?>
+        <li class="pc-item">
+          <a href="/research.php" class="pc-link">
+            <span class="pc-micon"><i class="ti ti-flask"></i></span>
+            <span class="pc-mtext">Research</span>
+          </a>
+        </li>
+        <?php } ?>
+
         <?php if (has_access('build')) { ?>
         <li class="pc-item">
           <a href="/physical_inventory.php" class="pc-link">
