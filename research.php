@@ -134,9 +134,28 @@
 		<h2 class="fw-bold mb-0">Research</h2>
 		<div class="text-muted small">Compare live Shopify stock against what you can build from raw materials on hand.</div>
 	</div>
-	<button class="btn btn-outline-secondary btn-sm" onclick="location.reload()">
-		<i class="ti ti-refresh me-1"></i>Refresh Live Data
-	</button>
+	<div class="d-flex align-items-center gap-2">
+		<?php
+			if (!$shopConfigured) {
+				$badgeClass = 'bg-secondary';
+				$badgeText  = 'Shopify: Not connected';
+			} elseif ($shopErr) {
+				$badgeClass = 'bg-danger';
+				$badgeText  = 'Shopify: Connection error';
+			} else {
+				$badgeClass = 'bg-success';
+				$badgeText  = 'Shopify: Connected';
+			}
+		?>
+		<a href="/integrations.php" class="badge <?php echo $badgeClass; ?> text-decoration-none"
+		   style="font-size:0.78rem;padding:6px 10px;"
+		   title="<?php echo $shopErr ? htmlspecialchars($shopErr) : 'Manage Shopify connection'; ?>">
+			<i class="ti ti-plug-connected me-1"></i><?php echo $badgeText; ?>
+		</a>
+		<button class="btn btn-outline-secondary btn-sm" onclick="location.reload()">
+			<i class="ti ti-refresh me-1"></i>Refresh Live Data
+		</button>
+	</div>
 </div>
 
 <?php if (!$hasCol || !$hasGoalCol): ?>
