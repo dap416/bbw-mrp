@@ -16,7 +16,7 @@
 
 	// A "PO candidate" is an order that looks like wholesale/bulk: it came through
 	// a wholesale channel (draft/Collective) OR moved a large quantity of units.
-	$BIG_QTY = (int)($_POST['min_qty'] ?? 12);
+	$BIG_QTY = (int)($_POST['min_qty'] ?? 30);
 	$cutoff  = date('Y-m-d', strtotime('-24 months'));
 
 	$query = '
