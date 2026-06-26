@@ -75,6 +75,55 @@
 	}
 	uasort($skuOptions, fn($a, $b) => strcasecmp($a['product_title'], $b['product_title']));
 
+	/**
+	 * Suggest the best Shopify SKU for an MRP product name by scoring each
+	 * candidate on the letters and numbers in the name. E.g. "Avian X Wingz
+	 * 11.5" favours a SKU like W-AX-11… (W=wingz, AX=Avian X, 11=11.5).
+	 * Returns the best SKU string, or '' if nothing scores well enough.
+	 */
+	function research_suggest_sku($name, $skuOptions, $usedSkus = []) {
+		$norm = fn($s) => strtolower(preg_replace('/[^a-z0-9]+/i', ' ', $s));
+		$n = $norm($name);
+		// alpha word tokens (>=3 chars) and numeric tokens (integer part)
+		$alpha = array_values(array_filter(explode(' ', $n), fn($w) => strlen($w) >= 3 && !ctype_digit($w)));
+		preg_match_all('/\d+(?:\.\d+)?/', $name, $m);
+		$nums = array_values(array_unique(array_map(fn($x) => (string)intval($x), $m[0])));
+		// brand/category abbreviations → token to look for inside the SKU
+		$codes = [
+			'wing' => 'w', 'wingz' => 'w', 'case' => 'case', 'plate' => 'pl',
+			'animator' => 'a', 'rod' => 'rd', 'card' => 'cd', 'bag' => 'bag',
+			'avian' => 'ax', 'lucky' => 'ld', 'mojo' => 'm', 'elite' => 'me',
+			'baby' => 'bb', 'teal' => 'bb', 'king' => 'km', 'mallard' => 'km',
+		];
+
+		$best = ''; $bestScore = 0;
+		foreach ($skuOptions as $sku => $info) {
+			if (isset($usedSkus[$sku])) continue;  // already confirmed on another product
+			$skuNorm = strtolower(preg_replace('/[^a-z0-9]/i', '', $sku));
+			$title   = $norm(($info['product_title'] ?? '') . ' ' . ($info['variant_title'] ?? ''));
+			$titleW  = explode(' ', $title);
+			$score = 0;
+
+			foreach ($alpha as $w) {
+				if (in_array($w, $titleW, true)) $score += 2;          // word appears in Shopify title
+				if (isset($codes[$w]) && strpos($skuNorm, $codes[$w]) !== false) $score += 2; // code letters in SKU
+			}
+			foreach ($nums as $num) {
+				if ($num !== '' && strpos($skuNorm, $num) !== false) $score += 3;  // size/number matches SKU
+				elseif ($num !== '' && strpos($title, $num) !== false) $score += 1;
+			}
+			if ($score > $bestScore) { $bestScore = $score; $best = $sku; }
+		}
+		return $bestScore >= 4 ? $best : '';
+	}
+
+	// SKUs already confirmed on a product — never suggest these again.
+	$usedSkus = [];
+	foreach ($products as $pp) {
+		$s = $pp['shopify_sku'] ?? '';
+		if ($s !== '') $usedSkus[$s] = true;
+	}
+
 	// ── Annual goal planning ─────────────────────────────────────────────────
 	// For each product: credit finished stock already on hand against the goal,
 	// explode the remaining units-to-build through the BOM, and aggregate the
@@ -570,9 +619,14 @@
 
 	<div class="panel-header mb-3">
 		<span class="panel-title">Link Products to Shopify</span>
-		<?php if ($shopConfigured && !$shopErr): ?>
-		<span class="muted-pill"><?php echo count($skuOptions); ?> Shopify SKUs available</span>
-		<?php endif; ?>
+		<div class="d-flex align-items-center gap-2">
+			<?php if ($shopConfigured && !$shopErr): ?>
+			<span class="muted-pill"><?php echo count($skuOptions); ?> Shopify SKUs available</span>
+			<button id="applySuggest" class="btn btn-sm btn-outline-primary">
+				<i class="ti ti-wand me-1"></i>Apply all suggestions
+			</button>
+			<?php endif; ?>
+		</div>
 	</div>
 
 	<p class="text-muted small mb-3">
@@ -596,16 +650,27 @@
 			<th style="width:120px;"></th>
 		</tr></thead>
 		<tbody>
-		<?php foreach ($products as $p): ?>
+		<?php foreach ($products as $p):
+			$curSku = $p['shopify_sku'] ?? '';
+			$sugg   = ($curSku === '' && $shopConfigured && !$shopErr) ? research_suggest_sku($p['name'], $skuOptions, $usedSkus) : '';
+		?>
 		<tr>
 			<td class="fw-semibold"><?php echo htmlspecialchars($p['name']); ?></td>
 			<td>
 				<input type="text" class="form-control form-control-sm sku-input map-input"
 					list="skuList"
 					data-id="<?php echo (int)$p['id']; ?>"
-					data-prev="<?php echo htmlspecialchars($p['shopify_sku'] ?? ''); ?>"
-					value="<?php echo htmlspecialchars($p['shopify_sku'] ?? ''); ?>"
+					data-prev="<?php echo htmlspecialchars($curSku); ?>"
+					value="<?php echo htmlspecialchars($curSku); ?>"
 					placeholder="e.g. LDXL" />
+				<?php if ($sugg !== ''): ?>
+				<div class="small mt-1">
+					<a href="#" class="map-suggest text-decoration-none"
+					   data-id="<?php echo (int)$p['id']; ?>" data-sku="<?php echo htmlspecialchars($sugg); ?>">
+						<i class="ti ti-wand"></i> Suggested: <code><?php echo htmlspecialchars($sugg); ?></code> — use
+					</a>
+				</div>
+				<?php endif; ?>
 			</td>
 			<td>
 				<span class="map-status small" data-id="<?php echo (int)$p['id']; ?>"></span>
@@ -646,6 +711,36 @@
 	// Enter commits the field (triggers change/blur).
 	$(document).on('keydown', '.map-input', function(e) {
 		if (e.which === 13) { e.preventDefault(); $(this).blur(); }
+	});
+
+	// Click a suggestion → fill the field and auto-save.
+	$(document).on('click', '.map-suggest', function(e) {
+		e.preventDefault();
+		var id  = $(this).data('id');
+		var sku = $(this).data('sku');
+		var $inp = $(".map-input[data-id='" + id + "']");
+		$inp.val(sku).trigger('change');
+		$(this).closest('.small').fadeOut(200);
+	});
+
+	// Apply every suggestion at once, skipping any SKU already in use.
+	$('#applySuggest').on('click', function() {
+		var used = {};
+		$('.map-input').each(function() {
+			var v = $.trim($(this).val());
+			if (v) used[v] = true;
+		});
+		var applied = 0;
+		$('.map-suggest').each(function() {
+			var $s = $(this), sku = $s.data('sku');
+			if (used[sku]) return;             // don't assign the same SKU twice
+			used[sku] = true;
+			var id = $s.data('id');
+			$(".map-input[data-id='" + id + "']").val(sku).trigger('change');
+			$s.closest('.small').fadeOut(200);
+			applied++;
+		});
+		if (!applied) alert('No new suggestions to apply.');
 	});
 
 	$(document).on('click', '.goal-save', function() {
