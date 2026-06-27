@@ -627,18 +627,76 @@
 		if (s === 'tight') return '<span class="badge bg-warning text-dark">Tight</span>';
 		return '<span class="badge bg-danger">Short</span>';
 	}
-	function buildDetailTable(a) {
-		var h = '<div class="p-2" style="background:#f8f9fb;">' +
-			'<table class="table table-sm mb-0"><thead><tr>' +
+	var BP_DATA = null, BP_PARTS = null;
+	function bpNum(v, d) { v = parseInt(v, 10); return isNaN(v) ? d : Math.max(0, v); }
+
+	function renderBuildPlan(plan, parts) {
+		BP_DATA = plan; BP_PARTS = parts || {};
+		var bp = '<div class="panel-title mb-2">Suggested Build Order — Animators by Season</div>' +
+			'<div class="small text-muted mb-2">These are <strong>built</strong> from raw materials. Edit a build qty to see “remaining after” recalc live (shared cams/rods are pooled per season). Cases &amp; wings are <strong>ordered</strong>, not built — see the quarter cards.</div>' +
+			'<div class="row g-3">';
+		plan.forEach(function(season, si) {
+			bp += '<div class="col-12 col-lg-4"><div class="card h-100"><div class="card-body">' +
+				'<div class="fw-bold mb-2">' + esc(season.label) + '</div>';
+			if (!season.animators.length) {
+				bp += '<div class="text-muted small">Nothing to build this season.</div>';
+			} else {
+				bp += '<table class="table table-sm mb-0"><tbody>';
+				season.animators.forEach(function(a, ai) {
+					var rid = 'bp-' + si + '-' + ai;
+					bp += '<tr class="bp-row" data-target="' + rid + '" style="cursor:pointer;">' +
+						'<td class="fw-semibold"><i class="ti ti-chevron-right bp-chev"></i> ' + esc(a.sku) + '</td>' +
+						'<td class="text-end" style="width:96px;">' +
+							'<input type="number" min="0" class="form-control form-control-sm text-end bp-build" ' +
+							'data-si="' + si + '" data-ai="' + ai + '" value="' + a.suggested_build + '" ' +
+							'style="width:84px;display:inline-block;" onclick="event.stopPropagation();" /></td></tr>' +
+						'<tr id="' + rid + '" class="bp-detail" style="display:none;"><td colspan="2" class="p-0">' +
+						'<div class="bp-detail-body" data-si="' + si + '" data-ai="' + ai + '"></div></td></tr>';
+				});
+				bp += '</tbody></table>';
+			}
+			bp += '</div></div></div>';
+		});
+		bp += '</div>';
+		$('#buildPlan').html(bp).show();
+		plan.forEach(function(_, si) { recomputeSeason(si); });
+	}
+
+	function recomputeSeason(si) {
+		var season = BP_DATA[si]; if (!season) return;
+		var builds = season.animators.map(function(a, ai) {
+			var el = $(".bp-build[data-si='" + si + "'][data-ai='" + ai + "']");
+			return el.length ? bpNum(el.val(), a.suggested_build) : a.suggested_build;
+		});
+		var commit = {};
+		season.animators.forEach(function(a, ai) {
+			a.bom.forEach(function(b) { commit[b.part] = (commit[b.part] || 0) + builds[ai] * b.qty_per_unit; });
+		});
+		season.animators.forEach(function(a, ai) {
+			var b = builds[ai], rows = [];
+			rows.push({ kind: 'FP', name: a.sku, sub: 'finished — ' + a.product,
+				need: a.demand, have: a.entering, committed: null, remaining: a.entering + b - a.demand });
+			a.bom.forEach(function(bi) {
+				var info = BP_PARTS[bi.part] || { desc: bi.part, have: 0 };
+				var need = b * bi.qty_per_unit, tot = commit[bi.part] || 0;
+				rows.push({ kind: 'RAW', name: (info.desc || bi.part), sub: bi.part,
+					need: need, have: info.have || 0, committed: Math.max(0, tot - need), remaining: (info.have || 0) - tot });
+			});
+			$(".bp-detail-body[data-si='" + si + "'][data-ai='" + ai + "']").html(detailRowsHtml(rows));
+			var $inp = $(".bp-build[data-si='" + si + "'][data-ai='" + ai + "']");
+			$inp.toggleClass('border-warning', bpNum($inp.val(), a.suggested_build) !== a.suggested_build);
+		});
+	}
+
+	function detailRowsHtml(rows) {
+		var h = '<div class="p-2" style="background:#f8f9fb;"><table class="table table-sm mb-0"><thead><tr>' +
 			'<th class="small">Item</th><th class="small text-end">Need</th><th class="small text-end">Have</th>' +
 			'<th class="small text-end">Other this build</th><th class="small text-end">Remaining after</th></tr></thead><tbody>';
-		a.detail.forEach(function(d) {
+		rows.forEach(function(d) {
 			var remCls = d.remaining < 0 ? 'stat-neg' : (d.remaining === 0 ? 'stat-zero' : 'stat-pos');
-			h += '<tr>' +
-				'<td class="small"><span class="badge ' + (d.kind==='FP'?'bg-secondary':'bg-light text-dark') + ' me-1">' + d.kind + '</span>' +
-					'<strong>' + esc(d.name) + '</strong>' + (d.sub ? ' <span class="text-muted">' + esc(d.sub) + '</span>' : '') + '</td>' +
-				'<td class="small text-end">' + d.need + '</td>' +
-				'<td class="small text-end">' + d.have + '</td>' +
+			h += '<tr><td class="small"><span class="badge ' + (d.kind === 'FP' ? 'bg-secondary' : 'bg-light text-dark') + ' me-1">' + d.kind + '</span>' +
+				'<strong>' + esc(d.name) + '</strong>' + (d.sub ? ' <span class="text-muted">' + esc(d.sub) + '</span>' : '') + '</td>' +
+				'<td class="small text-end">' + d.need + '</td><td class="small text-end">' + d.have + '</td>' +
 				'<td class="small text-end text-muted">' + (d.committed === null ? '—' : d.committed) + '</td>' +
 				'<td class="small text-end ' + remCls + '">' + d.remaining + '</td></tr>';
 		});
@@ -670,11 +728,11 @@
 						'<table class="table table-sm mb-2"><tbody>' +
 						'<tr><td class="text-muted small">Animators — demand</td><td class="text-end fw-semibold">' + q.animator_demand + '</td></tr>' +
 						'<tr><td class="text-muted small">&nbsp;&nbsp;to build</td><td class="text-end ' + (q.animator_to_build>0?'stat-neg':'stat-pos') + '">' + q.animator_to_build + '</td></tr>' +
-						'<tr><td class="text-muted small">Other (cases/wings) — demand</td><td class="text-end fw-semibold">' + q.fg_demand + '</td></tr>' +
-						'<tr><td class="text-muted small">&nbsp;&nbsp;to order</td><td class="text-end ' + (q.fg_to_order>0?'stat-neg':'stat-pos') + '">' + q.fg_to_order + '</td></tr>' +
+						'<tr><td class="text-muted small">Cases/wings (not built) — demand</td><td class="text-end fw-semibold">' + q.fg_demand + '</td></tr>' +
+						'<tr><td class="text-muted small">&nbsp;&nbsp;to buy</td><td class="text-end ' + (q.fg_to_order>0?'stat-neg':'stat-pos') + '">' + q.fg_to_order + '</td></tr>' +
 						'</tbody></table>';
 					if (q.fg_items && q.fg_items.length) {
-						cards += '<div class="small fw-semibold text-muted">Order these:</div><ul class="small mb-0" style="padding-left:1.1rem;">';
+						cards += '<div class="small fw-semibold text-muted">Buy (order finished goods):</div><ul class="small mb-0" style="padding-left:1.1rem;">';
 						q.fg_items.forEach(function(it){ cards += '<li>' + it.order + ' × <code>' + esc(it.sku) + '</code> <span class="text-muted">' + esc(it.product) + '</span></li>'; });
 						cards += '</ul>';
 					}
@@ -684,33 +742,8 @@
 				$('#seasonSummary').html(cards).show();
 			}
 
-			// Suggested build order per season + per-SKU BOM drill-down
-			if (res.build_plan) {
-				var bp = '<div class="panel-title mb-2">Suggested Build Order — Animators by Season</div>' +
-					'<div class="small text-muted mb-2">Click a SKU to see the finished product and each raw part: need / have / committed by other builds this season / remaining after.</div>' +
-					'<div class="row g-3">';
-				res.build_plan.forEach(function(season, si) {
-					bp += '<div class="col-12 col-lg-4"><div class="card h-100"><div class="card-body">' +
-						'<div class="fw-bold mb-2">' + esc(season.label) + '</div>';
-					if (!season.animators.length) {
-						bp += '<div class="text-muted small">Nothing to build this season.</div>';
-					} else {
-						bp += '<table class="table table-sm mb-0"><tbody>';
-						season.animators.forEach(function(a, ai) {
-							var rid = 'bp-' + si + '-' + ai;
-							bp += '<tr class="bp-row" data-target="' + rid + '" style="cursor:pointer;">' +
-								'<td class="fw-semibold"><i class="ti ti-chevron-right bp-chev"></i> ' + esc(a.sku) + '</td>' +
-								'<td class="text-end fw-bold ' + (a.build>0?'stat-neg':'stat-pos') + '">' + a.build + '</td></tr>' +
-								'<tr id="' + rid + '" class="bp-detail" style="display:none;"><td colspan="2" class="p-0">' +
-								buildDetailTable(a) + '</td></tr>';
-						});
-						bp += '</tbody></table>';
-					}
-					bp += '</div></div></div>';
-				});
-				bp += '</div>';
-				$('#buildPlan').html(bp).show();
-			}
+			// Suggested build order per season + editable, live-recalc drill-down
+			if (res.build_plan) renderBuildPlan(res.build_plan, res.parts);
 
 			// Raw-material order list
 			if (res.raw_orders) {
@@ -787,6 +820,9 @@
 		$d.toggle();
 		$(this).find('.bp-chev').toggleClass('ti-chevron-right ti-chevron-down');
 	});
+
+	// Live recalc when a build quantity is edited
+	$(document).on('input', '.bp-build', function() { recomputeSeason($(this).data('si')); });
 
 	$('#seasonRefresh').on('click', function() { loadReadiness(true, false); });
 	$('#seasonAiBtn').on('click', function() { loadReadiness(false, true); });

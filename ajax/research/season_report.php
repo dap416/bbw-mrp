@@ -132,36 +132,28 @@
 		}
 	}
 
+	// Leaner payload — the browser recomputes need/committed/remaining live as the
+	// user edits build quantities. Send the ingredients: per-animator demand,
+	// entering stock, suggested build, BOM (part + qty/unit); plus a global part
+	// map (description + current on-hand).
+	$partsOut = [];
+	foreach ($raws as $rm) $partsOut[$rm['part']] = ['desc' => $rm['description'], 'have' => (int)$rm['on_hand']];
+
 	$buildPlan = [];
 	foreach ($seasons as $s) {
 		$list = [];
 		foreach ($animators as $i => $a) {
 			$info = $animBuild[$i][$s['key']];
 			if ($info['demand'] <= 0 && $info['build'] <= 0) continue;
-			$detail = [[
-				'kind' => 'FP',
-				'name' => $a['sku'] ?: $a['product'],
-				'sub'  => 'finished — ' . $a['product'],
-				'need' => $info['demand'], 'have' => $info['entering'], 'committed' => null,
-				'remaining' => $info['entering'] + $info['build'] - $info['demand'],
-			]];
-			foreach (($a['bom'] ?? []) as $bl) {
-				$q    = (int)$bl['qty_per_unit'];
-				$need = $info['build'] * $q;
-				$tot  = (int)($seasonCommit[$s['key']][$bl['part']] ?? 0);
-				$have = (int)($partInfo[$bl['part']]['qoh'] ?? 0);
-				$detail[] = [
-					'kind' => 'RAW',
-					'name' => $partInfo[$bl['part']]['desc'] ?: $bl['part'],
-					'sub'  => $bl['part'],
-					'need' => $need, 'have' => $have, 'committed' => max(0, $tot - $need),
-					'remaining' => $have - $tot,
-				];
-			}
-			$list[] = ['sku' => $a['sku'] ?: '(no SKU)', 'product' => $a['product'],
-			           'build' => $info['build'], 'demand' => $info['demand'], 'detail' => $detail];
+			$bom = [];
+			foreach (($a['bom'] ?? []) as $bl) $bom[] = ['part' => $bl['part'], 'qty_per_unit' => (int)$bl['qty_per_unit']];
+			$list[] = [
+				'sku' => $a['sku'] ?: '(no SKU)', 'product' => $a['product'],
+				'demand' => $info['demand'], 'entering' => $info['entering'],
+				'suggested_build' => $info['build'], 'bom' => $bom,
+			];
 		}
-		usort($list, fn($x, $y) => $y['build'] <=> $x['build']);
+		usort($list, fn($x, $y) => $y['suggested_build'] <=> $x['suggested_build']);
 		$buildPlan[] = ['key' => $s['key'], 'label' => $s['label'], 'animators' => $list];
 	}
 
@@ -222,6 +214,7 @@
 	$payload = json_encode([
 		'summary'        => array_values($summary),
 		'build_plan'     => $buildPlan,
+		'parts'          => $partsOut,
 		'raw_orders'     => $rawOrders,
 		'raw_total_cost' => $rawTotalCost,
 		'charts'         => ['labels' => $labels, 'animators' => $anim, 'finished_goods' => $fg],
