@@ -10,11 +10,28 @@
 
 	header('Content-Type: application/json');
 
+	/** Group a raw-material part number into a shared-parts category. */
+	function shared_category($partno) {
+		$p = strtoupper(trim((string)$partno));
+		if (strpos($p, 'CS')    === 0) return 'Camshafts';
+		if (strpos($p, 'RD')    === 0) return 'Rods';
+		if (strpos($p, 'PLATE') === 0 || strpos($p, 'PL') === 0) return 'Plates';
+		if (strpos($p, 'CDA')   === 0 || strpos($p, 'CD') === 0) return 'Packaging Cards';
+		if (strpos($p, 'MC')    === 0 || strpos($p, 'PKG') === 0) return 'Packaging';
+		return 'Other';
+	}
+
+	/** Short season label for table headers. */
+	function season_short_label($key) {
+		$map = ['jul_sep' => 'Jul–Sep', 'oct_dec' => 'Oct–Dec', 'jan_mar' => 'Jan–Mar'];
+		return $map[$key] ?? $key;
+	}
+
 	$wantAI = !empty($_POST['ai']);     // include the written AI action plan
 	$fresh  = !empty($_POST['fresh']);  // force a recompute, ignore cache
 
 	// Bump when the payload shape changes so old caches auto-invalidate.
-	$SEASON_SCHEMA = 7;
+	$SEASON_SCHEMA = 8;
 
 	$db = db_connect();
 
@@ -129,7 +146,7 @@
 	$partMeta = []; $pool = [];
 	foreach ($raws as $rm) { $partMeta[$rm['part']] = $rm; $pool[$rm['part']] = (int)$rm['on_hand'] + (int)$rm['on_order']; }
 
-	$seasonUsage = []; $sharedDrawdown = [];
+	$seasonUsage = [];
 	foreach ($seasons as $s) {
 		$enteringPool = $pool;             // pool before this season's builds
 		$usage = [];
@@ -166,19 +183,29 @@
 		usort($items, fn($x, $y) => $y['to_build'] <=> $x['to_build']);
 		$summary[$s['key']]['animator_items'] = $items;
 
-		// Deplete the shared pool; record the drawdown (parts used this season)
-		$rows = [];
-		foreach ($partMeta as $part => $rm) {
-			$u = (int)($usage[$part] ?? 0);
-			if ($u <= 0) continue;
-			$entering = (int)($pool[$part] ?? 0);
-			$remaining = $entering - $u;
-			$pool[$part] = $remaining;
-			$rows[] = ['part' => $part, 'description' => $rm['description'],
-			           'used' => $u, 'entering' => $entering, 'remaining' => $remaining];
+		// Deplete the shared pool so the next season's entering pool is cumulative.
+		foreach ($usage as $part => $u) {
+			$pool[$part] = (int)($pool[$part] ?? 0) - (int)$u;
 		}
-		usort($rows, fn($x, $y) => $x['remaining'] <=> $y['remaining']);
-		$sharedDrawdown[] = ['key' => $s['key'], 'label' => $s['label'], 'rows' => $rows];
+	}
+
+	// ── Shared parts, grouped by category, drawn down across the seasons ──────
+	$seasonShorts = [];
+	foreach ($seasons as $s) $seasonShorts[] = season_short_label($s['key']);
+
+	$sharedByPart = [];
+	foreach ($partMeta as $part => $rm) {
+		$usedAny = false;
+		foreach ($seasons as $s) if ((int)($seasonUsage[$s['key']][$part] ?? 0) > 0) { $usedAny = true; break; }
+		if (!$usedAny) continue;
+		$start = (int)$rm['on_hand'] + (int)$rm['on_order'];
+		$run = $start; $cells = [];
+		foreach ($seasons as $s) {
+			$u = (int)($seasonUsage[$s['key']][$part] ?? 0);
+			$run -= $u;
+			$cells[] = ['used' => $u, 'remaining' => $run];
+		}
+		$sharedByPart[] = ['part' => $part, 'category' => shared_category($part), 'start' => $start, 'cells' => $cells];
 	}
 
 	// ── Raw-material orders: cumulative shortfall + order-by date ──────────────
@@ -249,7 +276,8 @@
 
 	$payload = json_encode([
 		'summary'         => array_values($summary),
-		'shared_drawdown' => $sharedDrawdown,
+		'shared_by_part'  => $sharedByPart,
+		'season_shorts'   => $seasonShorts,
 		'raw_orders'      => $rawOrders,
 		'raw_total_cost'  => $rawTotalCost,
 		'charts'          => ['labels' => $labels, 'animators' => $anim, 'finished_goods' => $fg],

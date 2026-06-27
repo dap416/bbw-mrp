@@ -660,29 +660,36 @@
 		return html;
 	}
 
-	function renderSharedDrawdown(dd) {
+	function renderSharedDrawdown(parts, shorts) {
+		shorts = shorts || [];
+		var groups = {};
+		parts.forEach(function(p){ (groups[p.category] = groups[p.category] || []).push(p); });
+		var order = ['Camshafts', 'Packaging', 'Packaging Cards', 'Rods', 'Plates', 'Other'];
+
 		var h = '<div class="panel-title mb-2">Shared Parts — Build Drawdown by Season</div>' +
-			'<div class="small text-muted mb-2">Every Animator build draws from one shared pool (rods, plates, packaging). Seasons are deducted in order, so <strong>Left</strong> carries into the next season. Red = the pool goes negative (you run out) — order before then (see the Raw Materials to Order table for quantities and order-by dates).</div>' +
-			'<div class="row g-3">';
-		dd.forEach(function(season){
-			h += '<div class="col-12 col-lg-4"><div class="card h-100"><div class="card-body">' +
-				'<div class="fw-bold mb-2">' + esc(season.label) + '</div>';
-			if (!season.rows || !season.rows.length) {
-				h += '<div class="text-muted small">No builds this season.</div>';
-			} else {
-				h += '<table class="table table-sm mb-0"><thead><tr><th class="small">Part</th><th class="small text-end">Used</th><th class="small text-end">Had</th><th class="small text-end">Left</th></tr></thead><tbody>';
-				season.rows.forEach(function(r){
-					var cls = r.remaining < 0 ? 'stat-neg fw-bold' : (r.remaining === 0 ? 'stat-zero' : 'stat-pos');
-					h += '<tr><td class="small"><strong>' + esc(r.description || r.part) + '</strong> <span class="text-muted">' + esc(r.part) + '</span></td>' +
-						'<td class="small text-end">' + r.used + '</td>' +
-						'<td class="small text-end text-muted">' + r.entering + '</td>' +
-						'<td class="small text-end ' + cls + '">' + r.remaining + '</td></tr>';
+			'<div class="small text-muted mb-2">All Animator builds draw from one shared pool. <strong>Start</strong> = on hand + on order; each season’s use is deducted in order, so <strong>left</strong> carries into the next season. Red = you run out (see Raw Materials to Order for the buy quantity and order-by date).</div>';
+
+		order.forEach(function(cat){
+			var rows = groups[cat]; if (!rows || !rows.length) return;
+			rows.sort(function(a, b){ return a.part < b.part ? -1 : 1; });
+			h += '<div class="card mb-2"><div class="card-body py-2">' +
+				'<div class="fw-bold mb-1">' + esc(cat) + '</div>' +
+				'<div class="scroll-table"><table class="table table-sm mb-0"><thead><tr>' +
+				'<th class="small">SKU</th><th class="small text-end">Start</th>';
+			shorts.forEach(function(s){ h += '<th class="small text-end">' + esc(s) + ' used</th><th class="small text-end">left</th>'; });
+			h += '</tr></thead><tbody>';
+			rows.forEach(function(p){
+				h += '<tr><td class="small"><code>' + esc(p.part) + '</code></td>' +
+					'<td class="small text-end text-muted">' + p.start + '</td>';
+				p.cells.forEach(function(c){
+					var cls = c.remaining < 0 ? 'stat-neg fw-bold' : (c.remaining === 0 ? 'stat-zero' : 'stat-pos');
+					h += '<td class="small text-end text-muted">' + c.used + '</td>' +
+						'<td class="small text-end ' + cls + '">' + c.remaining + '</td>';
 				});
-				h += '</tbody></table>';
-			}
-			h += '</div></div></div>';
+				h += '</tr>';
+			});
+			h += '</tbody></table></div></div></div>';
 		});
-		h += '</div>';
 		$('#buildPlan').html(h).show();
 	}
 
@@ -811,8 +818,8 @@
 				$('#seasonSummary').html(cards).show();
 			}
 
-			// Shared-parts drawdown across seasons (cumulative)
-			if (res.shared_drawdown) renderSharedDrawdown(res.shared_drawdown);
+			// Shared-parts drawdown across seasons (cumulative), grouped by category
+			if (res.shared_by_part) renderSharedDrawdown(res.shared_by_part, res.season_shorts);
 
 			// Raw-material order list (cumulative shortfall + order-by date)
 			if (res.raw_orders) {
