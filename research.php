@@ -635,6 +635,9 @@
 			if (res.error) { $('#seasonStatus').addClass('text-danger').text(res.error); return; }
 			$('#seasonStatus').text('');
 			if (res.computed_at) $('#seasonAsOf').text('as of ' + res.computed_at);
+			if (res.data_warning) {
+				$('#seasonStatus').html('<div class="alert alert-warning mb-0 mt-1">' + esc(res.data_warning) + '</div>');
+			}
 
 			// Three quarter readiness cards
 			if (res.summary) {

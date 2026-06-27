@@ -123,11 +123,19 @@
 	usort($rawOrders, fn($a, $b) => strcasecmp($a['manufacturer'], $b['manufacturer']) ?: ($b['cost'] <=> $a['cost']));
 
 	// Chart series: prior-year units per season (animators vs other)
-	$labels = []; $anim = []; $fg = [];
+	$labels = []; $anim = []; $fg = []; $totalDemand = 0;
 	foreach ($seasons as $s) {
 		$labels[] = $s['label'];
 		$anim[] = $summary[$s['key']]['animator_demand'];
 		$fg[]   = $summary[$s['key']]['fg_demand'];
+		$totalDemand += $summary[$s['key']]['animator_demand'] + $summary[$s['key']]['fg_demand'];
+	}
+
+	// If prior-year demand is entirely empty, the app almost certainly lacks the
+	// read_all_orders scope (Shopify only returns the last 60 days otherwise).
+	$dataWarning = null;
+	if ($totalDemand === 0) {
+		$dataWarning = 'Prior-year sales came back empty. Shopify only returns the last 60 days of orders unless your app has the "read_all_orders" scope. Add read_all_orders to the app (alongside read_orders), reinstall it, then click Save on the Shopify card in Integrations and Refresh here.';
 	}
 
 	// ── Optional AI narrative (detailed actions / lead-time timing) ────────────
@@ -156,6 +164,7 @@
 		'tradeshow'      => $data['tradeshow_prior_year_jul_aug'],
 		'report'         => $report,
 		'report_note'    => $reportNote,
+		'data_warning'   => $dataWarning,
 		'computed_at'    => date('M j, Y g:i A'),
 	]);
 
