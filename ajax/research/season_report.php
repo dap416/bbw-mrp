@@ -102,6 +102,69 @@
 	}
 	unset($row);
 
+	// ── Per-animator build plan by season (with shared-part accounting) ───────
+	// For each season: how many of each animator to build, and a per-SKU
+	// drill-down showing the finished product and every raw part as
+	// need / have / committed-by-other-builds-this-season / remaining-after.
+	$partInfo = [];
+	foreach ($raws as $rm) $partInfo[$rm['part']] = ['desc' => $rm['description'], 'qoh' => (int)$rm['on_hand']];
+
+	// Per-animator time-phased build + entering finished stock
+	$animBuild = [];
+	foreach ($animators as $i => $a) {
+		$stock = max(0, (int)($a['in_stock'] ?? 0));
+		foreach ($seasons as $s) {
+			$d = (int)($a['prior_year_sales'][$s['key']] ?? 0);
+			$ship = min($stock, $d); $entering = $stock; $stock -= $ship;
+			$animBuild[$i][$s['key']] = ['build' => $d - $ship, 'entering' => $entering, 'demand' => $d];
+		}
+	}
+
+	// Total raw units each season's full build commits, per part
+	$seasonCommit = [];
+	foreach ($seasons as $s) {
+		foreach ($animators as $i => $a) {
+			$b = $animBuild[$i][$s['key']]['build'];
+			if ($b <= 0) continue;
+			foreach (($a['bom'] ?? []) as $bl) {
+				$seasonCommit[$s['key']][$bl['part']] = ($seasonCommit[$s['key']][$bl['part']] ?? 0) + $b * (int)$bl['qty_per_unit'];
+			}
+		}
+	}
+
+	$buildPlan = [];
+	foreach ($seasons as $s) {
+		$list = [];
+		foreach ($animators as $i => $a) {
+			$info = $animBuild[$i][$s['key']];
+			if ($info['demand'] <= 0 && $info['build'] <= 0) continue;
+			$detail = [[
+				'kind' => 'FP',
+				'name' => $a['sku'] ?: $a['product'],
+				'sub'  => 'finished — ' . $a['product'],
+				'need' => $info['demand'], 'have' => $info['entering'], 'committed' => null,
+				'remaining' => $info['entering'] + $info['build'] - $info['demand'],
+			]];
+			foreach (($a['bom'] ?? []) as $bl) {
+				$q    = (int)$bl['qty_per_unit'];
+				$need = $info['build'] * $q;
+				$tot  = (int)($seasonCommit[$s['key']][$bl['part']] ?? 0);
+				$have = (int)($partInfo[$bl['part']]['qoh'] ?? 0);
+				$detail[] = [
+					'kind' => 'RAW',
+					'name' => $partInfo[$bl['part']]['desc'] ?: $bl['part'],
+					'sub'  => $bl['part'],
+					'need' => $need, 'have' => $have, 'committed' => max(0, $tot - $need),
+					'remaining' => $have - $tot,
+				];
+			}
+			$list[] = ['sku' => $a['sku'] ?: '(no SKU)', 'product' => $a['product'],
+			           'build' => $info['build'], 'demand' => $info['demand'], 'detail' => $detail];
+		}
+		usort($list, fn($x, $y) => $y['build'] <=> $x['build']);
+		$buildPlan[] = ['key' => $s['key'], 'label' => $s['label'], 'animators' => $list];
+	}
+
 	// ── Raw-material order list (whole horizon), rounded to MOQ ───────────────
 	$rawOrders = []; $rawTotalCost = 0.0;
 	foreach ($raws as $rm) {
@@ -158,6 +221,7 @@
 
 	$payload = json_encode([
 		'summary'        => array_values($summary),
+		'build_plan'     => $buildPlan,
 		'raw_orders'     => $rawOrders,
 		'raw_total_cost' => $rawTotalCost,
 		'charts'         => ['labels' => $labels, 'animators' => $anim, 'finished_goods' => $fg],

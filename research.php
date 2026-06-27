@@ -267,6 +267,9 @@
 	<!-- Three quarter readiness cards -->
 	<div id="seasonSummary" class="row g-3 mt-1" style="display:none;"></div>
 
+	<!-- Suggested build order per season (click a SKU for the BOM drill-down) -->
+	<div id="buildPlan" class="mt-3" style="display:none;"></div>
+
 	<!-- Chart + tradeshow -->
 	<div id="seasonCharts" class="row g-3 mt-1" style="display:none;">
 		<div class="col-12 col-lg-7"><canvas id="seasonChart" height="120"></canvas></div>
@@ -624,6 +627,24 @@
 		if (s === 'tight') return '<span class="badge bg-warning text-dark">Tight</span>';
 		return '<span class="badge bg-danger">Short</span>';
 	}
+	function buildDetailTable(a) {
+		var h = '<div class="p-2" style="background:#f8f9fb;">' +
+			'<table class="table table-sm mb-0"><thead><tr>' +
+			'<th class="small">Item</th><th class="small text-end">Need</th><th class="small text-end">Have</th>' +
+			'<th class="small text-end">Other this build</th><th class="small text-end">Remaining after</th></tr></thead><tbody>';
+		a.detail.forEach(function(d) {
+			var remCls = d.remaining < 0 ? 'stat-neg' : (d.remaining === 0 ? 'stat-zero' : 'stat-pos');
+			h += '<tr>' +
+				'<td class="small"><span class="badge ' + (d.kind==='FP'?'bg-secondary':'bg-light text-dark') + ' me-1">' + d.kind + '</span>' +
+					'<strong>' + esc(d.name) + '</strong>' + (d.sub ? ' <span class="text-muted">' + esc(d.sub) + '</span>' : '') + '</td>' +
+				'<td class="small text-end">' + d.need + '</td>' +
+				'<td class="small text-end">' + d.have + '</td>' +
+				'<td class="small text-end text-muted">' + (d.committed === null ? '—' : d.committed) + '</td>' +
+				'<td class="small text-end ' + remCls + '">' + d.remaining + '</td></tr>';
+		});
+		h += '</tbody></table></div>';
+		return h;
+	}
 	function loadReadiness(fresh, ai) {
 		$('#seasonStatus').removeClass('text-danger')
 			.text(ai ? 'Building the detailed plan…' : (fresh ? 'Refreshing from Shopify…' : 'Loading readiness…'));
@@ -661,6 +682,34 @@
 					cards += '</div></div></div>';
 				});
 				$('#seasonSummary').html(cards).show();
+			}
+
+			// Suggested build order per season + per-SKU BOM drill-down
+			if (res.build_plan) {
+				var bp = '<div class="panel-title mb-2">Suggested Build Order — Animators by Season</div>' +
+					'<div class="small text-muted mb-2">Click a SKU to see the finished product and each raw part: need / have / committed by other builds this season / remaining after.</div>' +
+					'<div class="row g-3">';
+				res.build_plan.forEach(function(season, si) {
+					bp += '<div class="col-12 col-lg-4"><div class="card h-100"><div class="card-body">' +
+						'<div class="fw-bold mb-2">' + esc(season.label) + '</div>';
+					if (!season.animators.length) {
+						bp += '<div class="text-muted small">Nothing to build this season.</div>';
+					} else {
+						bp += '<table class="table table-sm mb-0"><tbody>';
+						season.animators.forEach(function(a, ai) {
+							var rid = 'bp-' + si + '-' + ai;
+							bp += '<tr class="bp-row" data-target="' + rid + '" style="cursor:pointer;">' +
+								'<td class="fw-semibold"><i class="ti ti-chevron-right bp-chev"></i> ' + esc(a.sku) + '</td>' +
+								'<td class="text-end fw-bold ' + (a.build>0?'stat-neg':'stat-pos') + '">' + a.build + '</td></tr>' +
+								'<tr id="' + rid + '" class="bp-detail" style="display:none;"><td colspan="2" class="p-0">' +
+								buildDetailTable(a) + '</td></tr>';
+						});
+						bp += '</tbody></table>';
+					}
+					bp += '</div></div></div>';
+				});
+				bp += '</div>';
+				$('#buildPlan').html(bp).show();
 			}
 
 			// Raw-material order list
@@ -732,6 +781,12 @@
 		})
 		.always(function() { $('#seasonRefresh, #seasonAiBtn').prop('disabled', false); });
 	}
+
+	$(document).on('click', '.bp-row', function() {
+		var $d = $('#' + $(this).data('target'));
+		$d.toggle();
+		$(this).find('.bp-chev').toggleClass('ti-chevron-right ti-chevron-down');
+	});
 
 	$('#seasonRefresh').on('click', function() { loadReadiness(true, false); });
 	$('#seasonAiBtn').on('click', function() { loadReadiness(false, true); });
