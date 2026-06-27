@@ -13,6 +13,9 @@
 	$wantAI = !empty($_POST['ai']);     // include the written AI action plan
 	$fresh  = !empty($_POST['fresh']);  // force a recompute, ignore cache
 
+	// Bump when the payload shape changes so old caches auto-invalidate.
+	$SEASON_SCHEMA = 5;
+
 	$db = db_connect();
 
 	// Serve a recently-cached deterministic result instantly (auto-load on open).
@@ -20,7 +23,10 @@
 		try {
 			$cached = setting_get($db, 'season_cache');
 			$at     = (int)setting_get($db, 'season_cache_at', 0);
-			if ($cached && (time() - $at) < 3 * 3600) { echo $cached; exit; }
+			if ($cached && (time() - $at) < 3 * 3600) {
+				$dec = json_decode($cached, true);
+				if (is_array($dec) && (int)($dec['schema'] ?? 0) === $SEASON_SCHEMA) { echo $cached; exit; }
+			}
 		} catch (Throwable $e) { /* no cache */ }
 	}
 
@@ -226,6 +232,7 @@
 		'report'         => $report,
 		'report_note'    => $reportNote,
 		'data_warning'   => $dataWarning,
+		'schema'         => $SEASON_SCHEMA,
 		'computed_at'    => date('M j, Y g:i A'),
 	]);
 
