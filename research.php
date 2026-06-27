@@ -139,6 +139,19 @@
 .muted-pill        { font-size:0.7rem; padding:2px 8px; border-radius:20px; background:#f1f3f5; color:#6c757d; }
 .warn-pill         { font-size:0.7rem; padding:2px 8px; border-radius:20px; background:#fff3cd; color:#856404; font-weight:600; }
 .sku-input         { width:170px; }
+
+/* Readable tables for AI markdown answers (chat + season report) */
+#chatThread table, #seasonReport table {
+	width:100%; border-collapse:collapse; margin:10px 0; font-size:0.85rem;
+}
+#chatThread th, #chatThread td, #seasonReport th, #seasonReport td {
+	border:1px solid #e2e5e8; padding:6px 10px; text-align:left; vertical-align:top;
+}
+#chatThread th, #seasonReport th { background:#eef1f4; font-weight:600; white-space:nowrap; }
+#chatThread h1, #chatThread h2, #chatThread h3, #chatThread h4 { font-size:1rem; font-weight:700; margin:12px 0 6px; }
+#chatThread ul, #seasonReport ul { padding-left:1.2rem; margin-bottom:8px; }
+#chatThread code, #seasonReport code { background:#f1f3f5; padding:1px 5px; border-radius:4px; }
+#chatThread p { margin-bottom:8px; }
 </style>
 
 <div class="mb-4 d-flex align-items-center justify-content-between flex-wrap gap-2">
@@ -611,7 +624,7 @@
 				h += '<div class="mb-2"><div class="small fw-semibold text-muted">You</div>' +
 					'<div style="white-space:pre-wrap;">' + esc(m.content) + '</div></div>';
 			} else {
-				h += '<div class="mb-3" style="background:#faf9f7; border:1px solid #eee; border-radius:8px; padding:12px;">' +
+				h += '<div class="mb-3" style="background:#faf9f7; border:1px solid #eee; border-radius:8px; padding:12px; overflow-x:auto;">' +
 					mdToHtml(m.content) + '</div>';
 			}
 		});
