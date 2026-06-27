@@ -96,7 +96,7 @@
 			'baby' => 'bb', 'teal' => 'bb', 'king' => 'km', 'mallard' => 'km',
 		];
 
-		$best = ''; $bestScore = 0;
+		$best = ''; $bestScore = 0; $secondScore = 0;
 		foreach ($skuOptions as $sku => $info) {
 			if (isset($usedSkus[$sku])) continue;  // already confirmed on another product
 			$skuNorm = strtolower(preg_replace('/[^a-z0-9]/i', '', $sku));
@@ -112,9 +112,13 @@
 				if ($num !== '' && strpos($skuNorm, $num) !== false) $score += 3;  // size/number matches SKU
 				elseif ($num !== '' && strpos($title, $num) !== false) $score += 1;
 			}
-			if ($score > $bestScore) { $bestScore = $score; $best = $sku; }
+			if ($score > $bestScore) { $secondScore = $bestScore; $bestScore = $score; $best = $sku; }
+			elseif ($score > $secondScore) { $secondScore = $score; }
 		}
-		return $bestScore >= 4 ? $best : '';
+		// Only suggest on a clear winner — if two SKUs score within 1 point
+		// (e.g. Animator "case" vs Wingz "case"), leave it blank to avoid a
+		// confident wrong guess; the user picks it manually.
+		return ($bestScore >= 4 && ($bestScore - $secondScore) >= 2) ? $best : '';
 	}
 
 	// SKUs already confirmed on a product — never suggest these again.
