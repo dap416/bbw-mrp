@@ -667,7 +667,7 @@
 		var order = ['Camshafts', 'Packaging', 'Packaging Cards', 'Rods', 'Plates', 'Other'];
 
 		var h = '<div class="panel-title mb-2">Shared Parts — Build Drawdown by Season</div>' +
-			'<div class="small text-muted mb-2">All Animator builds draw from one shared pool. <strong>Start</strong> = on hand + on order; each season’s use is deducted in order, so <strong>left</strong> carries into the next season. Red = you run out (see Raw Materials to Order for the buy quantity and order-by date).</div>';
+			'<div class="small text-muted mb-2">All Animator builds draw from one shared pool. <strong>Start</strong> = on hand + on order; each season’s projected use (from last year’s sales) is deducted in order, so <strong>projected left</strong> carries into the next season. Red = you run out (see Raw Materials to Order for the buy quantity and order-by date).</div>';
 
 		order.forEach(function(cat){
 			var rows = groups[cat]; if (!rows || !rows.length) return;
@@ -676,7 +676,7 @@
 				'<div class="fw-bold mb-1">' + esc(cat) + '</div>' +
 				'<div class="scroll-table"><table class="table table-sm mb-0"><thead><tr>' +
 				'<th class="small">SKU</th><th class="small text-end">Start</th>';
-			shorts.forEach(function(s){ h += '<th class="small text-end">' + esc(s) + ' used</th><th class="small text-end">left</th>'; });
+			shorts.forEach(function(s){ h += '<th class="small text-end">' + esc(s) + ' proj. use</th><th class="small text-end">left</th>'; });
 			h += '</tr></thead><tbody>';
 			rows.forEach(function(p){
 				h += '<tr><td class="small"><code>' + esc(p.part) + '</code></td>' +
@@ -828,9 +828,9 @@
 					h = '<div class="alert alert-success mb-0">Raw materials on hand + on order cover every animator build through all three seasons. Nothing to order.</div>';
 				} else {
 					h = '<div class="panel-title mb-2">Raw Materials to Order <span class="muted-pill ms-1">Est. $' + (res.raw_total_cost||0).toFixed(2) + '</span></div>' +
-						'<div class="small text-muted mb-2">Quantities cover the whole year (all three seasons of builds), rounded up to MOQ. <strong>Order by</strong> is when to place it so it arrives before the part runs out (lead time). Red = already overdue.</div>' +
+						'<div class="small text-muted mb-2">Projected quantities cover the whole year (all three seasons of projected builds), rounded up to MOQ. <strong>Order by</strong> is when to place it so it arrives before the part runs out (lead time). Red = already overdue.</div>' +
 						'<div class="scroll-table"><table class="table dash-table align-middle"><thead><tr>' +
-						'<th>Manufacturer</th><th>Part</th><th class="text-center">Year use</th><th class="text-center">Have</th>' +
+						'<th>Manufacturer</th><th>Part</th><th class="text-center">Proj. use (yr)</th><th class="text-center">Have</th>' +
 						'<th class="text-center">Order (MOQ)</th><th class="text-center">Order by</th><th class="text-center">Lead</th><th class="text-end">Est. Cost</th></tr></thead><tbody>';
 					ro.forEach(function(r){
 						var byCls = r.by_past ? 'stat-neg fw-bold' : '';
