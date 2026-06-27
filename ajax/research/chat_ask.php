@@ -29,11 +29,12 @@
 	$SYSTEM_BASE =
 "You are the demand-planning assistant for Blue Bird Waterfowl / THE ANIMATOR, a small US manufacturer of waterfowl motion-decoy conversion kits (Animators, which are BUILT from raw materials) plus accessories it resells as finished goods (cases, wings, plates).
 
-You are given a JSON snapshot of the business below. Answer the user's planning questions from it. Key rules:
-- Demand baseline: prior-year sales over the relevant window, no growth, unless told otherwise.
-- Animators are built: needed-to-build = max(0, demand − in_stock). Each animator lists shopify_in_stock (already made), buildable_now_from_raw (how many MORE can be built from raw on hand), and limiting_part. Raw materials have MOQ (round orders up) and lead_time_days (order-by = need_date − lead_time; flag if already past).
-- Everything else (cases, wings) is ordered as a finished item: order = max(0, demand − in_stock).
-- Be concrete and numeric; use short Markdown. If data is missing, say so rather than inventing numbers. Keep follow-up answers focused on what was asked.";
+You are given a JSON snapshot of the business below. The snapshot covers three upcoming seasons — July–September, October–December, and January–March — and for each it gives prior-year unit sales per SKU. Today's date is in meta.today. Key rules:
+- When the user mentions a date, deadline, or period, map it to the season(s) it spans and use those seasons' prior-year sales as the demand baseline (no growth unless told otherwise). If a date is finer than a season, say you're answering at season granularity.
+- Animators are BUILT. Each animator gives its SKU, current shopify_in_stock (already made), prior_year_sales per season, and bom (parts + qty_per_unit). needed-to-build = max(0, demand − in_stock). Raw materials list on_hand, on_order, moq (round orders UP to a multiple), lead_time_days (order-by = need_date − lead_time; flag if already past), unit_cost and manufacturer. You can compute how many more of an animator can be built from raw on hand as the min over its BOM of floor(part on_hand / qty_per_unit).
+- Shared raw parts (rods, plates, packaging, cards) are used across multiple animators — account for the combined draw.
+- Everything that is NOT an animator (cases, wings, plates sold as finished goods) is ORDERED as a finished item, not built: order = max(0, demand − in_stock).
+- Be concrete and numeric; use short Markdown. If data is missing (e.g. Shopify not connected, no sales history), say so rather than inventing numbers. Keep follow-up answers focused on what was asked.";
 
 	$newChat = false;
 	if ($chatId > 0) {
@@ -44,10 +45,13 @@ You are given a JSON snapshot of the business below. Answer the user's planning 
 		$title    = $row['title'];
 	} else {
 		$newChat = true;
-		$targetDate = trim($_POST['target_date'] ?? '');
-		if ($targetDate === '') $targetDate = date('Y-m-d', strtotime('+90 days'));
 		try {
-			$ctx = build_planning_context($db, $targetDate);
+			$ctx = build_season_dataset($db);   // three-season prior-year sales + inventory + BOM + raw
+			$evts = [];
+			try {
+				foreach ($db->query("SELECT type, name, event_date, end_date, repeats, details FROM planning_events ORDER BY event_date ASC") as $ev) $evts[] = $ev;
+			} catch (Throwable $e) { /* table may not exist */ }
+			$ctx['planning_events'] = $evts;
 		} catch (Throwable $e) {
 			echo json_encode(['error' => 'Could not build planning data: ' . $e->getMessage()]);
 			exit;

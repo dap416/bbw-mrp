@@ -226,13 +226,8 @@
 			<div id="chatTitle" class="fw-semibold mb-2" style="display:none;"></div>
 
 			<div id="chatNewHint" class="text-muted small mb-2">
-				New chat. Ask things like <em>"How many of each Animator do I build to be ready for July?"</em>
-				It uses your Shopify sales history, finished &amp; raw inventory, BOMs, MOQ, lead times, and the POs/tradeshows below.
-				<div class="d-flex align-items-center gap-2 mt-2 flex-wrap">
-					<label class="small fw-semibold text-muted">Plan through:</label>
-					<input type="date" id="planTarget" class="form-control form-control-sm" style="width:170px;"
-						value="<?php echo htmlspecialchars($defaultTarget); ?>" />
-				</div>
+				New chat. Ask things like <em>"How many of each Animator do I build to be ready for July?"</em> —
+				mention any dates or deadlines in your question. It uses your Shopify sales history (by season), finished &amp; raw inventory, BOMs, MOQ, lead times, and the POs/tradeshows below.
 			</div>
 
 			<div id="chatThread" class="mb-2"></div>
@@ -679,7 +674,7 @@
 		$('#askStatus').removeClass('text-danger').text('Thinking… (up to a minute)');
 		$.ajax({
 			url: '/ajax/research/chat_ask.php', method: 'POST', dataType: 'json', timeout: 180000,
-			data: { id: currentChatId, question: q, target_date: $('#planTarget').val() }
+			data: { id: currentChatId, question: q }
 		}).done(function(res){
 			if (res.error) { $('#askStatus').addClass('text-danger').text(res.error); return; }
 			currentChatId = res.chat_id;
