@@ -297,6 +297,75 @@
 	}
 
 	/**
+	 * Map of bundle variants to their component SKUs/quantities, so a bundle
+	 * sale can be attributed to the real products it contains. Keyed by the
+	 * bundle's variant GID. Cached in settings for 24h (definitions rarely
+	 * change). Returns [variantId => [['sku'=>..., 'qty'=>...], ...]].
+	 */
+	function shopify_bundle_map() {
+		static $map = null;
+		if ($map !== null) return $map;
+
+		$db = null;
+		try {
+			$db = db_connect();
+			if ($db) {
+				$cached = setting_get($db, 'shopify_bundle_map');
+				$at     = (int)setting_get($db, 'shopify_bundle_map_at', 0);
+				if ($cached && (time() - $at) < 86400) {
+					$dec = json_decode($cached, true);
+					if (is_array($dec)) return $map = $dec;
+				}
+			}
+		} catch (Throwable $e) { /* no cache */ }
+
+		$query = '
+		query($cursor: String) {
+		  products(first: 50, after: $cursor) {
+		    pageInfo { hasNextPage endCursor }
+		    edges { node { variants(first: 10) { edges { node {
+		      id
+		      productVariantComponents(first: 25) { edges { node { quantity productVariant { sku } } } }
+		    } } } } }
+		  }
+		}';
+
+		$out = []; $cursor = null; $pages = 0;
+		do {
+			$res = shopify_graphql($query, ['cursor' => $cursor]);
+			if (!empty($res['error'])) break;
+			$p = $res['data']['products'] ?? null;
+			if ($p === null) break;
+			foreach ($p['edges'] as $pe) {
+				foreach ($pe['node']['variants']['edges'] as $ve) {
+					$v = $ve['node'];
+					$comps = $v['productVariantComponents']['edges'] ?? [];
+					if (empty($comps)) continue;
+					$list = [];
+					foreach ($comps as $ce) {
+						$cs = trim((string)($ce['node']['productVariant']['sku'] ?? ''));
+						$cq = (int)($ce['node']['quantity'] ?? 0);
+						if ($cs !== '' && $cq > 0) $list[] = ['sku' => $cs, 'qty' => $cq];
+					}
+					if (!empty($list)) $out[$v['id']] = $list;
+				}
+			}
+			$cursor  = $p['pageInfo']['endCursor']  ?? null;
+			$hasNext = $p['pageInfo']['hasNextPage'] ?? false;
+			$pages++;
+		} while ($hasNext && $pages < 12);
+
+		try {
+			if ($db) {
+				setting_set($db, 'shopify_bundle_map', json_encode($out));
+				setting_set($db, 'shopify_bundle_map_at', (string)time());
+			}
+		} catch (Throwable $e) { /* best effort */ }
+
+		return $map = $out;
+	}
+
+	/**
 	 * Aggregate units sold per SKU between two dates (ISO YYYY-MM-DD).
 	 * Also tallies units by sales channel so the planner can separate online,
 	 * point-of-sale (tradeshows), and wholesale demand. Returns
@@ -314,7 +383,7 @@
 		        sourceName
 		        cancelledAt
 		        lineItems(first: 30) {
-		          edges { node { quantity sku } }
+		          edges { node { quantity sku variant { id } } }
 		        }
 		      }
 		    }
@@ -323,6 +392,7 @@
 
 		$q = "created_at:>=$since AND created_at:<=$until";
 		$bySku = []; $byChannel = []; $cursor = null; $pages = 0; $orders = 0;
+		$bundles = shopify_bundle_map();
 
 		do {
 			$res = shopify_graphql($query, ['cursor' => $cursor, 'q' => $q]);
@@ -339,7 +409,19 @@
 					$li  = $le['node'];
 					$sku = trim((string)($li['sku'] ?? ''));
 					$qty = (int)($li['quantity'] ?? 0);
-					if ($sku === '' || $qty <= 0) continue;
+					if ($qty <= 0) continue;
+
+					// Bundle (no SKU but known components) → attribute to each component
+					$vid = $li['variant']['id'] ?? '';
+					if ($sku === '' && $vid && isset($bundles[$vid])) {
+						foreach ($bundles[$vid] as $c) {
+							$add = $qty * (int)$c['qty'];
+							$bySku[$c['sku']] = ($bySku[$c['sku']] ?? 0) + $add;
+							$byChannel[$chan] = ($byChannel[$chan] ?? 0) + $add;
+						}
+						continue;
+					}
+					if ($sku === '') continue;
 					$bySku[$sku]      = ($bySku[$sku] ?? 0) + $qty;
 					$byChannel[$chan] = ($byChannel[$chan] ?? 0) + $qty;
 				}

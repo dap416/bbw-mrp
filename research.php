@@ -678,7 +678,7 @@
 		});
 		season.animators.forEach(function(a, ai) {
 			var b = builds[ai], rows = [];
-			rows.push({ kind: 'FP', name: a.sku, sub: 'finished — ' + a.product,
+			rows.push({ kind: 'FP', name: a.sku, sub: 'finished',
 				need: a.demand, have: a.entering, committed: null, remaining: a.entering + b - a.demand });
 			a.bom.forEach(function(bi) {
 				var info = BP_PARTS[bi.part] || { desc: bi.part, have: 0 };
@@ -739,7 +739,7 @@
 						cards += '<div class="small fw-semibold text-muted">Buy (Shopify-only finished goods):</div><ul class="small mb-0" style="padding-left:1.1rem;">';
 						q.fg_items.forEach(function(it){
 							cards += '<li><strong>' + it.order + '</strong> × <code>' + esc(it.sku) + '</code> ' +
-								'<span class="text-muted">' + esc(it.product) + ' — have ' + (it.have||0) + ' in Shopify, last-yr demand ' + (it.need||0) + '</span></li>';
+								'<span class="text-muted">(have ' + (it.have||0) + ', last-yr ' + (it.need||0) + ')</span></li>';
 						});
 						cards += '</ul>';
 					}
