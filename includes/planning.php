@@ -36,7 +36,7 @@
 		$bomByProd = [];
 		$partIds   = [];
 		foreach ($db->query("
-			SELECT b.prodid, b.qty, p.id AS partid, p.partno, p.`desc`
+			SELECT b.prodid, b.qty, p.id AS partid, p.partno, p.`desc`, p.qoh
 			FROM build b JOIN parts p ON p.id = b.partid
 			ORDER BY b.prodid ASC
 		") as $bl) {
@@ -61,12 +61,24 @@
 			// Only include products we build or that are mapped to Shopify
 			if ($sku === '' && empty($bom)) continue;
 
+			// How many more we can build right now from raw materials on hand,
+			// and which part runs out first (the constraint).
+			$buildableNow = null; $limitPart = null;
+			foreach ($bom as $b) {
+				$need = (int)$b['qty'];
+				if ($need <= 0) continue;
+				$can = intdiv((int)$b['qoh'], $need);
+				if ($buildableNow === null || $can < $buildableNow) { $buildableNow = $can; $limitPart = $b['partno']; }
+			}
+
 			$row = [
 				'product'        => $p['name'],
 				'sku'            => $sku,
-				'annual_goal'    => $hasGoal ? (int)($p['annual_goal'] ?? 0) : 0,
+				'is_animator'    => !empty($bom),     // only animators have raw materials/BOM
 				'shopify_in_stock' => ($sku !== '' && isset($shopSkus[$sku])) ? (int)$shopSkus[$sku]['qty'] : null,
 				'units_sold_last_year_window' => ($sku !== '' && isset($salesBySku[$sku])) ? (int)$salesBySku[$sku] : 0,
+				'buildable_now_from_raw' => $buildableNow,   // null = no BOM (not an animator)
+				'limiting_part'  => $limitPart,
 				'bom' => array_map(fn($b) => ['part' => $b['partno'], 'qty_per_unit' => (int)$b['qty']], $bom),
 			];
 			$fp[] = $row;

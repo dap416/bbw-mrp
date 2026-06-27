@@ -208,8 +208,10 @@
 	<?php else: ?>
 
 	<p class="text-muted small mb-2">
-		Ask things like <em>"How much do I need to order to survive until Oct 1 vs last year's sales?"</em>
-		It considers your Shopify sales history, finished &amp; raw inventory, BOMs, MOQ, lead times, and the POs/tradeshows below.
+		Ask things like <em>"How many of each Animator do I need to build to be ready for July?"</em> or
+		<em>"What do I need to order to survive until Oct 1 vs last year?"</em>
+		For Animators it tells you how many you have made, how many more you can build from raw on hand, what to build, and which raw
+		materials to order (and by when). It uses your Shopify sales history, finished &amp; raw inventory, BOMs, MOQ, lead times, and the POs/tradeshows below.
 	</p>
 
 	<div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
@@ -238,9 +240,17 @@
 
 	<div class="panel-header mb-2">
 		<span class="panel-title">Season Readiness</span>
-		<button id="seasonBtn" class="btn btn-sm btn-success"<?php echo ($shopConfigured && !$shopErr) ? '' : ' disabled'; ?>>
-			<i class="ti ti-report-analytics me-1"></i>Check Readiness
-		</button>
+		<div class="d-flex align-items-center gap-2 flex-wrap">
+			<span id="seasonAsOf" class="small text-muted"></span>
+			<button id="seasonRefresh" class="btn btn-sm btn-outline-secondary"<?php echo ($shopConfigured && !$shopErr) ? '' : ' disabled'; ?>>
+				<i class="ti ti-refresh me-1"></i>Refresh
+			</button>
+			<?php if ($aiReady): ?>
+			<button id="seasonAiBtn" class="btn btn-sm btn-success"<?php echo ($shopConfigured && !$shopErr) ? '' : ' disabled'; ?>>
+				<i class="ti ti-robot me-1"></i>Detailed AI plan
+			</button>
+			<?php endif; ?>
+		</div>
 	</div>
 
 	<p class="text-muted small mb-2">
@@ -614,15 +624,17 @@
 		if (s === 'tight') return '<span class="badge bg-warning text-dark">Tight</span>';
 		return '<span class="badge bg-danger">Short</span>';
 	}
-	$('#seasonBtn').on('click', function() {
-		var $btn = $(this);
-		$btn.prop('disabled', true);
-		$('#seasonStatus').removeClass('text-danger').text('Crunching last year’s sales… (up to ~90s)');
-		$('#seasonReport').hide(); $('#seasonReportNote').text('');
-		$.ajax({ url: '/ajax/research/season_report.php', method: 'POST', dataType: 'json', timeout: 180000 })
+	function loadReadiness(fresh, ai) {
+		$('#seasonStatus').removeClass('text-danger')
+			.text(ai ? 'Building the detailed plan…' : (fresh ? 'Refreshing from Shopify…' : 'Loading readiness…'));
+		if (ai) { $('#seasonReport').hide(); $('#seasonReportNote').text(''); }
+		$('#seasonRefresh, #seasonAiBtn').prop('disabled', true);
+		$.ajax({ url: '/ajax/research/season_report.php', method: 'POST', dataType: 'json', timeout: 180000,
+			data: { fresh: fresh ? 1 : 0, ai: ai ? 1 : 0 } })
 		.done(function(res) {
 			if (res.error) { $('#seasonStatus').addClass('text-danger').text(res.error); return; }
 			$('#seasonStatus').text('');
+			if (res.computed_at) $('#seasonAsOf').text('as of ' + res.computed_at);
 
 			// Three quarter readiness cards
 			if (res.summary) {
@@ -713,10 +725,16 @@
 		})
 		.fail(function(xhr, status) {
 			$('#seasonStatus').addClass('text-danger').text(
-				status === 'timeout' ? 'Timed out — try again.' : 'Failed (' + (xhr.status || 'no response') + ').');
+				status === 'timeout' ? 'Timed out — try Refresh.' : 'Failed (' + (xhr.status || 'no response') + ').');
 		})
-		.always(function() { $btn.prop('disabled', false); });
-	});
+		.always(function() { $('#seasonRefresh, #seasonAiBtn').prop('disabled', false); });
+	}
+
+	$('#seasonRefresh').on('click', function() { loadReadiness(true, false); });
+	$('#seasonAiBtn').on('click', function() { loadReadiness(false, true); });
+	<?php if ($shopConfigured && !$shopErr): ?>
+	loadReadiness(false, false);   // auto-load on page open (served from cache when fresh)
+	<?php endif; ?>
 
 	// ── Planning events ───────────────────────────────────────────────────
 	$('#poToggle').on('click', function() {

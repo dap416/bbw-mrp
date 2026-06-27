@@ -10,8 +10,21 @@
 
 	header('Content-Type: application/json');
 
+	$wantAI = !empty($_POST['ai']);     // include the written AI action plan
+	$fresh  = !empty($_POST['fresh']);  // force a recompute, ignore cache
+
+	$db = db_connect();
+
+	// Serve a recently-cached deterministic result instantly (auto-load on open).
+	if (!$wantAI && !$fresh) {
+		try {
+			$cached = setting_get($db, 'season_cache');
+			$at     = (int)setting_get($db, 'season_cache_at', 0);
+			if ($cached && (time() - $at) < 3 * 3600) { echo $cached; exit; }
+		} catch (Throwable $e) { /* no cache */ }
+	}
+
 	try {
-		$db = db_connect();
 		$data = build_season_dataset($db);
 	} catch (Throwable $e) {
 		echo json_encode(['error' => 'Could not build data: ' . $e->getMessage()]);
@@ -119,7 +132,7 @@
 
 	// ── Optional AI narrative (detailed actions / lead-time timing) ────────────
 	$report = null; $reportNote = null;
-	if (anthropic_is_configured()) {
+	if ($wantAI && anthropic_is_configured()) {
 		$system =
 "You are the demand-planning analyst for Blue Bird Waterfowl / THE ANIMATOR. You are given a JSON snapshot plus a pre-computed, time-phased readiness summary for three seasons (Jul–Sep, Oct–Dec, Jan–Mar) compared to prior-year sales with no growth. The deterministic numbers (units to build, units to order, raw-material order quantities already rounded to MOQ) are authoritative — do NOT recompute or contradict them. Your job is the JUDGMENT layer: for each season give a short readiness narrative and concrete Suggested Actions, focusing on LEAD TIME — which raw-material POs must be placed NOW so parts arrive before they're needed, grouped by manufacturer. Then list the finished goods (cases, wings, etc.) to order. Call out the Jul–Aug tradeshow POS spikes. End with an 'Order Now' list (the lead-time-critical POs) and the estimated total. Be concise, concrete, Markdown with small tables.";
 
@@ -131,11 +144,11 @@
 		$res = anthropic_message($system, $userText, 6000);
 		if (!empty($res['error'])) $reportNote = $res['error'];
 		else $report = $res['text'];
-	} else {
-		$reportNote = 'Connect a Claude API key on the Integrations page for the detailed action plan and lead-time timing.';
+	} elseif ($wantAI) {
+		$reportNote = 'No Anthropic API key configured. Add one on the Integrations page for the detailed action plan.';
 	}
 
-	echo json_encode([
+	$payload = json_encode([
 		'summary'        => array_values($summary),
 		'raw_orders'     => $rawOrders,
 		'raw_total_cost' => $rawTotalCost,
@@ -143,4 +156,15 @@
 		'tradeshow'      => $data['tradeshow_prior_year_jul_aug'],
 		'report'         => $report,
 		'report_note'    => $reportNote,
+		'computed_at'    => date('M j, Y g:i A'),
 	]);
+
+	// Cache the deterministic (non-AI) result so re-opening the page is instant.
+	if (!$wantAI) {
+		try {
+			setting_set($db, 'season_cache', $payload);
+			setting_set($db, 'season_cache_at', (string)time());
+		} catch (Throwable $e) { /* best effort */ }
+	}
+
+	echo $payload;
