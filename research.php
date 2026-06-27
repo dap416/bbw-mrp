@@ -632,6 +632,34 @@
 		return '<span class="badge bg-danger">Short</span>';
 	}
 
+	function aiExplain(it) {
+		var d = it.demand || 0, h = it.have || 0, b = it.to_build || 0, bld = (it.buildable == null ? null : it.buildable);
+		var html = '<div class="p-2" style="background:#f8f9fb;"><div class="small">';
+		html += '<div><strong>Demand</strong> — sold last year in this same season: ' + d + '</div>';
+		html += '<div><strong>Have</strong> — already made, in stock entering this season: ' + h + '</div>';
+		if (b > 0) {
+			html += '<div><strong>Build</strong> = demand − stock = ' + d + ' − ' + Math.min(h, d) + ' = <span class="stat-neg">' + b + '</span></div>';
+		} else {
+			html += '<div><strong>Build</strong> = 0 — stock already covers demand' + (h > d ? ' (' + (h - d) + ' left over carries into next season)' : '') + '</div>';
+		}
+		if (it.limit) {
+			html += '<div class="mt-1"><strong>Can build now</strong> from raw on hand: ' + (bld == null ? '-' : bld) +
+				' — limited by <strong>' + esc(it.limit.desc || it.limit.part) + '</strong> (' + esc(it.limit.part) + '): ' +
+				it.limit.pool + ' on hand ÷ ' + it.limit.per_unit + ' per unit</div>';
+		}
+		if (it.bom && it.bom.length) {
+			html += '<table class="table table-sm mt-2 mb-0"><thead><tr><th class="small">Part</th><th class="small text-end">Per unit</th><th class="small text-end">On hand (entering)</th><th class="small text-end">Can make</th></tr></thead><tbody>';
+			it.bom.forEach(function(p){
+				var cls = (bld != null && p.can_make === bld) ? 'fw-bold' : '';
+				html += '<tr class="' + cls + '"><td class="small"><strong>' + esc(p.desc || p.part) + '</strong> <span class="text-muted">' + esc(p.part) + '</span></td>' +
+					'<td class="small text-end">' + p.per_unit + '</td><td class="small text-end text-muted">' + p.pool + '</td><td class="small text-end">' + p.can_make + '</td></tr>';
+			});
+			html += '</tbody></table>';
+		}
+		html += '</div></div>';
+		return html;
+	}
+
 	function renderSharedDrawdown(dd) {
 		var h = '<div class="panel-title mb-2">Shared Parts — Build Drawdown by Season</div>' +
 			'<div class="small text-muted mb-2">Every Animator build draws from one shared pool (rods, plates, packaging). Seasons are deducted in order, so <strong>Left</strong> carries into the next season. Red = the pool goes negative (you run out) — order before then (see the Raw Materials to Order table for quantities and order-by dates).</div>' +
@@ -752,18 +780,20 @@
 			// Three quarter readiness cards
 			if (res.summary) {
 				var cards = '';
-				res.summary.forEach(function(q) {
+				res.summary.forEach(function(q, si) {
 					cards += '<div class="col-12 col-md-4"><div class="card h-100" style="border-top:3px solid #4680ff;"><div class="card-body">' +
 						'<div class="d-flex justify-content-between align-items-start mb-2">' +
 						'<span class="fw-bold">' + esc(q.label) + '</span> ' + verdictBadge(q.status) + '</div>';
 						cards += '<div class="small fw-semibold text-muted">Build (Animators):</div>';
 						if (q.animator_items && q.animator_items.length) {
-							cards += '<table class="table table-sm mb-2"><thead><tr><th class="small">SKU</th><th class="small text-end">Build</th><th class="small text-end">Have</th><th class="small text-end">Can build</th></tr></thead><tbody>';
-							q.animator_items.forEach(function(it){
-								cards += '<tr><td class="small"><code>' + esc(it.sku) + '</code></td>' +
-									'<td class="text-end small ' + (it.to_build>0?'stat-neg':'stat-pos') + '">' + it.to_build + '</td>' +
+							cards += '<table class="table table-sm mb-2"><thead><tr><th class="small">SKU</th><th class="small text-end">Demand</th><th class="small text-end">Build</th><th class="small text-end">Have</th><th class="small text-end">Can build</th></tr></thead><tbody>';
+							q.animator_items.forEach(function(it, ai){
+								var rid = 'ai-' + si + '-' + ai; cards += '<tr class="ai-row" data-target="' + rid + '" style="cursor:pointer;"><td class="small"><i class="ti ti-chevron-right ai-chev"></i> <code>' + esc(it.sku) + '</code></td>' +
+									'<td class="text-end small text-muted">' + (it.demand||0) + '</td>' +
+										'<td class="text-end small ' + (it.to_build>0?'stat-neg':'stat-pos') + '">' + it.to_build + '</td>' +
 									'<td class="text-end small text-muted">' + (it.have||0) + '</td>' +
-									'<td class="text-end small">' + (it.buildable==null?'-':it.buildable) + '</td></tr>';
+									'<td class="text-end small">' + (it.buildable==null?'-':it.buildable) + '</td></tr>' +
+										'<tr id="' + rid + '" class="ai-detail" style="display:none;"><td colspan="5" class="p-0">' + aiExplain(it) + '</td></tr>';
 							});
 							cards += '</tbody></table>';
 						} else { cards += '<div class="small text-muted mb-2">No animator demand.</div>'; }
@@ -864,6 +894,12 @@
 
 	// Live recalc when a build quantity is edited
 	$(document).on('input', '.bp-build', function() { recomputeSeason($(this).data('si')); });
+
+	// Expand a per-SKU build explanation
+	$(document).on('click', '.ai-row', function() {
+		$('#' + $(this).data('target')).toggle();
+		$(this).find('.ai-chev').toggleClass('ti-chevron-right ti-chevron-down');
+	});
 
 	$('#seasonRefresh').on('click', function() { loadReadiness(true, false); });
 	$('#seasonAiBtn').on('click', function() { loadReadiness(false, true); });

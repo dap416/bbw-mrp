@@ -14,7 +14,7 @@
 	$fresh  = !empty($_POST['fresh']);  // force a recompute, ignore cache
 
 	// Bump when the payload shape changes so old caches auto-invalidate.
-	$SEASON_SCHEMA = 6;
+	$SEASON_SCHEMA = 7;
 
 	$db = db_connect();
 
@@ -148,14 +148,20 @@
 		foreach ($animators as $i => $a) {
 			$info = $animBuild[$i][$s['key']];
 			if ($info['demand'] <= 0 && $info['build'] <= 0) continue;
-			$cap = null;
+			$cap = null; $limit = null; $bomDetail = [];
 			foreach (($a['bom'] ?? []) as $bl) {
 				$q = (int)$bl['qty_per_unit']; if ($q <= 0) continue;
-				$can = intdiv(max(0, (int)($enteringPool[$bl['part']] ?? 0)), $q);
-				if ($cap === null || $can < $cap) $cap = $can;
+				$poolEnter = (int)($enteringPool[$bl['part']] ?? 0);
+				$can  = intdiv(max(0, $poolEnter), $q);
+				$desc = $partMeta[$bl['part']]['description'] ?? '';
+				$bomDetail[] = ['part' => $bl['part'], 'desc' => $desc, 'per_unit' => $q, 'pool' => $poolEnter, 'can_make' => $can];
+				if ($cap === null || $can < $cap) { $cap = $can; $limit = ['part' => $bl['part'], 'desc' => $desc, 'per_unit' => $q, 'pool' => $poolEnter]; }
 			}
-			$items[] = ['sku' => $a['sku'] ?: '(no SKU)', 'to_build' => $info['build'],
-			            'have' => $info['entering'], 'buildable' => $cap, 'demand' => $info['demand']];
+			$items[] = [
+				'sku' => $a['sku'] ?: '(no SKU)', 'demand' => $info['demand'],
+				'have' => $info['entering'], 'to_build' => $info['build'], 'buildable' => $cap,
+				'limit' => $limit, 'bom' => $bomDetail,
+			];
 		}
 		usort($items, fn($x, $y) => $y['to_build'] <=> $x['to_build']);
 		$summary[$s['key']]['animator_items'] = $items;
