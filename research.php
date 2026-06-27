@@ -211,28 +211,40 @@
 	</div>
 	<?php else: ?>
 
-	<p class="text-muted small mb-2">
-		Ask things like <em>"How many of each Animator do I need to build to be ready for July?"</em> or
-		<em>"What do I need to order to survive until Oct 1 vs last year?"</em>
-		For Animators it tells you how many you have made, how many more you can build from raw on hand, what to build, and which raw
-		materials to order (and by when). It uses your Shopify sales history, finished &amp; raw inventory, BOMs, MOQ, lead times, and the POs/tradeshows below.
-	</p>
+	<div class="row g-3">
+		<!-- Saved chats -->
+		<div class="col-12 col-lg-3">
+			<div class="d-flex align-items-center justify-content-between mb-2">
+				<span class="small fw-semibold text-muted">Saved chats</span>
+				<button id="chatNew" class="btn btn-sm btn-primary"><i class="ti ti-plus"></i> New</button>
+			</div>
+			<div id="chatList" class="small" style="max-height:320px; overflow:auto;"></div>
+		</div>
 
-	<div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
-		<label class="small fw-semibold text-muted">Plan through:</label>
-		<input type="date" id="planTarget" class="form-control form-control-sm" style="width:170px;"
-			value="<?php echo htmlspecialchars($defaultTarget); ?>" />
+		<!-- Conversation -->
+		<div class="col-12 col-lg-9">
+			<div id="chatTitle" class="fw-semibold mb-2" style="display:none;"></div>
+
+			<div id="chatNewHint" class="text-muted small mb-2">
+				New chat. Ask things like <em>"How many of each Animator do I build to be ready for July?"</em>
+				It uses your Shopify sales history, finished &amp; raw inventory, BOMs, MOQ, lead times, and the POs/tradeshows below.
+				<div class="d-flex align-items-center gap-2 mt-2 flex-wrap">
+					<label class="small fw-semibold text-muted">Plan through:</label>
+					<input type="date" id="planTarget" class="form-control form-control-sm" style="width:170px;"
+						value="<?php echo htmlspecialchars($defaultTarget); ?>" />
+				</div>
+			</div>
+
+			<div id="chatThread" class="mb-2"></div>
+
+			<textarea id="planQuestion" class="form-control mb-2" rows="2"
+				placeholder="Ask a question (or a follow-up)…"></textarea>
+			<div class="d-flex align-items-center gap-2">
+				<button id="askBtn" class="btn btn-primary btn-sm">Ask</button>
+				<span id="askStatus" class="small text-muted"></span>
+			</div>
+		</div>
 	</div>
-
-	<textarea id="planQuestion" class="form-control mb-2" rows="2"
-		placeholder="Ask a planning question…"></textarea>
-
-	<div class="d-flex align-items-center gap-2">
-		<button id="askBtn" class="btn btn-primary btn-sm">Ask</button>
-		<span id="askStatus" class="small text-muted"></span>
-	</div>
-
-	<div id="askAnswer" class="mt-3" style="display:none; background:#faf9f7; border:1px solid #eee; border-radius:8px; padding:16px;"></div>
 	<?php endif; ?>
 
 </div>
@@ -592,37 +604,104 @@
 	});
 
 
-	// ── Planning Assistant ────────────────────────────────────────────────
+	// ── Planning Assistant (saved, multi-turn chats) ──────────────────────
+	var currentChatId = 0;
+
+	function mdToHtml(t) { return (typeof marked !== 'undefined') ? marked.parse(t) : (t || '').replace(/\n/g, '<br>'); }
+
+	function renderThread(messages) {
+		var h = '';
+		(messages || []).forEach(function(m){
+			if (m.role === 'user') {
+				h += '<div class="mb-2"><div class="small fw-semibold text-muted">You</div>' +
+					'<div style="white-space:pre-wrap;">' + esc(m.content) + '</div></div>';
+			} else {
+				h += '<div class="mb-3" style="background:#faf9f7; border:1px solid #eee; border-radius:8px; padding:12px;">' +
+					mdToHtml(m.content) + '</div>';
+			}
+		});
+		$('#chatThread').html(h);
+	}
+
+	function loadChatList() {
+		$.getJSON('/ajax/research/chat_list.php', function(res){
+			var c = (res && res.chats) || [], h = '';
+			if (!c.length) { h = '<div class="text-muted">No saved chats yet.</div>'; }
+			c.forEach(function(ch){
+				var active = (ch.id === currentChatId) ? ' fw-bold' : '';
+				h += '<div class="d-flex align-items-center justify-content-between py-1 border-bottom">' +
+					'<a href="#" class="chat-open text-decoration-none' + active + '" data-id="' + ch.id + '" title="' + esc(ch.updated_at) + '">' + esc(ch.title) + '</a>' +
+					'<a href="#" class="chat-del text-danger ms-2" data-id="' + ch.id + '" title="Delete">&times;</a></div>';
+			});
+			$('#chatList').html(h);
+		});
+	}
+
+	function openChat(id) {
+		$.ajax({ url: '/ajax/research/chat_get.php', method: 'POST', dataType: 'json', data: { id: id } })
+		.done(function(res){
+			if (res.error) { return; }
+			currentChatId = res.chat_id;
+			localStorage.setItem('bbw_chat_id', currentChatId);
+			$('#chatNewHint').hide();
+			$('#chatTitle').text(res.title).show();
+			renderThread(res.messages);
+			loadChatList();
+		});
+	}
+
+	function newChat() {
+		currentChatId = 0;
+		localStorage.removeItem('bbw_chat_id');
+		$('#chatTitle').hide().text('');
+		$('#chatThread').empty();
+		$('#chatNewHint').show();
+		$('#askStatus').text('');
+		loadChatList();
+	}
+
+	$('#chatNew').on('click', newChat);
+	$(document).on('click', '.chat-open', function(e){ e.preventDefault(); openChat($(this).data('id')); });
+	$(document).on('click', '.chat-del', function(e){
+		e.preventDefault();
+		if (!confirm('Delete this chat?')) return;
+		var id = $(this).data('id');
+		$.post('/ajax/research/chat_delete.php', { id: id }, function(){
+			if (id === currentChatId) newChat(); else loadChatList();
+		});
+	});
+
 	$('#askBtn').on('click', function() {
 		var q = $.trim($('#planQuestion').val());
 		if (!q) { $('#askStatus').text('Enter a question first.'); return; }
 		var $btn = $(this);
 		$btn.prop('disabled', true);
-		$('#askStatus').removeClass('text-danger').text('Thinking… (this can take up to a minute)');
-		$('#askAnswer').hide();
+		$('#askStatus').removeClass('text-danger').text('Thinking… (up to a minute)');
 		$.ajax({
-			url: '/ajax/research/ask.php',
-			method: 'POST',
-			dataType: 'json',
-			timeout: 180000,
-			data: { question: q, target_date: $('#planTarget').val() }
-		}).done(function(res) {
-			if (res.answer) {
-				var html = (typeof marked !== 'undefined') ? marked.parse(res.answer)
-					: res.answer.replace(/\n/g, '<br>');
-				$('#askAnswer').html(html).show();
-				$('#askStatus').text('');
-			} else {
-				$('#askStatus').addClass('text-danger').text(res.error || 'No answer returned.');
-			}
-		}).fail(function(xhr, status) {
+			url: '/ajax/research/chat_ask.php', method: 'POST', dataType: 'json', timeout: 180000,
+			data: { id: currentChatId, question: q, target_date: $('#planTarget').val() }
+		}).done(function(res){
+			if (res.error) { $('#askStatus').addClass('text-danger').text(res.error); return; }
+			currentChatId = res.chat_id;
+			localStorage.setItem('bbw_chat_id', currentChatId);
+			$('#chatNewHint').hide();
+			$('#chatTitle').text(res.title).show();
+			renderThread(res.messages);
+			$('#planQuestion').val('');
+			$('#askStatus').text('');
+			loadChatList();
+		}).fail(function(xhr, status){
 			$('#askStatus').addClass('text-danger').text(
 				status === 'timeout' ? 'Timed out — try a narrower question.'
 				: 'Request failed (' + (xhr.status || 'no response') + ').');
-		}).always(function() {
-			$btn.prop('disabled', false);
-		});
+		}).always(function(){ $btn.prop('disabled', false); });
 	});
+
+	// Restore last chat (or show the list) on load
+	<?php if ($aiReady): ?>
+	loadChatList();
+	(function(){ var last = parseInt(localStorage.getItem('bbw_chat_id') || '0', 10); if (last) openChat(last); })();
+	<?php endif; ?>
 
 	// ── Season Readiness ──────────────────────────────────────────────────
 	var seasonChartObj = null;

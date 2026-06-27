@@ -34,6 +34,18 @@ run($db,
     ) ENGINE=InnoDB",
     $log, "Create settings table");
 
+// Saved AI planning chats (so they survive page navigation + allow follow-ups)
+run($db,
+    "CREATE TABLE IF NOT EXISTS research_chats (
+        id         INT AUTO_INCREMENT PRIMARY KEY,
+        title      VARCHAR(255) NOT NULL DEFAULT 'Chat',
+        context    LONGTEXT,
+        messages   LONGTEXT,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB",
+    $log, "Create research_chats table");
+
 // Planning events — large POs and tradeshows the demand planner considers
 run($db,
     "CREATE TABLE IF NOT EXISTS planning_events (
