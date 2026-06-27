@@ -732,8 +732,11 @@
 						'<tr><td class="text-muted small">&nbsp;&nbsp;to buy</td><td class="text-end ' + (q.fg_to_order>0?'stat-neg':'stat-pos') + '">' + q.fg_to_order + '</td></tr>' +
 						'</tbody></table>';
 					if (q.fg_items && q.fg_items.length) {
-						cards += '<div class="small fw-semibold text-muted">Buy (order finished goods):</div><ul class="small mb-0" style="padding-left:1.1rem;">';
-						q.fg_items.forEach(function(it){ cards += '<li>' + it.order + ' × <code>' + esc(it.sku) + '</code> <span class="text-muted">' + esc(it.product) + '</span></li>'; });
+						cards += '<div class="small fw-semibold text-muted">Buy (Shopify-only finished goods):</div><ul class="small mb-0" style="padding-left:1.1rem;">';
+						q.fg_items.forEach(function(it){
+							cards += '<li><strong>' + it.order + '</strong> × <code>' + esc(it.sku) + '</code> ' +
+								'<span class="text-muted">' + esc(it.product) + ' — have ' + (it.have||0) + ' in Shopify, last-yr demand ' + (it.need||0) + '</span></li>';
+						});
 						cards += '</ul>';
 					}
 					cards += '<div class="small text-muted mt-2">vs ' + esc(q.prior_window) + '</div>';

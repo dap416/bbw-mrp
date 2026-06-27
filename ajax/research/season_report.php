@@ -82,11 +82,15 @@
 			$d = (int)($g['prior_year_sales'][$s['key']] ?? 0);
 			$summary[$s['key']]['fg_demand']   += $d;
 			$summary[$s['key']]['fg_in_stock'] += $stock;
+			$entering = $stock;
 			$ship  = min($stock, $d); $stock -= $ship;
 			$order = $d - $ship;
 			$summary[$s['key']]['fg_to_order'] += $order;
 			if ($order > 0) {
-				$summary[$s['key']]['fg_items'][] = ['sku' => $g['sku'], 'product' => $g['product'], 'order' => $order];
+				$summary[$s['key']]['fg_items'][] = [
+					'sku' => $g['sku'], 'product' => $g['product'], 'order' => $order,
+					'have' => $entering, 'need' => $d,   // Shopify stock vs prior-year demand
+				];
 			}
 		}
 	}
