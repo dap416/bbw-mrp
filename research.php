@@ -631,6 +631,33 @@
 		if (s === 'tight') return '<span class="badge bg-warning text-dark">Tight</span>';
 		return '<span class="badge bg-danger">Short</span>';
 	}
+
+	function renderSharedDrawdown(dd) {
+		var h = '<div class="panel-title mb-2">Shared Parts — Build Drawdown by Season</div>' +
+			'<div class="small text-muted mb-2">Every Animator build draws from one shared pool (rods, plates, packaging). Seasons are deducted in order, so <strong>Left</strong> carries into the next season. Red = the pool goes negative (you run out) — order before then (see the Raw Materials to Order table for quantities and order-by dates).</div>' +
+			'<div class="row g-3">';
+		dd.forEach(function(season){
+			h += '<div class="col-12 col-lg-4"><div class="card h-100"><div class="card-body">' +
+				'<div class="fw-bold mb-2">' + esc(season.label) + '</div>';
+			if (!season.rows || !season.rows.length) {
+				h += '<div class="text-muted small">No builds this season.</div>';
+			} else {
+				h += '<table class="table table-sm mb-0"><thead><tr><th class="small">Part</th><th class="small text-end">Used</th><th class="small text-end">Had</th><th class="small text-end">Left</th></tr></thead><tbody>';
+				season.rows.forEach(function(r){
+					var cls = r.remaining < 0 ? 'stat-neg fw-bold' : (r.remaining === 0 ? 'stat-zero' : 'stat-pos');
+					h += '<tr><td class="small"><strong>' + esc(r.description || r.part) + '</strong> <span class="text-muted">' + esc(r.part) + '</span></td>' +
+						'<td class="small text-end">' + r.used + '</td>' +
+						'<td class="small text-end text-muted">' + r.entering + '</td>' +
+						'<td class="small text-end ' + cls + '">' + r.remaining + '</td></tr>';
+				});
+				h += '</tbody></table>';
+			}
+			h += '</div></div></div>';
+		});
+		h += '</div>';
+		$('#buildPlan').html(h).show();
+	}
+
 	var BP_DATA = null, BP_PARTS = null;
 	function bpNum(v, d) { v = parseInt(v, 10); return isNaN(v) ? d : Math.max(0, v); }
 
@@ -728,15 +755,20 @@
 				res.summary.forEach(function(q) {
 					cards += '<div class="col-12 col-md-4"><div class="card h-100" style="border-top:3px solid #4680ff;"><div class="card-body">' +
 						'<div class="d-flex justify-content-between align-items-start mb-2">' +
-						'<span class="fw-bold">' + esc(q.label) + '</span> ' + verdictBadge(q.status) + '</div>' +
-						'<table class="table table-sm mb-2"><tbody>' +
-						'<tr><td class="text-muted small">Animators — demand</td><td class="text-end fw-semibold">' + q.animator_demand + '</td></tr>' +
-						'<tr><td class="text-muted small">&nbsp;&nbsp;to build</td><td class="text-end ' + (q.animator_to_build>0?'stat-neg':'stat-pos') + '">' + q.animator_to_build + '</td></tr>' +
-						'<tr><td class="text-muted small">Cases/wings (not built) — demand</td><td class="text-end fw-semibold">' + q.fg_demand + '</td></tr>' +
-						'<tr><td class="text-muted small">&nbsp;&nbsp;to buy</td><td class="text-end ' + (q.fg_to_order>0?'stat-neg':'stat-pos') + '">' + q.fg_to_order + '</td></tr>' +
-						'</tbody></table>';
+						'<span class="fw-bold">' + esc(q.label) + '</span> ' + verdictBadge(q.status) + '</div>';
+						cards += '<div class="small fw-semibold text-muted">Build (Animators):</div>';
+						if (q.animator_items && q.animator_items.length) {
+							cards += '<table class="table table-sm mb-2"><thead><tr><th class="small">SKU</th><th class="small text-end">Build</th><th class="small text-end">Have</th><th class="small text-end">Can build</th></tr></thead><tbody>';
+							q.animator_items.forEach(function(it){
+								cards += '<tr><td class="small"><code>' + esc(it.sku) + '</code></td>' +
+									'<td class="text-end small ' + (it.to_build>0?'stat-neg':'stat-pos') + '">' + it.to_build + '</td>' +
+									'<td class="text-end small text-muted">' + (it.have||0) + '</td>' +
+									'<td class="text-end small">' + (it.buildable==null?'-':it.buildable) + '</td></tr>';
+							});
+							cards += '</tbody></table>';
+						} else { cards += '<div class="small text-muted mb-2">No animator demand.</div>'; }
 					if (q.fg_items && q.fg_items.length) {
-						cards += '<div class="small fw-semibold text-muted">Buy (Shopify-only finished goods):</div><ul class="small mb-0" style="padding-left:1.1rem;">';
+						cards += '<div class="small fw-semibold text-muted">Buy (cases / wings):</div><ul class="small mb-0" style="padding-left:1.1rem;">';
 						q.fg_items.forEach(function(it){
 							cards += '<li><strong>' + it.order + '</strong> × <code>' + esc(it.sku) + '</code> ' +
 								'<span class="text-muted">(have ' + (it.have||0) + ', last-yr ' + (it.need||0) + ')</span></li>';
@@ -749,26 +781,28 @@
 				$('#seasonSummary').html(cards).show();
 			}
 
-			// Suggested build order per season + editable, live-recalc drill-down
-			if (res.build_plan) renderBuildPlan(res.build_plan, res.parts);
+			// Shared-parts drawdown across seasons (cumulative)
+			if (res.shared_drawdown) renderSharedDrawdown(res.shared_drawdown);
 
-			// Raw-material order list
+			// Raw-material order list (cumulative shortfall + order-by date)
 			if (res.raw_orders) {
 				var ro = res.raw_orders, h = '';
 				if (!ro.length) {
-					h = '<div class="alert alert-success mb-0">Raw materials on hand + on order cover every animator build through the year. Nothing to order.</div>';
+					h = '<div class="alert alert-success mb-0">Raw materials on hand + on order cover every animator build through all three seasons. Nothing to order.</div>';
 				} else {
 					h = '<div class="panel-title mb-2">Raw Materials to Order <span class="muted-pill ms-1">Est. $' + (res.raw_total_cost||0).toFixed(2) + '</span></div>' +
+						'<div class="small text-muted mb-2">Quantities cover the whole year (all three seasons of builds), rounded up to MOQ. <strong>Order by</strong> is when to place it so it arrives before the part runs out (lead time). Red = already overdue.</div>' +
 						'<div class="scroll-table"><table class="table dash-table align-middle"><thead><tr>' +
-						'<th>Manufacturer</th><th>Part</th><th>Description</th><th class="text-center">Need</th><th class="text-center">Have</th>' +
-						'<th class="text-center">Order (MOQ)</th><th class="text-center">Lead</th><th class="text-end">Est. Cost</th></tr></thead><tbody>';
+						'<th>Manufacturer</th><th>Part</th><th class="text-center">Year use</th><th class="text-center">Have</th>' +
+						'<th class="text-center">Order (MOQ)</th><th class="text-center">Order by</th><th class="text-center">Lead</th><th class="text-end">Est. Cost</th></tr></thead><tbody>';
 					ro.forEach(function(r){
+						var byCls = r.by_past ? 'stat-neg fw-bold' : '';
 						h += '<tr><td class="small fw-semibold">' + esc(r.manufacturer) + '</td>' +
-							'<td class="fw-semibold">' + esc(r.part) + '</td>' +
-							'<td class="small text-muted">' + esc(r.description) + '</td>' +
-							'<td class="text-center">' + r.need + '</td>' +
+							'<td class="fw-semibold">' + esc(r.part) + ' <span class="text-muted small">' + esc(r.description||'') + '</span></td>' +
+							'<td class="text-center">' + r.total_usage + '</td>' +
 							'<td class="text-center text-muted">' + (r.on_hand + r.on_order) + '</td>' +
 							'<td class="text-center stat-neg">' + r.order_qty + '</td>' +
+							'<td class="text-center small ' + byCls + '">' + (r.by_date || '—') + (r.by_past?' ⚠':'') + '</td>' +
 							'<td class="text-center small">' + r.lead_time_days + 'd</td>' +
 							'<td class="text-end fw-semibold">$' + r.cost.toFixed(2) + '</td></tr>';
 					});

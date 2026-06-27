@@ -14,7 +14,7 @@
 	$fresh  = !empty($_POST['fresh']);  // force a recompute, ignore cache
 
 	// Bump when the payload shape changes so old caches auto-invalidate.
-	$SEASON_SCHEMA = 5;
+	$SEASON_SCHEMA = 6;
 
 	$db = db_connect();
 
@@ -60,7 +60,7 @@
 	foreach ($seasons as $s) {
 		$summary[$s['key']] = [
 			'key' => $s['key'], 'label' => $s['label'], 'prior_window' => $s['prior_window'] ?? '',
-			'animator_demand' => 0, 'animator_in_stock' => 0, 'animator_to_build' => 0,
+			'animator_demand' => 0, 'animator_in_stock' => 0, 'animator_to_build' => 0, 'animator_items' => [],
 			'fg_demand' => 0, 'fg_in_stock' => 0, 'fg_to_order' => 0, 'fg_items' => [],
 		];
 	}
@@ -112,14 +112,10 @@
 	}
 	unset($row);
 
-	// ── Per-animator build plan by season (with shared-part accounting) ───────
-	// For each season: how many of each animator to build, and a per-SKU
-	// drill-down showing the finished product and every raw part as
-	// need / have / committed-by-other-builds-this-season / remaining-after.
-	$partInfo = [];
-	foreach ($raws as $rm) $partInfo[$rm['part']] = ['desc' => $rm['description'], 'qoh' => (int)$rm['on_hand']];
-
-	// Per-animator time-phased build + entering finished stock
+	// ── Per-animator build + shared raw materials drained CUMULATIVELY ─────────
+	// Shared parts (rods, plates, packaging) draw from one pool that is depleted
+	// across all three seasons in order, so we can show what remains after each
+	// season and detect when a part runs out (driving order-by dates below).
 	$animBuild = [];
 	foreach ($animators as $i => $a) {
 		$stock = max(0, (int)($a['in_stock'] ?? 0));
@@ -130,62 +126,86 @@
 		}
 	}
 
-	// Total raw units each season's full build commits, per part
-	$seasonCommit = [];
+	$partMeta = []; $pool = [];
+	foreach ($raws as $rm) { $partMeta[$rm['part']] = $rm; $pool[$rm['part']] = (int)$rm['on_hand'] + (int)$rm['on_order']; }
+
+	$seasonUsage = []; $sharedDrawdown = [];
 	foreach ($seasons as $s) {
+		$enteringPool = $pool;             // pool before this season's builds
+		$usage = [];
 		foreach ($animators as $i => $a) {
 			$b = $animBuild[$i][$s['key']]['build'];
 			if ($b <= 0) continue;
 			foreach (($a['bom'] ?? []) as $bl) {
-				$seasonCommit[$s['key']][$bl['part']] = ($seasonCommit[$s['key']][$bl['part']] ?? 0) + $b * (int)$bl['qty_per_unit'];
+				$usage[$bl['part']] = ($usage[$bl['part']] ?? 0) + $b * (int)$bl['qty_per_unit'];
 			}
 		}
-	}
+		$seasonUsage[$s['key']] = $usage;
 
-	// Leaner payload — the browser recomputes need/committed/remaining live as the
-	// user edits build quantities. Send the ingredients: per-animator demand,
-	// entering stock, suggested build, BOM (part + qty/unit); plus a global part
-	// map (description + current on-hand).
-	$partsOut = [];
-	foreach ($raws as $rm) $partsOut[$rm['part']] = ['desc' => $rm['description'], 'have' => (int)$rm['on_hand']];
-
-	$buildPlan = [];
-	foreach ($seasons as $s) {
-		$list = [];
+		// Per-SKU build list: to-build, FP on hand, and how many of THIS animator
+		// could be built from the pool entering this season (raw-limited, alone).
+		$items = [];
 		foreach ($animators as $i => $a) {
 			$info = $animBuild[$i][$s['key']];
 			if ($info['demand'] <= 0 && $info['build'] <= 0) continue;
-			$bom = [];
-			foreach (($a['bom'] ?? []) as $bl) $bom[] = ['part' => $bl['part'], 'qty_per_unit' => (int)$bl['qty_per_unit']];
-			$list[] = [
-				'sku' => $a['sku'] ?: '(no SKU)', 'product' => $a['product'],
-				'demand' => $info['demand'], 'entering' => $info['entering'],
-				'suggested_build' => $info['build'], 'bom' => $bom,
-			];
+			$cap = null;
+			foreach (($a['bom'] ?? []) as $bl) {
+				$q = (int)$bl['qty_per_unit']; if ($q <= 0) continue;
+				$can = intdiv(max(0, (int)($enteringPool[$bl['part']] ?? 0)), $q);
+				if ($cap === null || $can < $cap) $cap = $can;
+			}
+			$items[] = ['sku' => $a['sku'] ?: '(no SKU)', 'to_build' => $info['build'],
+			            'have' => $info['entering'], 'buildable' => $cap, 'demand' => $info['demand']];
 		}
-		usort($list, fn($x, $y) => $y['suggested_build'] <=> $x['suggested_build']);
-		$buildPlan[] = ['key' => $s['key'], 'label' => $s['label'], 'animators' => $list];
+		usort($items, fn($x, $y) => $y['to_build'] <=> $x['to_build']);
+		$summary[$s['key']]['animator_items'] = $items;
+
+		// Deplete the shared pool; record the drawdown (parts used this season)
+		$rows = [];
+		foreach ($partMeta as $part => $rm) {
+			$u = (int)($usage[$part] ?? 0);
+			if ($u <= 0) continue;
+			$entering = (int)($pool[$part] ?? 0);
+			$remaining = $entering - $u;
+			$pool[$part] = $remaining;
+			$rows[] = ['part' => $part, 'description' => $rm['description'],
+			           'used' => $u, 'entering' => $entering, 'remaining' => $remaining];
+		}
+		usort($rows, fn($x, $y) => $x['remaining'] <=> $y['remaining']);
+		$sharedDrawdown[] = ['key' => $s['key'], 'label' => $s['label'], 'rows' => $rows];
 	}
 
-	// ── Raw-material order list (whole horizon), rounded to MOQ ───────────────
+	// ── Raw-material orders: cumulative shortfall + order-by date ──────────────
 	$rawOrders = []; $rawTotalCost = 0.0;
-	foreach ($raws as $rm) {
-		$need  = (int)($rawNeed[$rm['part']] ?? 0);
-		$avail = (int)$rm['on_hand'] + (int)$rm['on_order'];
-		$short = max(0, $need - $avail);
+	foreach ($partMeta as $part => $rm) {
+		$startAvail = (int)$rm['on_hand'] + (int)$rm['on_order'];
+		$cum = 0; $total = 0; $firstNegStart = null;
+		foreach ($seasons as $s) {
+			$u = (int)($seasonUsage[$s['key']][$part] ?? 0);
+			$cum += $u; $total += $u;
+			if ($firstNegStart === null && $cum > $startAvail) $firstNegStart = $s['start'];
+		}
+		$short = max(0, $total - $startAvail);
 		if ($short <= 0) continue;
 		$moq   = max(1, (int)$rm['moq']);
 		$order = (int)(ceil($short / $moq) * $moq);
 		$cost  = $order * (float)$rm['unit_cost'];
 		$rawTotalCost += $cost;
+		$lead  = (int)$rm['lead_time_days'];
+		$orderByTs = $firstNegStart ? strtotime("-$lead days", strtotime($firstNegStart)) : null;
 		$rawOrders[] = [
-			'part' => $rm['part'], 'description' => $rm['description'], 'manufacturer' => $rm['manufacturer'],
-			'need' => $need, 'on_hand' => (int)$rm['on_hand'], 'on_order' => (int)$rm['on_order'],
-			'short' => $short, 'order_qty' => $order, 'lead_time_days' => (int)$rm['lead_time_days'],
-			'unit_cost' => (float)$rm['unit_cost'], 'cost' => $cost,
+			'part' => $part, 'description' => $rm['description'], 'manufacturer' => $rm['manufacturer'],
+			'total_usage' => $total, 'on_hand' => (int)$rm['on_hand'], 'on_order' => (int)$rm['on_order'],
+			'short' => $short, 'order_qty' => $order,
+			'by_date' => $orderByTs ? date('M j, Y', $orderByTs) : null,
+			'by_past' => $orderByTs ? ($orderByTs < time()) : false,
+			'lead_time_days' => $lead, 'unit_cost' => (float)$rm['unit_cost'], 'cost' => $cost,
 		];
 	}
-	usort($rawOrders, fn($a, $b) => strcasecmp($a['manufacturer'], $b['manufacturer']) ?: ($b['cost'] <=> $a['cost']));
+	usort($rawOrders, function ($a, $b) {
+		if ($a['by_past'] !== $b['by_past']) return $a['by_past'] ? -1 : 1;
+		return strcasecmp($a['manufacturer'], $b['manufacturer']);
+	});
 
 	// Chart series: prior-year units per season (animators vs other)
 	$labels = []; $anim = []; $fg = []; $totalDemand = 0;
@@ -222,18 +242,17 @@
 	}
 
 	$payload = json_encode([
-		'summary'        => array_values($summary),
-		'build_plan'     => $buildPlan,
-		'parts'          => $partsOut,
-		'raw_orders'     => $rawOrders,
-		'raw_total_cost' => $rawTotalCost,
-		'charts'         => ['labels' => $labels, 'animators' => $anim, 'finished_goods' => $fg],
-		'tradeshow'      => $data['tradeshow_prior_year_jul_aug'],
-		'report'         => $report,
-		'report_note'    => $reportNote,
-		'data_warning'   => $dataWarning,
-		'schema'         => $SEASON_SCHEMA,
-		'computed_at'    => date('M j, Y g:i A'),
+		'summary'         => array_values($summary),
+		'shared_drawdown' => $sharedDrawdown,
+		'raw_orders'      => $rawOrders,
+		'raw_total_cost'  => $rawTotalCost,
+		'charts'          => ['labels' => $labels, 'animators' => $anim, 'finished_goods' => $fg],
+		'tradeshow'       => $data['tradeshow_prior_year_jul_aug'],
+		'report'          => $report,
+		'report_note'     => $reportNote,
+		'data_warning'    => $dataWarning,
+		'schema'          => $SEASON_SCHEMA,
+		'computed_at'     => date('M j, Y g:i A'),
 	]);
 
 	// Cache the deterministic (non-AI) result so re-opening the page is instant.
