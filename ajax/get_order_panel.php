@@ -35,10 +35,20 @@
 
 	$order = $db->query("SELECT `qty`,`recqty`,`ordval`,`paidamt` FROM `orders` WHERE `id` = '$orderId'")->fetch();
 
+	$qty        = (int)$order['qty'];
+	$recqty     = (int)$order['recqty'];
+	$paidInFull = ((float)$order['paidamt'] + 0.005) >= (float)$order['ordval'] && (float)$order['ordval'] > 0;
+	$eligible   = $paidInFull && $recqty > 0;
+	$diff       = $recqty - $qty;
+
 	echo json_encode([
-		'notes'      => $noteHtml,
-		'payments'   => $payHtml,
-		'shipments'  => $shipHtml,
-		'summaryQty' => $order['qty'].' / '.$order['recqty'],
-		'summaryVal' => $order['ordval'].' / '.$order['paidamt'],
+		'notes'           => $noteHtml,
+		'payments'        => $payHtml,
+		'shipments'       => $shipHtml,
+		'summaryQty'      => $order['qty'].' / '.$order['recqty'],
+		'summaryVal'      => $order['ordval'].' / '.$order['paidamt'],
+		'archiveEligible' => $eligible,
+		'qty'             => $qty,
+		'recqty'          => $recqty,
+		'archiveNote'     => $diff === 0 ? '' : ($diff > 0 ? 'OVERAGE of '.$diff : 'SHORTAGE of '.(-$diff)),
 	]);

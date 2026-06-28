@@ -124,7 +124,16 @@
 			$postByOrder = [];
 			foreach ($dbLink->query("SELECT * FROM `ordpost` ORDER BY `date` DESC") as $r) { $postByOrder[$r['ordid']][] = $r; }
 
-			$openOrders = $dbLink->query("SELECT * FROM `orders` WHERE `postdate` = '0000-00-00 00:00:00' AND `recqty` < `qty` ORDER BY `orderdate` ASC");
+			// Order archiving (after setup_order_archive.php): orders stay on this
+			// list until explicitly archived. Fall back to the old "not fully
+			// received" filter if the migration hasn't been run yet.
+			$hasArchive = false;
+			try { $hasArchive = $dbLink->query("SHOW COLUMNS FROM `orders` LIKE 'archived'")->rowCount() > 0; }
+			catch (Throwable $e) {}
+
+			$openOrders = $hasArchive
+				? $dbLink->query("SELECT * FROM `orders` WHERE `archived` = 0 ORDER BY `orderdate` ASC")
+				: $dbLink->query("SELECT * FROM `orders` WHERE `postdate` = '0000-00-00 00:00:00' AND `recqty` < `qty` ORDER BY `orderdate` ASC");
 
 			if ($openOrders->rowCount() === 0) {
 				echo '<tr><td colspan="6" class="text-muted py-4 text-center">There are no open orders at this time. Click <a href="#" id="emptyAddOrder" class="link">Add Order</a> to add an order that has been placed.</td></tr>';
@@ -142,6 +151,11 @@
 				$orderVal = $order['ordval'];
 				$paidVal = $order['paidamt'];
 				$orderRef = $order['orderref'];
+
+				// Archive eligibility: paid in full AND something received.
+				$paidInFull   = ((float)$paidVal + 0.005) >= (float)$orderVal && (float)$orderVal > 0;
+				$received     = (int)$recQty > 0;
+				$canArchive   = $hasArchive && $canEditOrders && $paidInFull && $received;
 
 				?>
 
@@ -241,6 +255,22 @@
 
 							<?php endif; ?>
 
+							<?php if ($hasArchive && $canEditOrders):
+								$archDiff = (int)$recQty - (int)$orderQty;
+								$archNote = $archDiff === 0 ? '' : ($archDiff > 0 ? 'OVERAGE of '.$archDiff : 'SHORTAGE of '.(-$archDiff));
+							?>
+							<div id="<?php echo $orderId; ?>archiveBox" class="mb-3 mt-4 p-2 rounded<?php echo $canArchive ? '' : ' hidden'; ?>" style="background:#eafaf1;border:1px solid #c3ebd5;">
+								<div class="fw-semibold small text-success mb-1">Order Complete</div>
+								<div class="text-muted mb-2" style="font-size:0.72rem;">
+									Paid in full and received<span id="<?php echo $orderId; ?>archiveDiff"><?php echo $archNote !== '' ? ' — <strong>'.$archNote.'</strong>, recorded on archive' : ''; ?></span>.
+									Archiving removes it from Open Orders.
+								</div>
+								<button action="archiveOrder" record="<?php echo $orderId; ?>"
+									data-qty="<?php echo (int)$orderQty; ?>" data-rec="<?php echo (int)$recQty; ?>"
+									class="btn btn-success btn-sm">Archive Completed Order</button>
+							</div>
+							<?php endif; ?>
+
 							<div class="d-flex gap-2 mt-4">
 								<button action="closeManArea" record="<?php echo $orderId; ?>" class="btn btn-secondary btn-sm">Close</button>
 								<?php if ($canEditOrders): ?>
@@ -332,6 +362,20 @@
 				$("#"+record+"shipmentsList").html(d.shipments);
 				$("#"+record+"summaryQty").html(d.summaryQty);
 				$("#"+record+"summaryVal").html(d.summaryVal);
+
+				// Reveal / refresh the "Archive Completed Order" box live.
+				var $box = $("#"+record+"archiveBox");
+				if ($box.length) {
+					if (d.archiveEligible) {
+						$box.removeClass('hidden');
+						$box.find("[action=archiveOrder]")
+							.attr('data-qty', d.qty).attr('data-rec', d.recqty)
+							.data('qty', d.qty).data('rec', d.recqty);
+						$("#"+record+"archiveDiff").html(d.archiveNote ? (" — <strong>" + d.archiveNote + "</strong>, recorded on archive") : "");
+					} else {
+						$box.addClass('hidden');
+					}
+				}
 				});
 		}
 
@@ -447,6 +491,31 @@
 
 		});
 		
+		// ARCHIVE COMPLETED ORDER
+		$(document).on("click", "[action=archiveOrder]", function() {
+			var $btn = $(this);
+			var record = $btn.attr('record');
+			var qty = parseInt($btn.data('qty'), 10);
+			var rec = parseInt($btn.data('rec'), 10);
+			var msg = "Archive this completed order? It will be removed from Open Orders.";
+			if (rec !== qty) {
+				var d = rec - qty;
+				msg += "\n\nReceived " + rec + " of " + qty + " ordered — " +
+					(d > 0 ? ("OVERAGE of " + d) : ("SHORTAGE of " + (-d))) +
+					" will be recorded.";
+			}
+			if (!confirm(msg)) return;
+
+			$.post('/ajax/archive_order.php', { record: record }, function(response) {
+				if (response === 'ok' || response === 'already') {
+					$btn.closest('tr').prev('tr').remove();   // summary row
+					$btn.closest('tr').remove();               // manage-area row
+				} else {
+					alert('Could not archive: ' + response);
+				}
+			});
+		});
+
 		// EDIT ORDER QTY - trigger on Enter key
 		$(document).on("keypress", "input[id$='editQty']", function(e) {
 			if (e.which === 13) {

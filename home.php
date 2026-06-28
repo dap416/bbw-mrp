@@ -285,8 +285,8 @@
 		ORDER BY t.date DESC, t.id DESC LIMIT 10
 	")->fetchAll();
 
-	$typeLabels = ['BUILD'=>'Build','POST'=>'Received','ORDER'=>'Order Placed','ADJUST'=>'Adjustment','ADJORD'=>'Order Adjusted','ORDERDELETE'=>'Order Deleted','POSTUNDO'=>'Receipt Reversed'];
-	$typeBadge  = ['BUILD'=>'bg-primary','POST'=>'bg-success','ORDER'=>'bg-info text-dark','ADJUST'=>'bg-warning text-dark','ADJORD'=>'bg-secondary','ORDERDELETE'=>'bg-danger','POSTUNDO'=>'bg-danger'];
+	$typeLabels = ['BUILD'=>'Build','POST'=>'Received','ORDER'=>'Order Placed','ADJUST'=>'Adjustment','ADJORD'=>'Order Adjusted','ORDERDELETE'=>'Order Deleted','POSTUNDO'=>'Receipt Reversed','ARCHIVE'=>'Order Archived'];
+	$typeBadge  = ['BUILD'=>'bg-primary','POST'=>'bg-success','ORDER'=>'bg-info text-dark','ADJUST'=>'bg-warning text-dark','ADJORD'=>'bg-secondary','ORDERDELETE'=>'bg-danger','POSTUNDO'=>'bg-danger','ARCHIVE'=>'bg-secondary'];
 
 ?>
 <style>

@@ -47,7 +47,9 @@
 	// Update order recqty
 	$newRecQty = $ordRec + $recamt;
 	$db->exec("UPDATE `orders` SET `recqty` = '$newRecQty' WHERE `id` = '$record'");
-	if ($totalOrd == $newRecQty) {
+	// Mark received-complete once the cumulative received meets or exceeds the
+	// order qty (>= so over-shipments also flag as received, not just exact).
+	if ($newRecQty >= $totalOrd) {
 		$db->exec("UPDATE `orders` SET `postdate` = '$now' WHERE `id` = '$record'");
 	}
 
