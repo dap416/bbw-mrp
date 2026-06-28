@@ -382,6 +382,7 @@
 		        createdAt
 		        sourceName
 		        cancelledAt
+		        customer { displayName }
 		        lineItems(first: 30) {
 		          edges { node { quantity sku variant { id } } }
 		        }
@@ -391,8 +392,9 @@
 		}';
 
 		$q = "created_at:>=$since AND created_at:<=$until";
-		$bySku = []; $byChannel = []; $cursor = null; $pages = 0; $orders = 0;
+		$bySku = []; $bySkuAmazon = []; $byChannel = []; $cursor = null; $pages = 0; $orders = 0;
 		$bundles = shopify_bundle_map();
+		$amazonCust = strtoupper(shopify_amazon_customer());
 
 		do {
 			$res = shopify_graphql($query, ['cursor' => $cursor, 'q' => $q]);
@@ -405,6 +407,7 @@
 				if (!empty($n['cancelledAt'])) continue;
 				$orders++;
 				$chan = shopify_channel_label($n['sourceName'] ?? '');
+				$isAmazon = $amazonCust !== '' && strtoupper(trim((string)($n['customer']['displayName'] ?? ''))) === $amazonCust;
 				foreach ($n['lineItems']['edges'] as $le) {
 					$li  = $le['node'];
 					$sku = trim((string)($li['sku'] ?? ''));
@@ -416,14 +419,16 @@
 					if ($sku === '' && $vid && isset($bundles[$vid])) {
 						foreach ($bundles[$vid] as $c) {
 							$add = $qty * (int)$c['qty'];
-							$bySku[$c['sku']] = ($bySku[$c['sku']] ?? 0) + $add;
-							$byChannel[$chan] = ($byChannel[$chan] ?? 0) + $add;
+							$bySku[$c['sku']]      = ($bySku[$c['sku']] ?? 0) + $add;
+							$byChannel[$chan]      = ($byChannel[$chan] ?? 0) + $add;
+							if ($isAmazon) $bySkuAmazon[$c['sku']] = ($bySkuAmazon[$c['sku']] ?? 0) + $add;
 						}
 						continue;
 					}
 					if ($sku === '') continue;
 					$bySku[$sku]      = ($bySku[$sku] ?? 0) + $qty;
 					$byChannel[$chan] = ($byChannel[$chan] ?? 0) + $qty;
+					if ($isAmazon) $bySkuAmazon[$sku] = ($bySkuAmazon[$sku] ?? 0) + $qty;
 				}
 			}
 
@@ -433,12 +438,25 @@
 		} while ($hasNext && $pages < 40);
 
 		return [
-			'error'      => null,
-			'by_sku'     => $bySku,
-			'by_channel' => $byChannel,
-			'orders'     => $orders,
-			'truncated'  => ($hasNext && $pages >= 40),
+			'error'         => null,
+			'by_sku'        => $bySku,
+			'by_sku_amazon' => $bySkuAmazon,   // subset sold to the Amazon/CDA customer (e.g. TJ STUMPF)
+			'by_channel'    => $byChannel,
+			'orders'        => $orders,
+			'truncated'     => ($hasNext && $pages >= 40),
 		];
+	}
+
+	/** The customer whose orders use Amazon (CDA) packaging cards. Configurable. */
+	function shopify_amazon_customer() {
+		static $name = null;
+		if ($name !== null) return $name;
+		$name = 'TJ STUMPF';
+		try {
+			$db = db_connect();
+			if ($db) { $v = setting_get($db, 'amazon_customer'); if ($v !== null && trim($v) !== '') $name = trim($v); }
+		} catch (Throwable $e) { /* default */ }
+		return $name;
 	}
 
 	/**

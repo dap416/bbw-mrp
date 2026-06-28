@@ -160,15 +160,16 @@
 
 		// Prior-year sales per window (one year earlier, same calendar span)
 		$priorSales   = [];   // season key => [sku => units]
+		$priorAmazon  = [];   // season key => [sku => units sold to the Amazon/CDA customer]
 		$priorChannel = [];   // season key => [channel => units]
 		$shopErr = null;
 		foreach ($seasons as $s) {
-			if (!$shopReady) { $priorSales[$s['key']] = []; $priorChannel[$s['key']] = []; continue; }
+			if (!$shopReady) { $priorSales[$s['key']] = []; $priorAmazon[$s['key']] = []; $priorChannel[$s['key']] = []; continue; }
 			$ps = date('Y-m-d', strtotime('-1 year', strtotime($s['start'])));
 			$pe = date('Y-m-d', strtotime('-1 year', strtotime($s['end'])));
 			$r  = shopify_sales_in_range($ps, $pe);
-			if (!empty($r['error'])) { $shopErr = $r['error']; $priorSales[$s['key']] = []; $priorChannel[$s['key']] = []; }
-			else { $priorSales[$s['key']] = $r['by_sku'] ?? []; $priorChannel[$s['key']] = $r['by_channel'] ?? []; }
+			if (!empty($r['error'])) { $shopErr = $r['error']; $priorSales[$s['key']] = []; $priorAmazon[$s['key']] = []; $priorChannel[$s['key']] = []; }
+			else { $priorSales[$s['key']] = $r['by_sku'] ?? []; $priorAmazon[$s['key']] = $r['by_sku_amazon'] ?? []; $priorChannel[$s['key']] = $r['by_channel'] ?? []; }
 			$seasons[array_search($s, $seasons, true)]['prior_window'] = "$ps to $pe";
 		}
 
@@ -201,15 +202,17 @@
 			if (empty($bom)) continue; // only products with raw materials
 			$sku = $hasSku ? ($p['shopify_sku'] ?? '') : '';
 			if ($sku !== '') $animatorSkus[$sku] = true;
-			$perSeason = [];
+			$perSeason = []; $perSeasonAmazon = [];
 			foreach ($seasons as $s) {
-				$perSeason[$s['key']] = ($sku !== '') ? (int)($priorSales[$s['key']][$sku] ?? 0) : 0;
+				$perSeason[$s['key']]       = ($sku !== '') ? (int)($priorSales[$s['key']][$sku] ?? 0) : 0;
+				$perSeasonAmazon[$s['key']] = ($sku !== '') ? (int)($priorAmazon[$s['key']][$sku] ?? 0) : 0;
 			}
 			$animators[] = [
 				'product'   => $p['name'],
 				'sku'       => $sku,
 				'in_stock'  => ($sku !== '' && isset($shopSkus[$sku])) ? (int)$shopSkus[$sku]['qty'] : null,
-				'prior_year_sales' => $perSeason,
+				'prior_year_sales'  => $perSeason,        // total units (all channels)
+				'prior_year_amazon' => $perSeasonAmazon,  // subset sold to the Amazon/CDA customer → use CDA card; rest use CD card
 				'bom' => array_map(fn($b) => ['part' => $b['partno'], 'qty_per_unit' => (int)$b['qty']], $bom),
 			];
 		}
@@ -285,7 +288,8 @@
 				'shopify_connected' => $shopReady,
 				'shopify_error'     => $shopErr,
 				'note'              => 'Only animator products have raw materials (BOMs) in the MRP; everything else is ordered as finished goods. moq = round up to a multiple. lead_time_days = order-to-delivery. on_order = already-placed raw POs not yet received.',
-				'parts_coverage'    => 'raw_materials lists EVERY part in MRP inventory with on_hand, on_order, base_stock_level, moq, lead_time_days, unit_cost. animator_component=true marks a direct BOM component of an animator. Packaging cards (CD-* and Amazon CDA-*), plates, rods and packaging are all included even when they are not BOM components — their demand tracks the animator they package (usually matchable by part-number prefix, e.g. CDA-LD / CD-LD relate to LDA). NOTE: on_order is a total quantity, not a list of POs with ETAs; specific open-PO dates are not in this snapshot.',
+				'parts_coverage'    => 'raw_materials lists EVERY part in MRP inventory with on_hand, on_order, base_stock_level, moq, lead_time_days, unit_cost. animator_component=true marks a direct BOM component of an animator. Packaging cards (CD-* and Amazon CDA-*), plates, rods and packaging are all included even when they are not BOM components — their demand tracks the animator they package (matchable by part-number brand code, e.g. LDA→CD-LD/CDA-LD; AXLA→CD-AX-L/CDA-AX-L; AXRA→CD-AX-R/CDA-AX-R; KMA→CD-KM/CDA-KM). NOTE: on_order is a total quantity, not a list of POs with ETAs.',
+				'packaging_card_rule' => 'Each animator uses ONE packaging card per unit built. Units sold to the Amazon customer (' . shopify_amazon_customer() . ') use the Amazon CDA-<brand> card; ALL other units use the regular CD-<brand> card. Per animator: prior_year_amazon = units needing a CDA card; (prior_year_sales − prior_year_amazon) = units needing a CD card. So CDA-<brand> demand = that animator\'s prior_year_amazon; CD-<brand> demand = prior_year_sales − prior_year_amazon. Match the CD/CDA card to the animator by brand code in the part number.',
 				'sales_coverage'    => 'prior_year_sales counts EVERY Shopify order in the window (line-item quantities) EXCEPT cancelled orders. This INCLUDES: online/web, point-of-sale (POS/tradeshows), completed/paid draft orders, and Collective/wholesale. Native Shopify bundles are exploded into their component SKUs. It EXCLUDES: open/un-completed draft orders (no sale yet) and anything not recorded in Shopify (e.g. an off-platform Amazon or wholesale PO). sales_by_channel below shows the actual channel mix so you can confirm coverage. Seasons are quarter-granular (jul_sep, oct_dec, jan_mar) — a sub-quarter date range maps to whole quarters.',
 			],
 			'sales_by_channel'  => $priorChannel,

@@ -69,7 +69,8 @@ Key rules:
 - Animators are BUILT: needed-to-build = max(0, demand − in_stock). Raw materials have moq (round orders UP) and lead_time_days (order-by = need_date − lead_time; flag if past).
 - Non-animators (cases, wings) are ORDERED as finished items: order = max(0, demand − in_stock).
 - If you read an attached PO/file, EXTRACT the key details (parts/SKUs, quantities, dates, totals) into your answer so they're captured for the rest of the conversation — later follow-ups may not include the file again.
-- Channel coverage: meta.sales_coverage states exactly what is and isn't included in prior_year_sales, and sales_by_channel gives the per-season unit mix by channel (online, pos, draft/wholesale, collective/wholesale, etc.). Use these to answer 'is this all channels?' questions confidently. Note that off-Shopify orders (e.g. an Amazon/wholesale PO not entered in Shopify) are NOT in the baseline — if the user references one, treat it as additive demand on top of these numbers.
+- Channel coverage: meta.sales_coverage states exactly what is and isn't included in prior_year_sales, and sales_by_channel gives the per-season unit mix by channel. Use these to answer 'is this all channels?' questions confidently.
+- Packaging cards: follow meta.packaging_card_rule. Each animator unit needs one card; units sold to the Amazon customer (in prior_year_amazon) use the CDA-<brand> card, all other units use the CD-<brand> card. So CDA-<brand> need = animator.prior_year_amazon; CD-<brand> need = prior_year_sales − prior_year_amazon. Compare each card's need to its on_hand in raw_materials, round to MOQ, respect lead time.
 - Be concrete and numeric; short Markdown. If data is missing, say so.";
 
 	$newChat = false;
