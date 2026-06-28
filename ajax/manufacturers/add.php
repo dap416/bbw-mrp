@@ -2,7 +2,7 @@
 
 	require_once(__DIR__."/../../includes/fns.php");
 	require_login();
-	if (!has_access('manufacturers')) { echo 'Access denied.'; exit; }
+	require_can(can_edit('manufacturers'), 'You do not have permission to edit manufacturers.');
 
 	$dbLink = db_connect();
 

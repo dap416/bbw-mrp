@@ -1,6 +1,8 @@
 <?php
 
 	require_once(__DIR__."/../includes/fns.php");
+	require_login();
+	require_can(can_do('orders.receive'), 'You do not have permission to receive orders.');
 
 	$db = db_connect();
 

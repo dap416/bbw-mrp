@@ -28,11 +28,51 @@
 		}
 	}
 
+	/**
+	 * Permission level for an area: 0 = none, 1 = view, 2 = edit.
+	 * Admin/master always 2 (full). Orders is treated as editable when the
+	 * user has either order action flag, even at view level.
+	 */
+	function access_level($area) {
+		$role = $_SESSION['user_role'] ?? '';
+		if ($role === 'admin' || $role === 'master') return 2;
+		return (int)($_SESSION['user_access']['access_' . $area] ?? 0);
+	}
+
+	/** View gate — can the user open/see this area's page? */
 	function has_access($page) {
 		$role = $_SESSION['user_role'] ?? '';
 		if ($page === 'users') return $role === 'master';
 		if ($role === 'admin' || $role === 'master') return true;
-		return !empty($_SESSION['user_access']['access_' . $page]);
+		if ($page === 'orders') {
+			return access_level('orders') >= 1 || can_do('orders.create') || can_do('orders.receive');
+		}
+		return access_level($page) >= 1;
+	}
+
+	/** Write gate — can the user change things in this area? */
+	function can_edit($area) {
+		$role = $_SESSION['user_role'] ?? '';
+		if ($role === 'admin' || $role === 'master') return true;
+		return access_level($area) >= 2;
+	}
+
+	/** Specific action gate (e.g. 'orders.create', 'orders.receive'). */
+	function can_do($action) {
+		$role = $_SESSION['user_role'] ?? '';
+		if ($role === 'admin' || $role === 'master') return true;
+		switch ($action) {
+			case 'orders.create':
+				return access_level('orders') >= 2 || !empty($_SESSION['user_access']['access_orders_create']);
+			case 'orders.receive':
+				return access_level('orders') >= 2 || !empty($_SESSION['user_access']['access_orders_receive']);
+		}
+		return false;
+	}
+
+	/** Block an AJAX mutation the user isn't allowed to perform. */
+	function require_can($cond, $msg = 'You do not have permission to perform this action.') {
+		if (!$cond) { http_response_code(403); echo $msg; exit; }
 	}
 
 	function deny_access() {

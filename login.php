@@ -29,10 +29,14 @@
 			$_SESSION['user_name'] = $user['name'];
 			$_SESSION['user_role'] = $user['role'];
 			$_SESSION['user_access'] = [
-				'access_orders'    => $user['access_orders'],
-				'access_inventory' => $user['access_inventory'],
-				'access_products'  => $user['access_products'],
-				'access_build'     => $user['access_build'],
+				'access_orders'         => (int)($user['access_orders']         ?? 0),
+				'access_inventory'      => (int)($user['access_inventory']      ?? 0),
+				'access_products'       => (int)($user['access_products']       ?? 0),
+				'access_build'          => (int)($user['access_build']          ?? 0),
+				'access_manufacturers'  => (int)($user['access_manufacturers']  ?? 0),
+				'access_research'       => (int)($user['access_research']       ?? 0),
+				'access_orders_create'  => (int)($user['access_orders_create']  ?? 0),
+				'access_orders_receive' => (int)($user['access_orders_receive'] ?? 0),
 			];
 
 			header('Location: /index.php');

@@ -2,6 +2,7 @@
 
 	require_once(__DIR__."/../../includes/fns.php");
 	require_login();
+	require_can(can_edit('research'), 'You do not have permission to edit Research data.');
 
 	$db   = db_connect();
 	$id   = (int)($_POST['id']   ?? 0);

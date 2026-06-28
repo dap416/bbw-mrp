@@ -2,6 +2,7 @@
 
 	require_once(__DIR__."/../includes/fns.php");
 	require_login();
+	require_can(can_edit('orders'), 'You do not have permission to edit orders.');
 
 	$db     = db_connect();
 	$record = (int)$_POST['record'];

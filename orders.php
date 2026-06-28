@@ -5,6 +5,10 @@
 	require_once(__DIR__."/includes/header.php");
 	if (!has_access('orders')) { deny_access(); }
 
+	$canCreateOrders = can_do('orders.create');
+	$canReceiveOrders = can_do('orders.receive');
+	$canEditOrders   = can_edit('orders');
+
 	$dbLink = $mysqli = db_connect();
 
 	$parts      = $dbLink->query("SELECT * FROM `parts` ORDER BY `partno` ASC");
@@ -14,11 +18,13 @@
 
 <div>
 
-			<h2 class="fw-bold mb-3">Open Orders</h2>
+			<h2 class="fw-bold mb-3">Open Orders<?php echo $canCreateOrders ? '' : ' <span class="badge bg-secondary" style="font-size:0.6em;vertical-align:middle;">view / receive only</span>'; ?></h2>
 
+			<?php if ($canCreateOrders): ?>
 			<div class="mb-3">
 				<button id="orderAreaButton" class="btn btn-light-primary">+ Add Order</button>
 			</div>
+		<?php endif; ?>
 
 			<!-- ADD ORDER AREA -->
 		<div id="orderArea" class="hidden mb-3">
@@ -159,6 +165,7 @@
 						<!-- LEFT COLUMN: Actions -->
 						<div class="col-md-5">
 
+							<?php if ($canEditOrders): ?>
 							<div class="mb-3">
 								<label class="form-label fw-semibold small text-muted">Add Note</label>
 								<div class="d-flex gap-2">
@@ -190,6 +197,9 @@
 								</div>
 							</div>
 
+							<?php endif; ?>
+
+							<?php if ($canReceiveOrders): ?>
 							<div class="mb-3">
 								<label class="form-label fw-semibold small text-muted">Receive Shipment</label>
 								<div class="d-flex gap-2 flex-wrap">
@@ -205,9 +215,13 @@
 								</div>
 							</div>
 
+							<?php endif; ?>
+
 							<div class="d-flex gap-2 mt-4">
 								<button action="closeManArea" record="<?php echo $orderId; ?>" class="btn btn-secondary btn-sm">Close</button>
+								<?php if ($canEditOrders): ?>
 								<button action="deleteOrder" record="<?php echo $orderId; ?>" class="btn btn-danger btn-sm">Delete Order</button>
+								<?php endif; ?>
 							</div>
 
 						</div>

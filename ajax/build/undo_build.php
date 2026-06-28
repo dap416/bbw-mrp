@@ -2,6 +2,7 @@
 
 	require_once(__DIR__."/../../includes/fns.php");
 	require_login();
+	require_can(can_edit('build'), 'You do not have permission to package/build.');
 
 	$db          = db_connect();
 	$now         = date("Y-m-d H:i:s");

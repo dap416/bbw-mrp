@@ -1,6 +1,8 @@
 <?php
 
 	require_once(__DIR__."/../includes/fns.php");
+	require_login();
+	require_can(can_do('orders.receive'), 'You do not have permission to change receipts.');
 
 	$db = db_connect();
 	$postId = (int)($_POST['postid'] ?? 0);

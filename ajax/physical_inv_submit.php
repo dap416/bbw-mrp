@@ -2,6 +2,7 @@
 
 	require_once(__DIR__."/../includes/fns.php");
 	require_login();
+	require_can(can_edit('inventory'), 'You do not have permission to submit a physical count.');
 
 	$db          = db_connect();
 	$now         = date("Y-m-d H:i:s");

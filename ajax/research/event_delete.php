@@ -2,9 +2,7 @@
 
 	require_once(__DIR__."/../../includes/fns.php");
 	require_login();
-
-	$role = $_SESSION['user_role'] ?? '';
-	if (!in_array($role, ['admin', 'master'], true)) { http_response_code(403); echo 'denied'; exit; }
+	require_can(can_edit('research'), 'You do not have permission to delete planning events.');
 
 	$db = db_connect();
 	$id = (int)($_POST['id'] ?? 0);

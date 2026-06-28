@@ -73,7 +73,9 @@
 		'access_products'       => 'Products',
 		'access_build'          => 'Packaging',
 		'access_manufacturers'  => 'Manufacturers',
+		'access_research'       => 'Research',
 	];
+	$levelOpts = [0 => 'No access', 1 => 'View only', 2 => 'Edit'];
 
 	while ($user = $users->fetch()) {
 		$uid      = $user['id'];
@@ -159,12 +161,34 @@
 					<h6 class="fw-bold mb-2">Site Access</h6>
 
 					<div id="<?php echo $uid; ?>accessChecks" <?php echo $urole !== 'user' ? 'style="display:none"' : ''; ?>>
-						<div class="text-muted small mb-2">Check the pages this user can access.</div>
-						<?php foreach ($pages as $col => $label) { ?>
-						<div class="form-check mb-2">
-							<input class="form-check-input" type="checkbox" id="<?php echo $uid.$col; ?>" <?php echo $user[$col] ? 'checked' : ''; ?> />
-							<label class="form-check-label" for="<?php echo $uid.$col; ?>"><?php echo $label; ?></label>
+						<div class="text-muted small mb-2">Set this user's access per area. <strong>View only</strong> = can see the page but not change anything.</div>
+						<?php foreach ($pages as $col => $label) {
+							$lvl = (int)($user[$col] ?? 0);
+						?>
+						<div class="row g-2 align-items-center mb-2">
+							<div class="col-5"><label class="form-label mb-0 small" for="<?php echo $uid.$col; ?>"><?php echo $label; ?></label></div>
+							<div class="col-7">
+								<select class="form-select form-select-sm access-level" id="<?php echo $uid.$col; ?>" data-col="<?php echo $col; ?>">
+									<?php foreach ($levelOpts as $v => $t): ?>
+									<option value="<?php echo $v; ?>" <?php echo $lvl === $v ? 'selected' : ''; ?>><?php echo $t; ?></option>
+									<?php endforeach; ?>
+								</select>
+							</div>
 						</div>
+						<?php if ($col === 'access_orders') { ?>
+						<div class="ms-3 mb-2 p-2" style="background:#f6f8fa;border-radius:6px;">
+							<div class="text-muted small mb-1">Order actions (independent of the level above):</div>
+							<div class="form-check">
+								<input class="form-check-input" type="checkbox" id="<?php echo $uid; ?>access_orders_create" <?php echo !empty($user['access_orders_create']) ? 'checked' : ''; ?> />
+								<label class="form-check-label small" for="<?php echo $uid; ?>access_orders_create">Can create / place POs</label>
+							</div>
+							<div class="form-check">
+								<input class="form-check-input" type="checkbox" id="<?php echo $uid; ?>access_orders_receive" <?php echo !empty($user['access_orders_receive']) ? 'checked' : ''; ?> />
+								<label class="form-check-label small" for="<?php echo $uid; ?>access_orders_receive">Can receive orders</label>
+							</div>
+							<div class="text-muted" style="font-size:0.72rem;">e.g. set Orders to <em>View only</em> and tick <em>Can receive</em> for someone who receives but never creates.</div>
+						</div>
+						<?php } ?>
 						<?php } ?>
 						<button action="saveAccess" record="<?php echo $uid; ?>" class="btn btn-primary btn-sm mt-2">Save Access</button>
 					</div>
@@ -288,11 +312,14 @@
 		var $btn    = $(this);
 		var record  = $btn.attr('record');
 		var access  = {
-			access_orders:        $("#"+record+"access_orders").is(":checked") ? 1 : 0,
-			access_inventory:     $("#"+record+"access_inventory").is(":checked") ? 1 : 0,
-			access_products:      $("#"+record+"access_products").is(":checked") ? 1 : 0,
-			access_build:         $("#"+record+"access_build").is(":checked") ? 1 : 0,
-			access_manufacturers: $("#"+record+"access_manufacturers").is(":checked") ? 1 : 0,
+			access_orders:         parseInt($("#"+record+"access_orders").val(), 10) || 0,
+			access_inventory:      parseInt($("#"+record+"access_inventory").val(), 10) || 0,
+			access_products:       parseInt($("#"+record+"access_products").val(), 10) || 0,
+			access_build:          parseInt($("#"+record+"access_build").val(), 10) || 0,
+			access_manufacturers:  parseInt($("#"+record+"access_manufacturers").val(), 10) || 0,
+			access_research:       parseInt($("#"+record+"access_research").val(), 10) || 0,
+			access_orders_create:  $("#"+record+"access_orders_create").is(":checked") ? 1 : 0,
+			access_orders_receive: $("#"+record+"access_orders_receive").is(":checked") ? 1 : 0,
 		};
 
 		$.post('/ajax/users/save_access.php', { record: record, access: JSON.stringify(access) }, function(response) {

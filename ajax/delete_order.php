@@ -1,6 +1,8 @@
 <?php
 
-	require_once(__DIR__."/../includes/header.php");
+	require_once(__DIR__."/../includes/fns.php");
+	require_login();
+	require_can(can_edit('orders'), 'You do not have permission to delete orders.');
 
 	$dbLink = db_connect();
 

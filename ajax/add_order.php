@@ -1,6 +1,8 @@
 <?php
 
 	require_once(__DIR__."/../includes/fns.php");
+	require_login();
+	require_can(can_do('orders.create'), 'You do not have permission to create orders.');
 
 	$dbLink = $mysqli = db_connect();
 

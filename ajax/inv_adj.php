@@ -2,6 +2,7 @@
 
 	require_once(__DIR__."/../includes/fns.php");
 	require_login();
+	require_can(can_edit('inventory'), 'You do not have permission to edit inventory.');
 
 	$db = db_connect();
 	$now = date("Y-m-d H:i:s");
