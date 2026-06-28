@@ -79,6 +79,7 @@
           </a>
           <ul class="pc-submenu">
             <li class="pc-item"><a class="pc-link" href="/orders.php">Open Orders</a></li>
+            <li class="pc-item"><a class="pc-link" href="/orders/archived.php">Archived Orders</a></li>
             <li class="pc-item"><a class="pc-link" href="/orders/stock_calc.php">Raw Materials<br><small>Stock Order</small></a></li>
             <li class="pc-item"><a class="pc-link" href="/orders/fp_stock_calc.php">Finished Product<br><small>Stock Order</small></a></li>
           </ul>
