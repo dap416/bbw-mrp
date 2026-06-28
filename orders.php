@@ -186,6 +186,15 @@
 							</div>
 
 							<div class="mb-3">
+								<label class="form-label fw-semibold small text-muted">Order Date</label>
+								<div class="d-flex gap-2 align-items-center flex-wrap">
+									<input type="date" id="<?php echo $orderId; ?>editDate" class="form-control form-control-sm" style="width:170px" max="<?php echo date('Y-m-d'); ?>" value="<?php echo date('Y-m-d', strtotime($order['orderdate'])); ?>" />
+									<button action="editDate" record="<?php echo $orderId; ?>" class="btn btn-primary btn-sm">Submit</button>
+								</div>
+								<div class="text-muted" style="font-size:0.72rem;">Can be backdated; cannot be set in the future.</div>
+							</div>
+
+							<div class="mb-3">
 								<label class="form-label fw-semibold small text-muted">Change Product on Order</label>
 								<div class="d-flex gap-2 align-items-center flex-wrap">
 									<select id="<?php echo $orderId; ?>changePart" class="form-select form-select-sm" style="width:280px">
@@ -458,6 +467,17 @@
 
 		});
 		
+		// EDIT ORDER DATE (can backdate; not future)
+		$("[action=editDate]").click(function() {
+			var record  = $(this).attr('record');
+			var newdate = $("#"+record+"editDate").val();
+			if (!newdate) { alert('Pick a date.'); return; }
+			$.post('/ajax/edit_order_date.php', { record: record, orderdate: newdate }, function(response) {
+				if (response === 'ok') { location.reload(); }
+				else { alert('Could not change date: ' + response); }
+			});
+		});
+
 		// CHANGE PRODUCT ON ORDER
 		$("[action=changePart]").click(function() {
 			var record  = $(this).attr('record');
