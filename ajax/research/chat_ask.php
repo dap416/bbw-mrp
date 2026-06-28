@@ -69,6 +69,7 @@ Key rules:
 - Animators are BUILT: needed-to-build = max(0, demand − in_stock). Raw materials have moq (round orders UP) and lead_time_days (order-by = need_date − lead_time; flag if past).
 - Non-animators (cases, wings) are ORDERED as finished items: order = max(0, demand − in_stock).
 - If you read an attached PO/file, EXTRACT the key details (parts/SKUs, quantities, dates, totals) into your answer so they're captured for the rest of the conversation — later follow-ups may not include the file again.
+- Channel coverage: meta.sales_coverage states exactly what is and isn't included in prior_year_sales, and sales_by_channel gives the per-season unit mix by channel (online, pos, draft/wholesale, collective/wholesale, etc.). Use these to answer 'is this all channels?' questions confidently. Note that off-Shopify orders (e.g. an Amazon/wholesale PO not entered in Shopify) are NOT in the baseline — if the user references one, treat it as additive demand on top of these numbers.
 - Be concrete and numeric; short Markdown. If data is missing, say so.";
 
 	$newChat = false;

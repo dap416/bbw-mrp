@@ -159,15 +159,16 @@
 		$shopSkus  = $variants['skus'] ?? [];
 
 		// Prior-year sales per window (one year earlier, same calendar span)
-		$priorSales = [];   // season key => [sku => units]
+		$priorSales   = [];   // season key => [sku => units]
+		$priorChannel = [];   // season key => [channel => units]
 		$shopErr = null;
 		foreach ($seasons as $s) {
-			if (!$shopReady) { $priorSales[$s['key']] = []; continue; }
+			if (!$shopReady) { $priorSales[$s['key']] = []; $priorChannel[$s['key']] = []; continue; }
 			$ps = date('Y-m-d', strtotime('-1 year', strtotime($s['start'])));
 			$pe = date('Y-m-d', strtotime('-1 year', strtotime($s['end'])));
 			$r  = shopify_sales_in_range($ps, $pe);
-			if (!empty($r['error'])) { $shopErr = $r['error']; $priorSales[$s['key']] = []; }
-			else $priorSales[$s['key']] = $r['by_sku'] ?? [];
+			if (!empty($r['error'])) { $shopErr = $r['error']; $priorSales[$s['key']] = []; $priorChannel[$s['key']] = []; }
+			else { $priorSales[$s['key']] = $r['by_sku'] ?? []; $priorChannel[$s['key']] = $r['by_channel'] ?? []; }
 			$seasons[array_search($s, $seasons, true)]['prior_window'] = "$ps to $pe";
 		}
 
@@ -282,7 +283,9 @@
 				'shopify_connected' => $shopReady,
 				'shopify_error'     => $shopErr,
 				'note'              => 'Only animator products have raw materials (BOMs) in the MRP; everything else is ordered as finished goods. moq = round up to a multiple. lead_time_days = order-to-delivery. on_order = already-placed raw POs not yet received.',
+				'sales_coverage'    => 'prior_year_sales counts EVERY Shopify order in the window (line-item quantities) EXCEPT cancelled orders. This INCLUDES: online/web, point-of-sale (POS/tradeshows), completed/paid draft orders, and Collective/wholesale. Native Shopify bundles are exploded into their component SKUs. It EXCLUDES: open/un-completed draft orders (no sale yet) and anything not recorded in Shopify (e.g. an off-platform Amazon or wholesale PO). sales_by_channel below shows the actual channel mix so you can confirm coverage. Seasons are quarter-granular (jul_sep, oct_dec, jan_mar) — a sub-quarter date range maps to whole quarters.',
 			],
+			'sales_by_channel'  => $priorChannel,
 			'seasons'        => $seasons,
 			'animators'      => $animators,
 			'raw_materials'  => $rawMaterials,
