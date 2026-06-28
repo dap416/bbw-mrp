@@ -382,6 +382,7 @@
 		        createdAt
 		        sourceName
 		        cancelledAt
+		        tags
 		        customer { displayName }
 		        lineItems(first: 30) {
 		          edges { node { quantity sku variant { id } } }
@@ -395,6 +396,7 @@
 		$bySku = []; $bySkuAmazon = []; $byChannel = []; $cursor = null; $pages = 0; $orders = 0;
 		$bundles = shopify_bundle_map();
 		$amazonCust = strtoupper(shopify_amazon_customer());
+		$amazonTag  = strtolower(shopify_amazon_tag());
 
 		do {
 			$res = shopify_graphql($query, ['cursor' => $cursor, 'q' => $q]);
@@ -407,7 +409,9 @@
 				if (!empty($n['cancelledAt'])) continue;
 				$orders++;
 				$chan = shopify_channel_label($n['sourceName'] ?? '');
-				$isAmazon = $amazonCust !== '' && strtoupper(trim((string)($n['customer']['displayName'] ?? ''))) === $amazonCust;
+				$tags = array_map(fn($t) => strtolower(trim($t)), $n['tags'] ?? []);
+				$isAmazon = ($amazonCust !== '' && strtoupper(trim((string)($n['customer']['displayName'] ?? ''))) === $amazonCust)
+				         || ($amazonTag !== '' && in_array($amazonTag, $tags, true));
 				foreach ($n['lineItems']['edges'] as $le) {
 					$li  = $le['node'];
 					$sku = trim((string)($li['sku'] ?? ''));
@@ -457,6 +461,18 @@
 			if ($db) { $v = setting_get($db, 'amazon_customer'); if ($v !== null && trim($v) !== '') $name = trim($v); }
 		} catch (Throwable $e) { /* default */ }
 		return $name;
+	}
+
+	/** Order tag that also marks an order as Amazon (CDA cards). Configurable. */
+	function shopify_amazon_tag() {
+		static $tag = null;
+		if ($tag !== null) return $tag;
+		$tag = 'Amazon';
+		try {
+			$db = db_connect();
+			if ($db) { $v = setting_get($db, 'amazon_tag'); if ($v !== null && trim($v) !== '') $tag = trim($v); }
+		} catch (Throwable $e) { /* default */ }
+		return $tag;
 	}
 
 	/**
