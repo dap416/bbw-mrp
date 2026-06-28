@@ -227,6 +227,7 @@
 								<div class="d-flex gap-2 flex-wrap">
 									<input type="text" id="<?php echo $orderId; ?>recAmt" class="form-control form-control-sm" style="width:90px" placeholder="Qty"/>
 									<input type="text" id="<?php echo $orderId; ?>recRef" class="form-control form-control-sm" style="width:90px" placeholder="Ref #"/>
+									<input type="date" id="<?php echo $orderId; ?>recDate" class="form-control form-control-sm" style="width:150px" max="<?php echo date('Y-m-d'); ?>" value="<?php echo date('Y-m-d'); ?>" title="Received date"/>
 									<select id="<?php echo $orderId; ?>recWH" class="form-select form-select-sm" style="width:180px">
 										<option value="">Select Warehouse</option>
 										<?php foreach ($warehouses as $wh): ?>
@@ -410,11 +411,13 @@
 			var record = $btn.attr('record');
 			var recamt = $("#"+record+"recAmt").val();
 			var recref = $("#"+record+"recRef").val();
+			var recdate = $("#"+record+"recDate").val();
 			var whId   = $("#"+record+"recWH").val();
 
 			if (!whId) { alert('Please select a warehouse.'); return; }
 
-			$.post('/ajax/post_order.php', { recamt: recamt, recref: recref, record: record, warehouse_id: whId }, function() {
+			$.post('/ajax/post_order.php', { recamt: recamt, recref: recref, rec_date: recdate, record: record, warehouse_id: whId }, function(response) {
+				if (response !== 'ok') { alert('Could not receive: ' + response); return; }
 				$("#"+record+"recAmt").val('');
 				$("#"+record+"recRef").val('');
 				showUpdated($btn);

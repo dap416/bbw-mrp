@@ -10,7 +10,16 @@
 	$recamt      = (int)($_POST['recamt'] ?? 0);
 	$recref      = $_POST['recref']       ?? '';
 	$warehouseId = (int)($_POST['warehouse_id'] ?? 0);
+	$recDate     = trim($_POST['rec_date'] ?? '');
 	$now         = date("Y-m-d H:i:s");
+
+	// Optional received date: can be backdated, never in the future.
+	if ($recDate !== '') {
+		$ts = strtotime($recDate);
+		if ($ts === false) { echo 'Invalid received date.'; exit; }
+		if (date('Y-m-d', $ts) > date('Y-m-d')) { echo 'Received date cannot be in the future.'; exit; }
+		$now = date('Y-m-d', $ts) . ' 12:00:00';
+	}
 
 	if (!$record || $recamt <= 0) { echo 'error'; exit; }
 
@@ -48,3 +57,5 @@
 	} else {
 		adjust_qty($orderPart, 'post', $recamt);
 	}
+
+	echo 'ok';
