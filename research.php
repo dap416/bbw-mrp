@@ -247,6 +247,11 @@
 
 			<textarea id="planQuestion" class="form-control mb-2" rows="2"
 				placeholder="Ask a question (or a follow-up)…"></textarea>
+			<div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
+				<input type="file" id="chatFiles" accept=".pdf,image/png,image/jpeg,image/gif,image/webp" multiple style="display:none" />
+				<button id="chatAttach" type="button" class="btn btn-outline-secondary btn-sm"><i class="ti ti-paperclip me-1"></i>Attach PO / image</button>
+				<span id="chatFileNames" class="small text-muted"></span>
+			</div>
 			<div class="d-flex align-items-center gap-2">
 				<button id="askBtn" class="btn btn-primary btn-sm">Ask</button>
 				<span id="askStatus" class="small text-muted"></span>
@@ -621,8 +626,13 @@
 		var h = '';
 		(messages || []).forEach(function(m){
 			if (m.role === 'user') {
+				var chips = '';
+				(m._files || []).forEach(function(fobj){
+					chips += '<span class="badge bg-light text-dark border me-1"><i class="ti ti-' + (fobj.kind === 'document' ? 'file-text' : 'photo') + ' me-1"></i>' + esc(fobj.name) + '</span>';
+				});
 				h += '<div class="mb-2"><div class="small fw-semibold text-muted">You</div>' +
-					'<div style="white-space:pre-wrap;">' + esc(m.content) + '</div></div>';
+					(m.content ? '<div style="white-space:pre-wrap;">' + esc(m.content) + '</div>' : '') +
+					(chips ? '<div class="mt-1">' + chips + '</div>' : '') + '</div>';
 			} else {
 				h += '<div class="mb-3" style="background:#faf9f7; border:1px solid #eee; border-radius:8px; padding:12px; overflow-x:auto;">' +
 					mdToHtml(m.content) + '</div>';
@@ -679,15 +689,29 @@
 		});
 	});
 
+	// Attach files (PDF / images)
+	$('#chatAttach').on('click', function(){ $('#chatFiles').click(); });
+	$('#chatFiles').on('change', function(){
+		var names = $.map(this.files, function(f){ return f.name; });
+		$('#chatFileNames').text(names.length ? names.join(', ') : '');
+	});
+
 	$('#askBtn').on('click', function() {
 		var q = $.trim($('#planQuestion').val());
-		if (!q) { $('#askStatus').text('Enter a question first.'); return; }
+		var files = document.getElementById('chatFiles').files;
+		if (!q && (!files || !files.length)) { $('#askStatus').text('Enter a question or attach a file.'); return; }
 		var $btn = $(this);
 		$btn.prop('disabled', true);
-		$('#askStatus').removeClass('text-danger').text('Thinking… (up to a minute)');
+		$('#askStatus').removeClass('text-danger').text(files && files.length ? 'Reading your file…' : 'Thinking… (up to a minute)');
+
+		var fd = new FormData();
+		fd.append('id', currentChatId);
+		fd.append('question', q);
+		for (var i = 0; i < (files ? files.length : 0); i++) fd.append('files[]', files[i]);
+
 		$.ajax({
 			url: '/ajax/research/chat_ask.php', method: 'POST', dataType: 'json', timeout: 180000,
-			data: { id: currentChatId, question: q }
+			data: fd, processData: false, contentType: false
 		}).done(function(res){
 			if (res.error) { $('#askStatus').addClass('text-danger').text(res.error); return; }
 			currentChatId = res.chat_id;
@@ -696,11 +720,12 @@
 			$('#chatTitle').text(res.title).show();
 			renderThread(res.messages);
 			$('#planQuestion').val('');
+			$('#chatFiles').val(''); $('#chatFileNames').text('');
 			$('#askStatus').text('');
 			loadChatList();
 		}).fail(function(xhr, status){
 			$('#askStatus').addClass('text-danger').text(
-				status === 'timeout' ? 'Timed out — try a narrower question.'
+				status === 'timeout' ? 'Timed out — try a smaller file or narrower question.'
 				: 'Request failed (' + (xhr.status || 'no response') + ').');
 		}).always(function(){ $btn.prop('disabled', false); });
 	});

@@ -75,6 +75,28 @@
 		if (!$cond) { http_response_code(403); echo $msg; exit; }
 	}
 
+	/**
+	 * Convert stored chat messages to a lightweight form for the browser:
+	 * array content (with base64 file blocks) collapses to its text, and the
+	 * `_files` display metadata (name/kind) is preserved. Keeps multi-MB file
+	 * data out of the JSON sent back to the page.
+	 */
+	function chat_display_messages($messages) {
+		$out = [];
+		foreach ($messages as $m) {
+			$content = $m['content'] ?? '';
+			if (is_array($content)) {
+				$text = '';
+				foreach ($content as $b) { if (($b['type'] ?? '') === 'text') $text .= $b['text']; }
+				$content = $text;
+			}
+			$row = ['role' => $m['role'] ?? 'user', 'content' => $content];
+			if (!empty($m['_files'])) $row['_files'] = $m['_files'];
+			$out[] = $row;
+		}
+		return $out;
+	}
+
 	function deny_access() {
 		echo '<div class="alert alert-warning mt-3" style="max-width:520px;">
 			<h5 class="fw-bold mb-1">Access Denied</h5>

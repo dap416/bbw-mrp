@@ -18,5 +18,5 @@
 	echo json_encode([
 		'chat_id'  => (int)$row['id'],
 		'title'    => $row['title'],
-		'messages' => json_decode($row['messages'] ?: '[]', true) ?: [],
+		'messages' => chat_display_messages(json_decode($row['messages'] ?: '[]', true) ?: []),
 	]);
