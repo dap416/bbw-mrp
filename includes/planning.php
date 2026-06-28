@@ -214,27 +214,29 @@
 			];
 		}
 
-		// ── Raw materials (parts used by animators) with manufacturer ─────────
+		// ── Raw materials — EVERY part in inventory (not just BOM components) ──
+		// Cards (CD-/CDA-), packaging, plates, rods, cams, etc. are all included
+		// so the assistant can see on-hand for anything, with a flag marking which
+		// are direct animator BOM components.
 		$rawMaterials = [];
-		if (!empty($partIds)) {
-			$inList = implode(',', array_map('intval', array_keys($partIds)));
-			foreach ($db->query("
-				SELECT p.partno, p.`desc`, p.qoh, p.bsl, p.imoq, p.lead_time, p.cost, p.supplier, p.id,
-				       m.name AS mfg_name
-				FROM parts p LEFT JOIN manufacturers m ON m.id = p.manufacturer
-				WHERE p.id IN ($inList) ORDER BY p.partno ASC
-			") as $pt) {
-				$rawMaterials[] = [
-					'part'           => $pt['partno'],
-					'description'    => $pt['desc'],
-					'manufacturer'   => $pt['mfg_name'] ?: ($pt['supplier'] ?: 'Unknown'),
-					'on_hand'        => (int)$pt['qoh'],
-					'on_order'       => (int)($onOrder[$pt['id']] ?? 0),
-					'moq'            => (int)$pt['imoq'],
-					'lead_time_days' => (int)($pt['lead_time'] ?? 45),
-					'unit_cost'      => (float)$pt['cost'],
-				];
-			}
+		foreach ($db->query("
+			SELECT p.partno, p.`desc`, p.qoh, p.bsl, p.imoq, p.lead_time, p.cost, p.supplier, p.id,
+			       m.name AS mfg_name
+			FROM parts p LEFT JOIN manufacturers m ON m.id = p.manufacturer
+			ORDER BY p.partno ASC
+		") as $pt) {
+			$rawMaterials[] = [
+				'part'              => $pt['partno'],
+				'description'       => $pt['desc'],
+				'manufacturer'      => $pt['mfg_name'] ?: ($pt['supplier'] ?: 'Unknown'),
+				'on_hand'           => (int)$pt['qoh'],
+				'on_order'          => (int)($onOrder[$pt['id']] ?? 0),
+				'base_stock_level'  => (int)$pt['bsl'],
+				'moq'               => (int)$pt['imoq'],
+				'lead_time_days'    => (int)($pt['lead_time'] ?? 45),
+				'unit_cost'         => (float)$pt['cost'],
+				'animator_component' => isset($partIds[$pt['id']]),
+			];
 		}
 
 		// ── Non-animator finished goods (cases, wings, etc. — no BOM) ─────────
@@ -283,6 +285,7 @@
 				'shopify_connected' => $shopReady,
 				'shopify_error'     => $shopErr,
 				'note'              => 'Only animator products have raw materials (BOMs) in the MRP; everything else is ordered as finished goods. moq = round up to a multiple. lead_time_days = order-to-delivery. on_order = already-placed raw POs not yet received.',
+				'parts_coverage'    => 'raw_materials lists EVERY part in MRP inventory with on_hand, on_order, base_stock_level, moq, lead_time_days, unit_cost. animator_component=true marks a direct BOM component of an animator. Packaging cards (CD-* and Amazon CDA-*), plates, rods and packaging are all included even when they are not BOM components — their demand tracks the animator they package (usually matchable by part-number prefix, e.g. CDA-LD / CD-LD relate to LDA). NOTE: on_order is a total quantity, not a list of POs with ETAs; specific open-PO dates are not in this snapshot.',
 				'sales_coverage'    => 'prior_year_sales counts EVERY Shopify order in the window (line-item quantities) EXCEPT cancelled orders. This INCLUDES: online/web, point-of-sale (POS/tradeshows), completed/paid draft orders, and Collective/wholesale. Native Shopify bundles are exploded into their component SKUs. It EXCLUDES: open/un-completed draft orders (no sale yet) and anything not recorded in Shopify (e.g. an off-platform Amazon or wholesale PO). sales_by_channel below shows the actual channel mix so you can confirm coverage. Seasons are quarter-granular (jul_sep, oct_dec, jan_mar) — a sub-quarter date range maps to whole quarters.',
 			],
 			'sales_by_channel'  => $priorChannel,
