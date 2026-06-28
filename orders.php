@@ -216,6 +216,7 @@
 									</div>
 									<input type="text" id="<?php echo $orderId; ?>payRef" class="form-control form-control-sm" style="width:90px" placeholder="Ref #"/>
 									<button action="addPay" record="<?php echo $orderId; ?>" class="btn btn-primary btn-sm">Submit</button>
+									<button action="payFull" record="<?php echo $orderId; ?>" class="btn btn-success btn-sm">Pay in Full</button>
 								</div>
 							</div>
 
@@ -396,6 +397,26 @@
 			var payref = $("#"+record+"payRef").val();
 
 			$.post('/ajax/add_payment.php', { payamt: payamt, payref: payref, record: record }, function() {
+				$("#"+record+"payAmt").val('');
+				$("#"+record+"payRef").val('');
+				showUpdated($btn);
+				refreshPanel(record);
+			});
+
+		});
+
+		// PAY IN FULL — posts the exact remaining balance
+		$("[action=payFull]").click(function() {
+
+			var $btn = $(this);
+			var record = $btn.attr('record');
+			var payref = $("#"+record+"payRef").val();
+
+			if (!confirm("Post a payment for the full remaining balance on this order?")) return;
+
+			$.post('/ajax/add_payment.php', { payfull: 1, payref: payref, record: record }, function(response) {
+				if (response === 'paid') { alert('This order is already paid in full.'); return; }
+				if (response !== 'ok') { alert('Could not post payment: ' + response); return; }
 				$("#"+record+"payAmt").val('');
 				$("#"+record+"payRef").val('');
 				showUpdated($btn);

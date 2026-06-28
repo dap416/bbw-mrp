@@ -4,17 +4,34 @@
 	require_login();
 	require_can(can_edit('orders'), 'You do not have permission to edit orders.');
 
-	$dbLink = $mysqli = db_connect();
+	$db = db_connect();
 
-	extract($_POST);
+	$record  = (int)($_POST['record'] ?? 0);
+	$payref  = trim($_POST['payref'] ?? '');
+	$payfull = !empty($_POST['payfull']);
+	$now     = date("Y-m-d H:i:s");
 
-	$now = date("Y-m-d H:i:s");
+	if ($record <= 0) { echo 'error'; exit; }
 
-	$orderInfo = $dbLink->query("SELECT * FROM `orders` WHERE `id` = '$record'")->fetch();
-	$ordPayAmt = $orderInfo['paidamt'];
+	$order = $db->query("SELECT `ordval`,`paidamt` FROM `orders` WHERE `id` = $record")->fetch();
+	if (!$order) { echo 'error'; exit; }
 
-	$addPayment = $dbLink->query("INSERT INTO `payments` (`date`,`ordid`,`amount`,`ref`) VALUES ('$now','$record','$payamt','$payref')");
+	$ordVal = (float)$order['ordval'];
+	$paid   = (float)$order['paidamt'];
 
-	// ADJUST ORDER RECORD
-	$newPayAmt = $ordPayAmt + $payamt;
-	$updatePayAmt = $dbLink->query("UPDATE `orders` SET `paidamt` = '$newPayAmt' WHERE `id` = '$record'");
+	if ($payfull) {
+		// Exact remaining balance (covers any earlier partial payment).
+		$amt = round($ordVal - $paid, 2);
+		if ($amt <= 0) { echo 'paid'; exit; }   // already paid in full
+	} else {
+		$amt = round((float)($_POST['payamt'] ?? 0), 2);
+		if ($amt <= 0) { echo 'error'; exit; }
+	}
+
+	$db->prepare("INSERT INTO `payments` (`date`,`ordid`,`amount`,`ref`) VALUES (?,?,?,?)")
+	   ->execute([$now, $record, $amt, $payref]);
+
+	$db->prepare("UPDATE `orders` SET `paidamt` = ? WHERE `id` = ?")
+	   ->execute([round($paid + $amt, 2), $record]);
+
+	echo 'ok';
