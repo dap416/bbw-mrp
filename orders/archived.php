@@ -28,8 +28,9 @@
 
 <?php else: ?>
 
-	<div class="mb-3">
+	<div class="mb-3 d-flex gap-2 align-items-center flex-wrap">
 		<input type="text" id="archFilter" class="form-control form-control-sm" style="max-width:320px" placeholder="Filter by product or order #…"/>
+		<a href="/orders/export_archived.php" class="btn btn-sm btn-light-primary">Export CSV</a>
 	</div>
 
 	<div class="card">
