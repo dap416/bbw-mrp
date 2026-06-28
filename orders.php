@@ -186,6 +186,19 @@
 							</div>
 
 							<div class="mb-3">
+								<label class="form-label fw-semibold small text-muted">Change Product on Order</label>
+								<div class="d-flex gap-2 align-items-center flex-wrap">
+									<select id="<?php echo $orderId; ?>changePart" class="form-select form-select-sm" style="width:280px">
+										<?php foreach ($partsById as $pid => $pinfo): ?>
+										<option value="<?php echo $pid; ?>" <?php echo $pid == $partId ? 'selected' : ''; ?>><?php echo htmlspecialchars($pinfo['partno'].' - '.$pinfo['desc']); ?></option>
+										<?php endforeach; ?>
+									</select>
+									<button action="changePart" record="<?php echo $orderId; ?>" class="btn btn-warning btn-sm">Change</button>
+								</div>
+								<div class="text-muted" style="font-size:0.72rem;">Wrong part? Re-point the order. The old part's order entry is marked corrected, a new order entry is added on the right part, and any received stock is moved.</div>
+							</div>
+
+							<div class="mb-3">
 								<label class="form-label fw-semibold small text-muted">Post Payment</label>
 								<div class="d-flex gap-2">
 									<div class="input-group input-group-sm" style="width:120px">
@@ -445,6 +458,18 @@
 
 		});
 		
+		// CHANGE PRODUCT ON ORDER
+		$("[action=changePart]").click(function() {
+			var record  = $(this).attr('record');
+			var newpart = $("#"+record+"changePart").val();
+			if (!confirm("Change the product on this order?\n\nThe old part's order entry will be marked corrected, a new order entry added on the new part, and any received stock moved to the new part. Continue?")) return;
+			$.post('/ajax/change_order_part.php', { record: record, newpart: newpart }, function(response) {
+				if (response === 'ok') { location.reload(); }
+				else if (response === 'same') { alert('That is already the product on this order.'); }
+				else { alert('Could not change product: ' + response); }
+			});
+		});
+
 		// SHOW MANAGE ORDER AREA
 		$("[action=manOrdButton]").click(function() {
 			
