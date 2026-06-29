@@ -22,6 +22,7 @@
 			'bills'   => ['items' => [], 'total' => 0.0, 'error' => null],     // QBO AP
 			'invoices'=> ['items' => [], 'total' => 0.0, 'error' => null],     // QBO AR
 			'pos'     => ['items' => [], 'total' => 0.0],                       // MRP unpaid POs
+			'qb_accounts' => [],                                                // picker for manual balances
 		];
 
 		if (qb_is_connected()) {
@@ -41,17 +42,21 @@
 					$bal  = (float)($a['CurrentBalance'] ?? 0);
 					$name = $a['Name'] ?? '';
 
+					$qid = (string)($a['Id'] ?? '');
 					if ($type === 'Bank') {
 						$out['cash']['accounts'][] = ['name' => $name, 'balance' => $bal];
 						$out['cash']['total'] += $bal;
+						$out['qb_accounts'][] = ['id' => $qid, 'name' => $name, 'type' => 'bank', 'balance' => $bal];
 					} elseif ($type === 'Credit Card') {
 						$out['credit']['accounts'][] = ['name' => $name, 'balance' => $bal, 'kind' => 'Credit Card'];
 						$out['credit']['total'] += $bal;
+						$out['qb_accounts'][] = ['id' => $qid, 'name' => $name, 'type' => 'credit', 'balance' => $bal];
 					} elseif (stripos($sub, 'LineOfCredit') !== false
 						   || $type === 'Long Term Liability'
 						   || ($type === 'Other Current Liability' && (stripos($sub, 'Loan') !== false || stripos($sub, 'LineOfCredit') !== false))) {
 						$out['credit']['accounts'][] = ['name' => $name, 'balance' => $bal, 'kind' => 'Line of Credit / Loan'];
 						$out['credit']['total'] += $bal;
+						$out['qb_accounts'][] = ['id' => $qid, 'name' => $name, 'type' => 'loc', 'balance' => $bal];
 					}
 				}
 			}
@@ -172,8 +177,10 @@
 			updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			user_id       INT NULL
 		) ENGINE=InnoDB");
-		// Add the column for tables created before it existed (ignore duplicate).
+		// Add columns for tables created before they existed (ignore duplicates).
 		try { $db->exec("ALTER TABLE cash_balances ADD COLUMN monthly_payment DECIMAL(12,2) NULL"); }
+		catch (Throwable $e) { /* already there */ }
+		try { $db->exec("ALTER TABLE cash_balances ADD COLUMN qb_account_id VARCHAR(40) NULL"); }
 		catch (Throwable $e) { /* already there */ }
 	}
 
@@ -199,6 +206,7 @@
 					'balance' => (float)$r['balance'],
 					'limit'   => $r['credit_limit'] !== null ? (float)$r['credit_limit'] : null,
 					'payment' => isset($r['monthly_payment']) && $r['monthly_payment'] !== null ? (float)$r['monthly_payment'] : 0.0,
+					'qb_id'   => $r['qb_account_id'] ?? '',
 					'as_of'   => $r['as_of'],
 					'note'    => $r['note'],
 					'type'    => $r['acct_type'],
@@ -228,30 +236,60 @@
 	 * Pulls dollar totals per month from the `orders`+Shopify history if available;
 	 * falls back to an empty projection when Shopify isn't connected.
 	 */
-	function cashflow_sales_projection($db, $months = 12, $startTs = null, $growthPct = 0.0) {
-		$out = [];
-		$start = $startTs ?: strtotime(date('Y-m-01'));
+	/**
+	 * Build the forward sales projection AND a prior-year reconciliation.
+	 * Projects each month from the prior-year SAME month, preferring QuickBooks
+	 * actual income (cash basis = money truly received, handles Net-60) and
+	 * falling back to Shopify net sales when QB has no figure. Also returns a
+	 * month-by-month Shopify-vs-QuickBooks comparison for the prior year so the
+	 * user can confirm the numbers.
+	 */
+	function cashflow_projection($db, $months = 12, $growthPct = 0.0) {
+		$start = strtotime(date('Y-m-01'));
+		$rows  = [];
 		for ($i = 0; $i < $months; $i++) {
-			$ts  = strtotime("+$i month", $start);
-			$out[] = ['label' => date('M Y', $ts), 'ym' => date('Y-m', $ts), 'month' => (int)date('n', $ts), 'projected' => null];
+			$ts = strtotime("+$i month", $start);
+			$rows[] = ['label' => date('M Y', $ts), 'ym' => date('Y-m', $ts), 'projected' => 0.0,
+			           'prior_shopify' => null, 'prior_qb' => null, 'basis' => 'none'];
 		}
-		if (!function_exists('shopify_revenue_in_range') || !shopify_is_configured()) return $out;
 
-		// One call: prior-year revenue by month across the whole horizon window.
-		try {
-			$priorFrom = date('Y-m-01', strtotime($out[0]['ym'] . '-01 -1 year'));
-			$priorTo   = date('Y-m-t',  strtotime("+" . ($months - 1) . " month", strtotime($priorFrom)));
-			$rev = shopify_revenue_in_range($priorFrom, $priorTo);
-			if (empty($rev['error'])) {
-				$mult = 1 + ($growthPct / 100.0);
-				foreach ($out as &$m) {
-					$priorYm = date('Y-m', strtotime($m['ym'] . '-01 -1 year'));
-					$m['projected'] = round((float)($rev['by_month'][$priorYm] ?? 0) * $mult, 2);
-				}
-				unset($m);
-			}
-		} catch (Throwable $e) {}
-		return $out;
+		$priorFrom = date('Y-m-01', strtotime($rows[0]['ym'] . '-01 -1 year'));
+		$priorTo   = date('Y-m-t',  strtotime("+" . ($months - 1) . " month", strtotime($priorFrom)));
+
+		$shop = ['by_month' => [], 'error' => 'not connected'];
+		$qb   = ['by_month' => [], 'error' => 'not connected'];
+		if (function_exists('shopify_revenue_in_range') && shopify_is_configured()) {
+			try { $shop = shopify_revenue_in_range($priorFrom, $priorTo); } catch (Throwable $e) { $shop = ['by_month'=>[], 'error'=>$e->getMessage()]; }
+		}
+		if (function_exists('qb_monthly_income') && qb_is_connected()) {
+			try { $qb = qb_monthly_income($priorFrom, $priorTo, true); } catch (Throwable $e) { $qb = ['by_month'=>[], 'error'=>$e->getMessage()]; }
+		}
+
+		$mult = 1 + ($growthPct / 100.0);
+		foreach ($rows as &$m) {
+			$pYm  = date('Y-m', strtotime($m['ym'] . '-01 -1 year'));
+			$sVal = isset($shop['by_month'][$pYm]) ? (float)$shop['by_month'][$pYm] : null;
+			$qVal = isset($qb['by_month'][$pYm])   ? (float)$qb['by_month'][$pYm]   : null;
+			$m['prior_shopify'] = $sVal;
+			$m['prior_qb']      = $qVal;
+			// Prefer QuickBooks actual income (true cash); fall back to Shopify.
+			if ($qVal !== null && $qVal != 0) { $m['projected'] = round($qVal * $mult, 2); $m['basis'] = 'qb'; }
+			elseif ($sVal !== null)           { $m['projected'] = round($sVal * $mult, 2); $m['basis'] = 'shopify'; }
+		}
+		unset($m);
+
+		// Prior-year reconciliation table (Shopify sales vs QB income, by month).
+		$reconcile = [];
+		for ($i = 0; $i < $months; $i++) {
+			$ym = date('Y-m', strtotime("+$i month", strtotime($priorFrom)));
+			$s  = isset($shop['by_month'][$ym]) ? (float)$shop['by_month'][$ym] : null;
+			$q  = isset($qb['by_month'][$ym])   ? (float)$qb['by_month'][$ym]   : null;
+			$reconcile[] = ['label' => date('M Y', strtotime($ym . '-01')), 'shopify' => $s, 'qb' => $q,
+			                'diff' => ($s !== null && $q !== null) ? $s - $q : null];
+		}
+
+		return ['rows' => $rows, 'reconcile' => $reconcile,
+		        'shop_error' => $shop['error'] ?? null, 'qb_error' => $qb['error'] ?? null];
 	}
 
 	/** Recurring monthly expenses entered by the user (the editable "cash out" list). */
@@ -288,9 +326,10 @@
 	 *   Running   = ending cash carried forward; debt shrinks by payments.
 	 */
 	function build_cashflow_forecast($db, $data, $months = 12, $growthPct = 0.0) {
-		$proj     = cashflow_sales_projection($db, $months, strtotime(date('Y-m-01')), $growthPct);
-		$recur    = load_recurring_expenses($db);
-		$recurMo  = $recur['total'];
+		$projection = cashflow_projection($db, $months, $growthPct);
+		$proj       = $projection['rows'];
+		$recur      = load_recurring_expenses($db);
+		$recurMo    = $recur['total'];
 
 		// "Both": if no recurring items entered, fall back to a QuickBooks estimate.
 		$qbEstimate = null;
@@ -332,6 +371,7 @@
 				'label'      => $m['label'],
 				'ym'         => $ym,
 				'income'     => $income,
+				'basis'      => $m['basis'],
 				'recurring'  => $recurMo,
 				'onetime'    => $onetime,
 				'debt_pay'   => $pay,
@@ -344,6 +384,9 @@
 
 		return [
 			'rows'         => $rows,
+			'reconcile'    => $projection['reconcile'],
+			'shop_error'   => $projection['shop_error'],
+			'qb_error'     => $projection['qb_error'],
 			'recur_total'  => $recur['total'],
 			'recur_items'  => $recur['items'],
 			'qb_estimate'  => $qbEstimate,

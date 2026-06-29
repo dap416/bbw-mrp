@@ -314,6 +314,51 @@
 		return ['error' => null, 'total' => $total, 'months' => $months, 'monthly' => round($total / $months, 2)];
 	}
 
+	/**
+	 * Actual income per month from the Profit & Loss report.
+	 * Cash basis by default, so revenue lands in the month the money was received
+	 * (correctly handling Net-30/60 terms). Returns
+	 * ['error'=>..., 'by_month'=>['YYYY-MM'=>amount], 'total'=>float].
+	 */
+	function qb_monthly_income($from, $to, $cashBasis = true) {
+		$params = ['start_date' => $from, 'end_date' => $to, 'summarize_column_by' => 'Month'];
+		if ($cashBasis) $params['accounting_method'] = 'Cash';
+		$r = qb_report('ProfitAndLoss', $params);
+		if (!empty($r['error'])) return ['error' => $r['error'], 'by_month' => [], 'total' => 0.0];
+
+		$byMonth = []; $total = 0.0;
+		try {
+			// Column index -> YYYY-MM (from each month column's StartDate metadata).
+			$colYm = [];
+			foreach (($r['Columns']['Column'] ?? []) as $i => $c) {
+				foreach (($c['MetaData'] ?? []) as $md) {
+					if (($md['Name'] ?? '') === 'StartDate' && !empty($md['Value'])) $colYm[$i] = substr($md['Value'], 0, 7);
+				}
+			}
+			// Find the "Income" section's summary row (its per-month totals).
+			$find = function($rows) use (&$find) {
+				foreach (($rows ?? []) as $row) {
+					$grp = $row['group'] ?? '';
+					$hdr = $row['Header']['ColData'][0]['value'] ?? '';
+					if ($grp === 'Income' || strcasecmp($hdr, 'Income') === 0) return $row['Summary']['ColData'] ?? null;
+					if (!empty($row['Rows']['Row'])) { $f = $find($row['Rows']['Row']); if ($f) return $f; }
+				}
+				return null;
+			};
+			$sum = $find($r['Rows']['Row'] ?? []);
+			if ($sum) {
+				foreach ($sum as $i => $cd) {
+					if (!isset($colYm[$i])) continue;
+					$v = (float)str_replace([',', '$'], '', $cd['value'] ?? '0');
+					$byMonth[$colYm[$i]] = $v;
+					$total += $v;
+				}
+			}
+		} catch (Throwable $e) { /* leave what we parsed */ }
+
+		return ['error' => null, 'by_month' => $byMonth, 'total' => $total];
+	}
+
 	/** Quick connectivity check — returns ['ok'=>bool,'name'=>string,'error'=>string]. */
 	function qb_company_info() {
 		$s = qb_settings();

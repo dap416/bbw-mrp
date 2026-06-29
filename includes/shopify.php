@@ -452,9 +452,12 @@
 	}
 
 	/**
-	 * Total order revenue in a date range, grouped by calendar month.
-	 * Returns ['error'=>..., 'total'=>float, 'by_month'=>['YYYY-MM'=>amount]].
-	 * Excludes cancelled orders. Uses the order's current total (after edits).
+	 * Net sales (after discounts, EXCLUDING tax & shipping) in a date range,
+	 * grouped by calendar month, by order CREATED date. Returns
+	 * ['error'=>..., 'total'=>float, 'by_month'=>['YYYY-MM'=>amount]].
+	 * Excludes cancelled orders. NOTE: this is a SALES figure on the order date —
+	 * it is NOT cash received (a Net-60 order shows here on the order date, not
+	 * when paid). For actual cash, compare against qb_monthly_income().
 	 */
 	function shopify_revenue_in_range($since, $until) {
 		$query = '
@@ -464,7 +467,7 @@
 		    edges { node {
 		      createdAt
 		      cancelledAt
-		      currentTotalPriceSet { shopMoney { amount } }
+		      currentSubtotalPriceSet { shopMoney { amount } }
 		    } }
 		  }
 		}';
@@ -481,7 +484,7 @@
 			foreach ($o['edges'] as $oe) {
 				$n = $oe['node'];
 				if (!empty($n['cancelledAt'])) continue;
-				$amt = (float)($n['currentTotalPriceSet']['shopMoney']['amount'] ?? 0);
+				$amt = (float)($n['currentSubtotalPriceSet']['shopMoney']['amount'] ?? 0);
 				$ym  = substr((string)($n['createdAt'] ?? ''), 0, 7);
 				$total += $amt;
 				if ($ym !== '') $byMonth[$ym] = ($byMonth[$ym] ?? 0) + $amt;

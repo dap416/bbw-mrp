@@ -144,8 +144,26 @@
 			<!-- Add / edit form -->
 			<div id="balForm" class="border rounded p-2 mb-3 hidden" style="background:#f8f9fb;">
 				<input type="hidden" id="balId" value="" />
+				<input type="hidden" id="balQbId" value="" />
 				<div class="row g-2">
-					<div class="col-12"><input type="text" id="balLabel" class="form-control form-control-sm" placeholder="Account name (e.g. Chase Checking)" /></div>
+					<?php if (!empty($data['qb_accounts'])): ?>
+					<div class="col-12">
+						<select id="balQbAccount" class="form-select form-select-sm">
+							<option value="">— Pick your account from QuickBooks —</option>
+							<?php foreach ($data['qb_accounts'] as $qa): ?>
+							<option value="<?php echo htmlspecialchars($qa['id'], ENT_QUOTES); ?>"
+								data-name="<?php echo htmlspecialchars($qa['name'], ENT_QUOTES); ?>"
+								data-type="<?php echo $qa['type']; ?>"
+								data-balance="<?php echo $qa['balance']; ?>">
+								<?php echo htmlspecialchars($qa['name']); ?> (<?php echo $qa['type'] === 'bank' ? 'Bank' : ($qa['type'] === 'credit' ? 'Credit Card' : 'Line of Credit'); ?>)
+							</option>
+							<?php endforeach; ?>
+							<option value="__manual__">Other — enter manually</option>
+						</select>
+						<div class="form-text" style="font-size:0.7rem;">Pick the real account (e.g. American Express ending 2001), then enter the current balance + date below.</div>
+					</div>
+					<?php endif; ?>
+					<div class="col-12"><input type="text" id="balLabel" class="form-control form-control-sm" placeholder="Account name (e.g. Redwood Credit Union 1183)" /></div>
 					<div class="col-6">
 						<select id="balType" class="form-select form-select-sm">
 							<option value="bank">Bank / Cash</option>
@@ -172,7 +190,7 @@
 			<?php else: foreach ($data['manual']['bank'] as $a): ?>
 				<div class="d-flex justify-content-between align-items-center border-bottom py-1 small bal-row"
 					data-id="<?php echo $a['id']; ?>" data-label="<?php echo htmlspecialchars($a['label'], ENT_QUOTES); ?>" data-type="bank"
-					data-balance="<?php echo $a['balance']; ?>" data-asof="<?php echo $a['as_of']; ?>" data-note="<?php echo htmlspecialchars((string)$a['note'], ENT_QUOTES); ?>">
+					data-balance="<?php echo $a['balance']; ?>" data-qbid="<?php echo htmlspecialchars((string)$a['qb_id'], ENT_QUOTES); ?>" data-asof="<?php echo $a['as_of']; ?>" data-note="<?php echo htmlspecialchars((string)$a['note'], ENT_QUOTES); ?>">
 					<span><?php echo htmlspecialchars($a['label']); ?> <span class="text-muted" style="font-size:0.7rem;">· as of <?php echo fdate($a['as_of']); ?></span></span>
 					<span><span class="fw-semibold"><?php echo money($a['balance']); ?></span>
 						<a href="#" class="bal-edit ms-1" style="font-size:0.7rem;">edit</a>
@@ -186,7 +204,7 @@
 			<?php else: foreach ($data['manual']['credit'] as $a): ?>
 				<div class="d-flex justify-content-between align-items-center border-bottom py-1 small bal-row"
 					data-id="<?php echo $a['id']; ?>" data-label="<?php echo htmlspecialchars($a['label'], ENT_QUOTES); ?>" data-type="<?php echo $a['type']; ?>"
-					data-balance="<?php echo $a['balance']; ?>" data-limit="<?php echo $a['limit']; ?>" data-payment="<?php echo $a['payment']; ?>" data-asof="<?php echo $a['as_of']; ?>" data-note="<?php echo htmlspecialchars((string)$a['note'], ENT_QUOTES); ?>">
+					data-balance="<?php echo $a['balance']; ?>" data-limit="<?php echo $a['limit']; ?>" data-payment="<?php echo $a['payment']; ?>" data-qbid="<?php echo htmlspecialchars((string)$a['qb_id'], ENT_QUOTES); ?>" data-asof="<?php echo $a['as_of']; ?>" data-note="<?php echo htmlspecialchars((string)$a['note'], ENT_QUOTES); ?>">
 					<span><?php echo htmlspecialchars($a['label']); ?> <span class="text-muted" style="font-size:0.7rem;">· <?php echo htmlspecialchars($a['kind']); ?> · as of <?php echo fdate($a['as_of']); ?><?php echo $a['payment'] > 0 ? ' · pay '.money($a['payment']).'/mo' : ''; ?></span></span>
 					<span><span class="fw-semibold" style="color:#d9822b;"><?php echo money($a['balance']); ?></span>
 						<a href="#" class="bal-edit ms-1" style="font-size:0.7rem;">edit</a>
@@ -216,8 +234,19 @@
 <script>
 	function balShowForm(show) { $('#balForm').toggleClass('hidden', !show); }
 	$('#balType').on('change', function(){ var c = $(this).val() !== 'bank'; $('#balLimitWrap').toggle(c); $('#balPayWrap').toggle(c); });
+	// Picking a QuickBooks account fills the name/type and suggests the balance.
+	$('#balQbAccount').on('change', function(){
+		var v = $(this).val(), $o = $(this).find('option:selected');
+		if (v === '' ) return;
+		if (v === '__manual__') { $('#balQbId').val(''); $('#balLabel').val('').focus(); return; }
+		$('#balQbId').val(v);
+		$('#balLabel').val($o.data('name'));
+		$('#balType').val($o.data('type')).trigger('change');
+		if (!$('#balAmount').val()) $('#balAmount').val(Math.abs(parseFloat($o.data('balance'))||0).toFixed(2));
+	});
 	$('#addBalBtn').on('click', function(){
-		$('#balId,#balLabel,#balAmount,#balLimit,#balPayment,#balNote').val('');
+		$('#balId,#balQbId,#balLabel,#balAmount,#balLimit,#balPayment,#balNote').val('');
+		$('#balQbAccount').val('');
 		$('#balType').val('bank').trigger('change');
 		$('#balAsOf').val('<?php echo date('Y-m-d'); ?>');
 		$('#balMsg').text(''); balShowForm(true);
@@ -227,6 +256,8 @@
 		e.preventDefault();
 		var $r = $(this).closest('.bal-row');
 		$('#balId').val($r.data('id'));
+		$('#balQbId').val($r.data('qbid') || '');
+		$('#balQbAccount').val($r.data('qbid') || '');
 		$('#balLabel').val($r.data('label'));
 		$('#balType').val($r.data('type')).trigger('change');
 		$('#balAmount').val($r.data('balance'));
@@ -241,7 +272,7 @@
 		$.post('/ajax/cashflow/save_balance.php', {
 			id: $('#balId').val(), label: $('#balLabel').val(), acct_type: $('#balType').val(),
 			balance: $('#balAmount').val(), credit_limit: $('#balLimit').val(), monthly_payment: $('#balPayment').val(),
-			as_of: $('#balAsOf').val(), note: $('#balNote').val()
+			qb_account_id: $('#balQbId').val(), as_of: $('#balAsOf').val(), note: $('#balNote').val()
 		}, function(resp){
 			if ($.trim(resp) === 'ok') { location.reload(); }
 			else { $('#balMsg').addClass('text-danger').text(resp); $btn.prop('disabled', false); }
@@ -362,7 +393,7 @@
 				</form>
 			</div>
 			<p class="text-muted small mb-3">
-				Sales = last year's same month from Shopify<?php echo $growth ? ' +'.(int)$growth.'%' : ''; ?>.
+				<strong>Sales In</strong> = last year's same month<?php echo $growth ? ' +'.(int)$growth.'%' : ''; ?>, using <strong>QuickBooks actual income</strong> (cash received — handles Net-30/60) where available, falling back to Shopify net sales. A <span class="badge bg-light text-dark" style="font-size:0.6rem;">QB</span>/<span class="badge bg-light text-dark" style="font-size:0.6rem;">Shop</span> tag on each row shows the source.
 				Cash out = recurring (<?php echo money($forecast['recur_total'] > 0 ? $forecast['recur_total'] : (float)$forecast['qb_estimate']); ?>/mo)<?php echo ($forecast['recur_total'] <= 0 && $forecast['qb_estimate'] !== null) ? ' <em>(QuickBooks estimate)</em>' : ''; ?> + bills/POs due + debt payments (<?php echo money($forecast['debt_pay_mo']); ?>/mo).
 				Starting cash <?php echo money($forecast['start_cash']); ?>, starting debt <?php echo money($forecast['start_debt']); ?>.
 			</p>
@@ -382,7 +413,10 @@
 				<?php foreach ($forecast['rows'] as $r): ?>
 					<tr<?php echo $r['end_cash'] < 0 ? ' style="background:#fdecea;"' : ''; ?>>
 						<td class="fw-semibold"><?php echo $r['label']; ?></td>
-						<td class="text-end text-success"><?php echo money($r['income']); ?></td>
+						<td class="text-end text-success"><?php echo money($r['income']); ?>
+							<?php if ($r['basis'] === 'qb'): ?><span class="badge bg-success" style="font-size:0.55rem;vertical-align:middle;" title="QuickBooks actual income">QB</span>
+							<?php elseif ($r['basis'] === 'shopify'): ?><span class="badge bg-secondary" style="font-size:0.55rem;vertical-align:middle;" title="Shopify net sales (order date)">Shop</span><?php endif; ?>
+						</td>
 						<td class="text-end"><?php echo money($r['recurring']); ?></td>
 						<td class="text-end"><?php echo $r['onetime'] > 0 ? money($r['onetime']) : '—'; ?></td>
 						<td class="text-end"><?php echo $r['debt_pay'] > 0 ? money($r['debt_pay']) : '—'; ?></td>
@@ -403,6 +437,44 @@
 		</div>
 		</div>
 	</div>
+</div>
+
+<!-- RECONCILIATION: Shopify sales vs QuickBooks income (prior 12 months) -->
+<div class="card mt-4">
+<div class="card-body">
+	<h5 class="fw-bold mb-1">Sales vs. Income — last 12 months</h5>
+	<p class="text-muted small mb-3">Confirms the "true" numbers: <strong>Shopify net sales</strong> are booked on the <em>order date</em> (a Net-60 order shows the month it was placed). <strong>QuickBooks income</strong> (cash basis) is money <em>actually received</em>. Gaps are normal — payment terms, discounts, taxes, returns, and non-Shopify income.</p>
+	<?php if ($forecast['qb_error']): ?>
+		<div class="text-muted small mb-2">QuickBooks income unavailable: <?php echo htmlspecialchars($forecast['qb_error']); ?></div>
+	<?php endif; ?>
+	<div class="table-responsive">
+	<table class="table table-sm align-middle mb-0" style="font-size:0.82rem;">
+		<thead><tr style="background:#f1f3f5;">
+			<th class="text-muted">Month</th>
+			<th class="text-muted text-end">Shopify net sales <span class="text-muted" style="font-weight:400;">(order date)</span></th>
+			<th class="text-muted text-end">QuickBooks income <span class="text-muted" style="font-weight:400;">(cash received)</span></th>
+			<th class="text-muted text-end">Difference</th>
+		</tr></thead>
+		<tbody>
+		<?php $tShop = 0; $tQb = 0; foreach ($forecast['reconcile'] as $r):
+			$tShop += (float)$r['shopify']; $tQb += (float)$r['qb']; ?>
+			<tr>
+				<td><?php echo $r['label']; ?></td>
+				<td class="text-end"><?php echo $r['shopify'] === null ? '—' : money($r['shopify']); ?></td>
+				<td class="text-end"><?php echo $r['qb'] === null ? '<span class="text-muted">n/a</span>' : money($r['qb']); ?></td>
+				<td class="text-end" style="color:<?php echo ($r['diff'] !== null && abs($r['diff']) > 0.01) ? '#d9822b' : '#888'; ?>;"><?php echo $r['diff'] === null ? '—' : money($r['diff']); ?></td>
+			</tr>
+		<?php endforeach; ?>
+		</tbody>
+		<tfoot><tr class="fw-bold border-top">
+			<td>Total</td>
+			<td class="text-end"><?php echo money($tShop); ?></td>
+			<td class="text-end"><?php echo money($tQb); ?></td>
+			<td class="text-end"><?php echo money($tShop - $tQb); ?></td>
+		</tr></tfoot>
+	</table>
+	</div>
+</div>
 </div>
 
 <script>
