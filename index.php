@@ -314,7 +314,7 @@
 				<td><?php echo $partno; ?></td>
 				<td><?php echo $desc; ?></td>
 				<td><?php echo htmlspecialchars($mfgName); ?></td>
-				<td><?php echo $qoh; ?></td>
+				<td id="<?php echo $id; ?>rowQoh"><?php echo $qoh; ?></td>
 				<td><?php echo $onOrder; ?></td>
 				<td>$<?php echo $cost; ?></td>
 				<td>$<?php echo $extVal; ?></td>
@@ -973,28 +973,58 @@
 			var whId      = $("#"+record+"adjWH").val();
 			var $btn      = $(this);
 
-			if (newQty != origQty && !reason) {
+			var qohChanged = (newQty != origQty);
+
+			if (qohChanged && !reason) {
 				alert('Please enter a reason for the quantity adjustment.');
 				return;
 			}
 
-			function collapseAndConfirm() {
-				$btn.text('Changes saved').prop('disabled', true);
-				setTimeout(function() {
-					$("#"+record+"transArea").slideUp(200);
-					$btn.text('Save All Changes').prop('disabled', false);
-				}, 500);
+			$btn.prop('disabled', true);
+			var errors = [];
+
+			// Step 2: save the QOH adjustment (independent of the part-field save,
+			// so a pure inventory change still goes through and reports its result).
+			function saveQoh() {
+				if (!qohChanged) { finish(); return; }
+				$.post('/ajax/inv_adj.php', { record: record, qty: newQty, reason: reason, warehouse_id: whId })
+					.done(function(resp) {
+						var total = (resp && typeof resp === 'object') ? resp.qoh : newQty;
+						$("#"+record+"rowQoh").text(total);
+						adjQty.data('original', newQty);
+						$("#"+record+"editQtyReason").val('');
+					})
+					.fail(function(xhr) {
+						errors.push('Inventory: ' + ((xhr.responseText || '').replace(/^error:\s*/, '') || 'save failed'));
+					})
+					.always(finish);
 			}
 
-			$.post('/ajax/edit_part.php', { record: record, sku: sku, desc: desc, cost: cost, imoq: imoq, lead_time: lead_time, manufacturer: manufacturer }, function() {
-				if (newQty != origQty) {
-					$.post('/ajax/inv_adj.php', { record: record, qty: newQty, reason: reason, warehouse_id: whId }, function() {
-						collapseAndConfirm();
-					});
-				} else {
-					collapseAndConfirm();
+			// Step 3: report outcome.
+			function finish() {
+				$btn.prop('disabled', false);
+				if (errors.length) {
+					alert('Could not save:\n\n' + errors.join('\n'));
+					$btn.text('Save All Changes');
+					return;
 				}
-			});
+				$btn.text('Changes saved');
+				setTimeout(function() {
+					$("#"+record+"transArea").slideUp(200);
+					$btn.text('Save All Changes');
+				}, 700);
+			}
+
+			// Step 1: save the editable part fields. A 403 here just means this user
+			// can view inventory but not edit part fields — that's fine, we skip it
+			// and still save the QOH. Any other failure is surfaced.
+			$.post('/ajax/edit_part.php', { record: record, sku: sku, desc: desc, cost: cost, imoq: imoq, lead_time: lead_time, manufacturer: manufacturer })
+				.fail(function(xhr) {
+					if (xhr.status !== 403) {
+						errors.push('Part fields: ' + ((xhr.responseText || '').replace(/^error:\s*/, '') || 'save failed'));
+					}
+				})
+				.always(saveQoh);
 		});
 		
 		

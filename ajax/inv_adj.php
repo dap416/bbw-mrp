@@ -12,26 +12,36 @@
 	$reason      = $_POST['reason']             ?? '';
 	$warehouseId = (int)($_POST['warehouse_id'] ?? 0);
 
-	if (!$partId) { echo 'error'; exit; }
+	if (!$partId) { echo 'error: missing part id'; exit; }
 
-	// Get current warehouse-specific qty (or total if no warehouse selected)
-	if ($warehouseId) {
-		$currentQty = wh_get_qty($db, $partId, $warehouseId);
-	} else {
-		$currentQty = (int)$db->query("SELECT `qoh` FROM `parts` WHERE `id` = '$partId'")->fetch()['qoh'];
+	try {
+		// Get current warehouse-specific qty (or total if no warehouse selected)
+		if ($warehouseId) {
+			$currentQty = wh_get_qty($db, $partId, $warehouseId);
+		} else {
+			$currentQty = (int)$db->query("SELECT `qoh` FROM `parts` WHERE `id` = '$partId'")->fetch()['qoh'];
+		}
+
+		$diff = $newQty - $currentQty;
+
+		// Apply adjustment
+		if ($warehouseId) {
+			wh_set($db, $partId, $warehouseId, $newQty);
+		} else {
+			$db->exec("UPDATE `parts` SET `qoh` = '$newQty' WHERE `id` = '$partId'");
+		}
+
+		// Transaction
+		$userId = $_SESSION['user_id'] ?? null;
+		$stmt = $db->prepare("INSERT INTO `trans` (`partid`,`type`,`adjreason`,`date`,`qty`,`old`,`new`,`user_id`,`warehouse_id`)
+		                      VALUES (?,?,?,?,?,?,?,?,?)");
+		$stmt->execute([$partId,'ADJUST',$reason,$now,$diff,$currentQty,$newQty,$userId,$warehouseId?:null]);
+
+		$newTotal = (int)$db->query("SELECT `qoh` FROM `parts` WHERE `id` = '$partId'")->fetch()['qoh'];
+	} catch (Throwable $e) {
+		http_response_code(500);
+		echo 'error: ' . $e->getMessage();
+		exit;
 	}
 
-	$diff = $newQty - $currentQty;
-
-	// Apply adjustment
-	if ($warehouseId) {
-		wh_set($db, $partId, $warehouseId, $newQty);
-	} else {
-		$db->exec("UPDATE `parts` SET `qoh` = '$newQty' WHERE `id` = '$partId'");
-	}
-
-	// Transaction
-	$userId = $_SESSION['user_id'] ?? null;
-	$stmt = $db->prepare("INSERT INTO `trans` (`partid`,`type`,`adjreason`,`date`,`qty`,`old`,`new`,`user_id`,`warehouse_id`)
-	                      VALUES (?,?,?,?,?,?,?,?,?)");
-	$stmt->execute([$partId,'ADJUST',$reason,$now,$diff,$currentQty,$newQty,$userId,$warehouseId?:null]);
+	echo json_encode(['ok' => true, 'qoh' => $newTotal]);
