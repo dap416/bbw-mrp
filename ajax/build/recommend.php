@@ -92,6 +92,7 @@ foreach ($products as $p) {
 	if ($demand <= 0 && $recommend <= 0) continue;   // nothing interesting to show
 
 	$rows[] = [
+		'prodid'     => (int)$p['id'],
 		'product'    => $p['name'],
 		'sku'        => $sku,
 		'retail'     => $retail,

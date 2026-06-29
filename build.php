@@ -519,10 +519,39 @@ function renderRec(d) {
 			'</tr>';
 	});
 	html += '</tbody></table></div>';
-	html += '<div class="text-muted" style="font-size:0.72rem;">“Recommend Build” = demand − finished-product on-hand − pipeline. “Buildable Now” = how many you can build from raw materials in stock right now; <span class="text-danger">red</span> means you’d need to order more of the limiting part first. Use the quantities above when adding packaging orders below.</div>';
+	html += '<div class="text-muted" style="font-size:0.72rem;">“Recommend Build” = demand − finished-product on-hand − pipeline. “Buildable Now” = how many you can build from raw materials in stock right now; <span class="text-danger">red</span> means you’d need to order more of the limiting part first.</div>';
+
+	window._recToBuild = toBuild.map(function(r){ return { prodid: r.prodid, qty: r.recommend, product: r.product }; });
+	if (window._recToBuild.length) {
+		html += '<div class="mt-3 d-flex align-items-center gap-2 flex-wrap">' +
+			'<button id="recAddBtn" class="btn btn-sm btn-success"><i class="ti ti-plus me-1"></i>Add ' + window._recToBuild.length + ' as packaging orders</button>' +
+			'<span class="text-muted small">into <strong>' + $('<div>').text(REC_WH_NAME || 'current warehouse').html() + '</strong> — you can edit or remove them in the list below.</span>' +
+			'<span id="recAddMsg" class="small ms-1"></span></div>';
+	}
 
 	$('#recResults').html(html);
 }
+
+var REC_WH      = <?php echo (int)$activeWH; ?>;
+var REC_WH_NAME = <?php echo json_encode($activeWHName); ?>;
+
+$(document).on('click', '#recAddBtn', function() {
+	var items = window._recToBuild || [];
+	if (!items.length) return;
+	var $btn = $(this);
+
+	var lines = items.map(function(i){ return '  • ' + i.product + ': ' + fmt(i.qty); }).join('\n');
+	if (!confirm('Create ' + items.length + ' packaging order(s) in "' + (REC_WH_NAME || 'current warehouse') + '"?\n\n' + lines + '\n\nThey\'ll appear in Packaging Orders below, where you can edit, build, or remove them. (No inventory is deducted until you Finalize.)')) return;
+
+	$btn.prop('disabled', true).html('<i class="ti ti-loader me-1"></i>Adding…');
+	$.post('/ajax/build/create_orders.php',
+		{ orders: JSON.stringify(items.map(function(i){ return { prodid: i.prodid, qty: i.qty }; })), warehouse_id: REC_WH },
+		function(res) {
+			if (typeof res === 'string' && res.indexOf('ok:') === 0) { location.reload(); }
+			else { $('#recAddMsg').addClass('text-danger').text('Error: ' + res); $btn.prop('disabled', false).html('<i class="ti ti-plus me-1"></i>Add as packaging orders'); }
+		}
+	).fail(function(xhr){ $('#recAddMsg').addClass('text-danger').text('Failed: ' + (xhr.responseText || xhr.status)); $btn.prop('disabled', false).html('<i class="ti ti-plus me-1"></i>Add as packaging orders'); });
+});
 
 $('.add-pick-btn').on('click', function() {
 	var $btn    = $(this);
