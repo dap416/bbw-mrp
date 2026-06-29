@@ -218,6 +218,7 @@
 			<th class="text-center">Completed</th>
 			<th class="text-center">Remaining</th>
 			<th style="width:220px;">Add to Pick List</th>
+			<th class="text-center" style="width:90px;">Remove</th>
 		</tr></thead>
 		<tbody>
 		<?php foreach ($ordersPending as $order):
@@ -244,6 +245,15 @@
 						Add to List
 					</button>
 				</div>
+			</td>
+			<td class="text-center">
+				<button class="btn btn-sm btn-outline-danger remove-order-btn"
+					data-orderid="<?php echo $order['id']; ?>"
+					data-buildqty="<?php echo (int)$order['buildqty']; ?>"
+					data-prodname="<?php echo htmlspecialchars($order['prodname'], ENT_QUOTES); ?>"
+					title="Remove this packaging order">
+					<i class="ti ti-trash"></i>
+				</button>
 			</td>
 		</tr>
 		<?php endforeach; ?>
@@ -420,6 +430,28 @@ $('.add-pick-btn').on('click', function() {
 	$btn.prop('disabled', true).text('Adding…');
 	$.post('/ajax/build/add_prod.php', { prodid: prodId, qty: qty, orderid: orderId }, function() {
 		location.reload();
+	});
+});
+
+$('.remove-order-btn').on('click', function() {
+	var $btn     = $(this);
+	var orderId  = $btn.data('orderid');
+	var built    = parseInt($btn.data('buildqty')) || 0;
+	var prodName = $btn.data('prodname');
+
+	var msg = 'Remove the packaging order for "' + prodName + '"?\n\n';
+	if (built > 0) {
+		msg += built + ' unit(s) were already packaged, so the raw materials for those units will be ADDED BACK into inventory, with a note recorded on each part.';
+	} else {
+		msg += 'No materials have been deducted for this order yet, so inventory will not change.';
+	}
+	msg += '\n\nContinue?';
+	if (!confirm(msg)) return;
+
+	$btn.prop('disabled', true).html('<i class="ti ti-loader"></i>');
+	$.post('/ajax/build/remove_order.php', { orderid: orderId }, function(res) {
+		if (res === 'ok') { location.reload(); }
+		else { alert('Error: ' + res); $btn.prop('disabled', false).html('<i class="ti ti-trash"></i>'); }
 	});
 });
 
