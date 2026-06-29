@@ -75,9 +75,18 @@
           </a>
         </li>
 
+        <?php
+          $navReq   = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH);
+          $onOrders = ($navReq === '/orders.php' || strpos((string)$navReq, '/orders/') === 0);
+          $navAdmin = in_array(($_SESSION['user_role'] ?? ''), ['admin','master'], true);
+        ?>
+        <?php if (has_access('orders') || has_access('inventory') || has_access('build') || has_access('products') || has_access('manufacturers')) { ?>
+        <li class="pc-item pc-caption"><label>MRP</label></li>
+        <?php } ?>
+
         <?php if (has_access('orders')) { ?>
-        <li class="pc-item pc-hasmenu active">
-          <a href="/orders.php" class="pc-link">
+        <li class="pc-item pc-hasmenu<?php echo $onOrders ? ' active' : ''; ?>">
+          <a href="#" class="pc-link pc-menu-toggle">
             <span class="pc-micon"><i class="ti ti-shopping-cart"></i></span>
             <span class="pc-mtext">Orders</span>
             <span class="pc-arrow"><i data-feather="chevron-right"></i></span>
@@ -88,15 +97,6 @@
             <li class="pc-item"><a class="pc-link" href="/orders/stock_calc.php">Raw Materials<br><small>Stock Order</small></a></li>
             <li class="pc-item"><a class="pc-link" href="/orders/fp_stock_calc.php">Finished Product<br><small>Stock Order</small></a></li>
           </ul>
-        </li>
-        <?php } ?>
-
-        <?php if (in_array(($_SESSION['user_role'] ?? ''), ['admin','master'], true)) { ?>
-        <li class="pc-item">
-          <a href="/cashflow.php" class="pc-link">
-            <span class="pc-micon"><i class="ti ti-cash"></i></span>
-            <span class="pc-mtext">Cash Flow</span>
-          </a>
         </li>
         <?php } ?>
 
@@ -127,15 +127,6 @@
         </li>
         <?php } ?>
 
-        <?php if (has_access('research')) { ?>
-        <li class="pc-item">
-          <a href="/research.php" class="pc-link">
-            <span class="pc-micon"><i class="ti ti-flask"></i></span>
-            <span class="pc-mtext">Research</span>
-          </a>
-        </li>
-        <?php } ?>
-
         <?php if (has_access('build')) { ?>
         <li class="pc-item">
           <a href="/physical_inventory.php" class="pc-link">
@@ -152,6 +143,32 @@
             <span class="pc-mtext">Manufacturers</span>
           </a>
         </li>
+        <?php } ?>
+
+        <?php if ($navAdmin || has_access('research')) { ?>
+        <li class="pc-item pc-caption"><label>Business</label></li>
+        <?php } ?>
+
+        <?php if ($navAdmin) { ?>
+        <li class="pc-item">
+          <a href="/cashflow.php" class="pc-link">
+            <span class="pc-micon"><i class="ti ti-cash"></i></span>
+            <span class="pc-mtext">Cash Flow</span>
+          </a>
+        </li>
+        <?php } ?>
+
+        <?php if (has_access('research')) { ?>
+        <li class="pc-item">
+          <a href="/research.php" class="pc-link">
+            <span class="pc-micon"><i class="ti ti-flask"></i></span>
+            <span class="pc-mtext">Research</span>
+          </a>
+        </li>
+        <?php } ?>
+
+        <?php if (has_access('users') || $navAdmin) { ?>
+        <li class="pc-item pc-caption"><label>Admin</label></li>
         <?php } ?>
 
         <?php if (has_access('users')) { ?>
@@ -183,6 +200,31 @@
   </div>
 </nav>
 <!-- [ Sidebar ] end -->
+<style>
+  .pc-navbar .pc-caption { padding: 14px 22px 4px; pointer-events: none; }
+  .pc-navbar .pc-caption label { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.07em; color: #9aa0ac; font-weight: 700; margin: 0; }
+  .pc-navbar .pc-hasmenu .pc-arrow { transition: transform .15s ease; }
+  .pc-navbar .pc-hasmenu.active > .pc-link .pc-arrow { transform: rotate(90deg); }
+  .pc-navbar .pc-hasmenu > .pc-link { cursor: pointer; }
+</style>
+<script>
+(function(){
+  function initMenu($){
+    // Collapse any submenu whose parent isn't marked active on load.
+    $('.pc-navbar .pc-hasmenu').each(function(){
+      if (!$(this).hasClass('active')) $(this).children('.pc-submenu').hide();
+    });
+    // Toggle the group open/closed when its header is clicked.
+    $('.pc-navbar').on('click', '.pc-menu-toggle', function(e){
+      e.preventDefault();
+      var $li = $(this).closest('.pc-hasmenu');
+      $li.toggleClass('active');
+      $li.children('.pc-submenu').stop(true, true).slideToggle(150);
+    });
+  }
+  if (window.jQuery) { window.jQuery(function(){ initMenu(window.jQuery); }); }
+})();
+</script>
 
 <!-- [ Header ] start -->
 <header class="pc-header">
