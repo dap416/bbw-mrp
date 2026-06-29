@@ -185,6 +185,33 @@
 </div>
 <?php endif; ?>
 
+<!-- ── RECOMMEND A PACKAGING ORDER ──────────────────────────────────────── -->
+<div class="row g-3 mb-3 no-print">
+<div class="col-12">
+<div class="card" style="border-top:3px solid #6f42c1;">
+<div class="card-body">
+
+	<div class="panel-header mb-2">
+		<span class="panel-title">Recommend a Packaging Order</span>
+	</div>
+	<p class="text-muted small mb-3">Suggests what to build to cover demand through a date you choose — using last year's sales for the same window (online, POS/tradeshow &amp; completed drafts), current open wholesale draft orders (≥10 units), finished-product stock, what's already in the pipeline, and your raw-material stock.</p>
+
+	<div class="d-flex align-items-center gap-2 flex-wrap mb-2">
+		<span class="small fw-semibold text-muted">Fulfill until:</span>
+		<input type="date" id="recUntil" class="form-control form-control-sm" style="width:180px;"
+			min="<?php echo date('Y-m-d', strtotime('+1 day')); ?>"
+			value="<?php echo date('Y-m-d', strtotime('+90 days')); ?>" />
+		<button id="recBtn" class="btn btn-sm btn-primary"><i class="ti ti-bulb me-1"></i>Recommend</button>
+		<span id="recMsg" class="small text-muted"></span>
+	</div>
+
+	<div id="recResults"></div>
+
+</div>
+</div>
+</div>
+</div>
+
 <!-- ── SECTION 1: PACKAGING ORDERS ──────────────────────────────────────── -->
 <div class="row g-3 mb-3 no-print">
 <div class="col-12">
@@ -428,6 +455,75 @@
 </div><!-- end print-area -->
 
 <script>
+// ── Recommend a packaging order ──
+$('#recBtn').on('click', function() {
+	var $btn  = $(this);
+	var until = $('#recUntil').val();
+	if (!until) { alert('Please choose a target date.'); return; }
+
+	$btn.prop('disabled', true).html('<i class="ti ti-loader me-1"></i>Analyzing…');
+	$('#recMsg').removeClass('text-danger').addClass('text-muted').text('Pulling sales history, draft orders & stock — this can take a few seconds…');
+	$('#recResults').html('');
+
+	$.ajax({ url: '/ajax/build/recommend.php', method: 'POST', dataType: 'json', timeout: 120000, data: { until: until } })
+	.done(function(d) {
+		if (!d || d.error) { $('#recMsg').removeClass('text-muted').addClass('text-danger').text(d && d.error ? d.error : 'Could not build a recommendation.'); return; }
+		renderRec(d);
+	})
+	.fail(function(xhr, status) {
+		$('#recMsg').removeClass('text-muted').addClass('text-danger').text(status === 'timeout' ? 'Timed out pulling Shopify data — try again.' : 'Request failed (' + (xhr.status||'?') + ').');
+	})
+	.always(function() { $btn.prop('disabled', false).html('<i class="ti ti-bulb me-1"></i>Recommend'); });
+});
+
+function fmt(n){ return Number(n||0).toLocaleString(); }
+
+function renderRec(d) {
+	var m = d.meta || {};
+	var rows = d.rows || [];
+	$('#recMsg').removeClass('text-danger').addClass('text-muted')
+		.text('Demand through ' + m.until + ' (' + m.window_days + ' days). Baseline: last year ' + m.prior_window + '. ' + (m.draft_orders||0) + ' open wholesale draft order(s) counted.');
+
+	if (!rows.length) { $('#recResults').html('<div class="text-muted small mt-2">Nothing needs building for this window — stock and pipeline already cover projected demand. 🎉</div>'); return; }
+
+	var toBuild = rows.filter(function(r){ return r.recommend > 0; });
+
+	var html = '<div class="table-responsive mt-2"><table class="table dash-table align-middle" style="font-size:0.85rem;">';
+	html += '<thead><tr>' +
+		'<th>Product</th>' +
+		'<th class="text-center">Projected Retail</th>' +
+		'<th class="text-center">Open Drafts</th>' +
+		'<th class="text-center">Total Demand</th>' +
+		'<th class="text-center">FP On-Hand</th>' +
+		'<th class="text-center">In Pipeline</th>' +
+		'<th class="text-center">Recommend Build</th>' +
+		'<th class="text-center">Buildable Now</th>' +
+		'</tr></thead><tbody>';
+
+	rows.forEach(function(r) {
+		var recColor = r.recommend > 0 ? '#6f42c1' : '#adb5bd';
+		var buildCell;
+		if (r.recommend <= 0) { buildCell = '<span class="text-muted">—</span>'; }
+		else if (r.short > 0) { buildCell = '<span style="color:#e64545;font-weight:700;">' + fmt(r.buildable) + '</span><br><span class="text-danger" style="font-size:0.68rem;">short ' + fmt(r.short) + ' — need ' + (r.limit_part||'raw materials') + '</span>'; }
+		else { buildCell = '<span style="color:#2ca01c;font-weight:700;">' + fmt(r.buildable) + '</span>'; }
+
+		html += '<tr>' +
+			'<td class="fw-semibold">' + $('<div>').text(r.product).html() + (r.sku ? ' <span class="text-muted" style="font-size:0.7rem;">· ' + $('<div>').text(r.sku).html() + '</span>' : '') + '</td>' +
+			'<td class="text-center">' + fmt(r.retail) + '</td>' +
+			'<td class="text-center">' + (r.draft > 0 ? '<span class="badge bg-light text-dark">' + fmt(r.draft) + '</span>' : '—') + '</td>' +
+			'<td class="text-center fw-semibold">' + fmt(r.demand) + '</td>' +
+			'<td class="text-center">' + fmt(r.fp_stock) + '</td>' +
+			'<td class="text-center">' + (r.pipeline > 0 ? fmt(r.pipeline) : '—') + '</td>' +
+			'<td class="text-center"><span style="color:' + recColor + ';font-weight:800;font-size:1.05rem;">' + fmt(r.recommend) + '</span></td>' +
+			'<td class="text-center">' + buildCell + '</td>' +
+			'</tr>';
+	});
+	html += '</tbody></table></div>';
+	html += '<div class="text-muted" style="font-size:0.72rem;">“Recommend Build” = demand − finished-product on-hand − pipeline. “Buildable Now” = how many you can build from raw materials in stock right now; <span class="text-danger">red</span> means you’d need to order more of the limiting part first. Use the quantities above when adding packaging orders below.</div>';
+
+	$('#recResults').html(html);
+}
+
 $('.add-pick-btn').on('click', function() {
 	var $btn    = $(this);
 	var orderId = $btn.data('orderid');

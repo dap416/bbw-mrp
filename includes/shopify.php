@@ -575,6 +575,50 @@
 		return ['error' => null, 'total' => $total, 'items' => $items];
 	}
 
+	/**
+	 * Committed demand from CURRENTLY OPEN draft orders (active "POs"), by SKU.
+	 * Only counts drafts whose total units >= $minUnits (filters out tiny ones),
+	 * and only open / invoice-sent drafts (completed drafts have become orders and
+	 * already show up in sales history). Returns ['error'=>..., 'by_sku'=>[sku=>units], 'orders'=>n].
+	 */
+	function shopify_open_draft_demand($minUnits = 10) {
+		$q = '
+		query($cursor: String) {
+		  draftOrders(first: 100, after: $cursor, query: "status:open OR status:invoice_sent") {
+		    pageInfo { hasNextPage endCursor }
+		    edges { node { status lineItems(first: 100) { edges { node { quantity sku } } } } }
+		  }
+		}';
+		$bySku = []; $cursor = null; $pages = 0; $orders = 0;
+		do {
+			$res = shopify_graphql($q, ['cursor' => $cursor]);
+			if (!empty($res['error'])) return ['error' => $res['error'], 'by_sku' => [], 'orders' => 0];
+			$d = $res['data']['draftOrders'] ?? null;
+			if ($d === null) break;
+			foreach ($d['edges'] as $e) {
+				$n = $e['node'];
+				if (($n['status'] ?? '') === 'COMPLETED') continue;
+				$lines = []; $totalUnits = 0;
+				foreach (($n['lineItems']['edges'] ?? []) as $le) {
+					$li  = $le['node'];
+					$sku = trim((string)($li['sku'] ?? ''));
+					$qty = (int)($li['quantity'] ?? 0);
+					if ($qty <= 0) continue;
+					$lines[] = [$sku, $qty];
+					$totalUnits += $qty;
+				}
+				if ($totalUnits < $minUnits) continue;       // below the wholesale threshold
+				foreach ($lines as $l) { if ($l[0] === '') continue; $bySku[$l[0]] = ($bySku[$l[0]] ?? 0) + $l[1]; }
+				$orders++;
+			}
+			$cursor  = $d['pageInfo']['endCursor']  ?? null;
+			$hasNext = $d['pageInfo']['hasNextPage'] ?? false;
+			$pages++;
+		} while ($hasNext && $pages < 20);
+
+		return ['error' => null, 'by_sku' => $bySku, 'orders' => $orders];
+	}
+
 	/** The customer whose orders use Amazon (CDA) packaging cards. Configurable. */
 	function shopify_amazon_customer() {
 		static $name = null;
