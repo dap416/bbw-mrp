@@ -65,10 +65,17 @@
 			: 'https://quickbooks.api.intuit.com';
 	}
 
-	/** The redirect URI must EXACTLY match what's registered in the Intuit app. */
+	/**
+	 * The redirect URI must EXACTLY match what's registered in the Intuit app.
+	 * Pinned to the canonical https domain so it never varies with how the page
+	 * was reached (IP vs domain, http vs https). Overridable via the
+	 * `qb_redirect_uri` setting if the domain ever changes.
+	 */
 	function qb_redirect_uri() {
-		$host = $_SERVER['HTTP_HOST'] ?? 'mrp.bbwmanager.com';
-		return 'https://' . $host . '/quickbooks/callback.php';
+		$s = qb_settings();
+		$override = trim((string)($s['qb_redirect_uri'] ?? ''));
+		if ($override !== '') return $override;
+		return 'https://mrp.bbwmanager.com/quickbooks/callback.php';
 	}
 
 	/** Build the Intuit consent URL the user is sent to. */
