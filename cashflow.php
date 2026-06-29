@@ -39,8 +39,14 @@
 		<div class="card h-100" style="border-left:4px solid #2ca01c;">
 		<div class="card-body py-3">
 			<div class="text-muted small text-uppercase fw-semibold" style="font-size:0.68rem;letter-spacing:.04em;">Cash on Hand</div>
-			<div class="h4 fw-bold mb-0"><?php echo money($data['cash']['total']); ?></div>
-			<div class="text-muted" style="font-size:0.72rem;">QuickBooks bank accounts</div>
+			<div class="h4 fw-bold mb-0"><?php echo money($data['eff_cash']); ?></div>
+			<div class="text-muted" style="font-size:0.72rem;">
+				<?php if ($data['cash_source'] === 'manual'): ?>
+					Manually entered<?php echo $data['manual']['oldest_asof'] ? ' · as of '.fdate($data['manual']['oldest_asof']) : ''; ?>
+				<?php else: ?>
+					QuickBooks bank accounts
+				<?php endif; ?>
+			</div>
 		</div>
 		</div>
 	</div>
@@ -73,11 +79,15 @@
 	</div>
 </div>
 
-<?php if (!empty($data['credit']['accounts']) || $data['credit']['total'] > 0): ?>
+<?php if ($data['eff_credit'] > 0 || !empty($data['manual']['credit'])): ?>
 <div class="alert alert-light border d-flex flex-wrap gap-3 align-items-center">
-	<span class="fw-semibold">Credit cards &amp; lines of credit owed:</span>
-	<span class="h5 mb-0" style="color:#d9822b;"><?php echo money($data['credit']['total']); ?></span>
-	<span class="text-muted small">(outstanding debt — not all due at once; shown separately from the cash position above)</span>
+	<span class="fw-semibold">Credit &amp; lines of credit owed:</span>
+	<span class="h5 mb-0" style="color:#d9822b;"><?php echo money($data['eff_credit']); ?></span>
+	<?php if ($data['manual']['credit_limit_total'] > 0): ?>
+	<span class="text-muted">·</span>
+	<span class="small">Available credit: <strong class="text-success"><?php echo money($data['manual']['credit_available']); ?></strong> of <?php echo money($data['manual']['credit_limit_total']); ?> limit</span>
+	<?php endif; ?>
+	<span class="text-muted small">(outstanding debt — not all due at once)</span>
 </div>
 <?php endif; ?>
 
@@ -117,40 +127,129 @@
 		</div>
 	</div>
 
-	<!-- BALANCES -->
+	<!-- BALANCES (manual, with date of accuracy) -->
 	<div class="col-12 col-xl-5">
 		<div class="card mb-4">
 		<div class="card-body">
-			<h6 class="fw-bold mb-2">Bank / Cash Accounts</h6>
-			<?php if ($data['cash']['error']): ?>
-				<div class="text-danger small"><?php echo htmlspecialchars($data['cash']['error']); ?></div>
-			<?php elseif (empty($data['cash']['accounts'])): ?>
-				<div class="text-muted small">No bank accounts found<?php echo $data['qb_connected'] ? '.' : ' (QuickBooks not connected).'; ?></div>
-			<?php else: foreach ($data['cash']['accounts'] as $a): ?>
-				<div class="d-flex justify-content-between border-bottom py-1 small">
-					<span><?php echo htmlspecialchars($a['name']); ?></span>
-					<span class="fw-semibold"><?php echo money($a['balance']); ?></span>
-				</div>
-			<?php endforeach; endif; ?>
-		</div>
-		</div>
+			<div class="d-flex justify-content-between align-items-center mb-2">
+				<h6 class="fw-bold mb-0">Account Balances</h6>
+				<button class="btn btn-sm btn-light-primary" id="addBalBtn">+ Add / Update</button>
+			</div>
+			<p class="text-muted mb-2" style="font-size:0.72rem;">Manually keep these current — enter the balance and the date it's accurate as of. These drive the Cash on Hand and credit figures above (QuickBooks can lag).</p>
 
-		<div class="card">
-		<div class="card-body">
-			<h6 class="fw-bold mb-2">Credit Cards &amp; Lines of Credit</h6>
-			<?php if (empty($data['credit']['accounts'])): ?>
-				<div class="text-muted small">None found.</div>
-			<?php else: foreach ($data['credit']['accounts'] as $a): ?>
-				<div class="d-flex justify-content-between border-bottom py-1 small">
-					<span><?php echo htmlspecialchars($a['name']); ?> <span class="text-muted" style="font-size:0.7rem;">· <?php echo htmlspecialchars($a['kind']); ?></span></span>
-					<span class="fw-semibold" style="color:#d9822b;"><?php echo money($a['balance']); ?></span>
+			<!-- Add / edit form -->
+			<div id="balForm" class="border rounded p-2 mb-3 hidden" style="background:#f8f9fb;">
+				<input type="hidden" id="balId" value="" />
+				<div class="row g-2">
+					<div class="col-12"><input type="text" id="balLabel" class="form-control form-control-sm" placeholder="Account name (e.g. Chase Checking)" /></div>
+					<div class="col-6">
+						<select id="balType" class="form-select form-select-sm">
+							<option value="bank">Bank / Cash</option>
+							<option value="credit">Credit Card</option>
+							<option value="loc">Line of Credit</option>
+						</select>
+					</div>
+					<div class="col-6"><div class="input-group input-group-sm"><span class="input-group-text">$</span><input type="text" id="balAmount" class="form-control" placeholder="Balance" /></div></div>
+					<div class="col-6" id="balLimitWrap" style="display:none;"><div class="input-group input-group-sm"><span class="input-group-text">Limit $</span><input type="text" id="balLimit" class="form-control" placeholder="Credit limit" /></div></div>
+					<div class="col-6"><input type="date" id="balAsOf" class="form-control form-control-sm" value="<?php echo date('Y-m-d'); ?>" title="Date this balance is accurate as of" /></div>
+					<div class="col-12"><input type="text" id="balNote" class="form-control form-control-sm" placeholder="Note (optional)" /></div>
+					<div class="col-12 d-flex gap-2">
+						<button class="btn btn-sm btn-primary" id="balSaveBtn">Save</button>
+						<button class="btn btn-sm btn-secondary" id="balCancelBtn">Cancel</button>
+						<span id="balMsg" class="small ms-1"></span>
+					</div>
+				</div>
+			</div>
+
+			<div class="fw-semibold small text-muted mb-1">Bank / Cash</div>
+			<?php if (empty($data['manual']['bank'])): ?>
+				<div class="text-muted small mb-2">None entered yet.</div>
+			<?php else: foreach ($data['manual']['bank'] as $a): ?>
+				<div class="d-flex justify-content-between align-items-center border-bottom py-1 small bal-row"
+					data-id="<?php echo $a['id']; ?>" data-label="<?php echo htmlspecialchars($a['label'], ENT_QUOTES); ?>" data-type="bank"
+					data-balance="<?php echo $a['balance']; ?>" data-asof="<?php echo $a['as_of']; ?>" data-note="<?php echo htmlspecialchars((string)$a['note'], ENT_QUOTES); ?>">
+					<span><?php echo htmlspecialchars($a['label']); ?> <span class="text-muted" style="font-size:0.7rem;">· as of <?php echo fdate($a['as_of']); ?></span></span>
+					<span><span class="fw-semibold"><?php echo money($a['balance']); ?></span>
+						<a href="#" class="bal-edit ms-1" style="font-size:0.7rem;">edit</a>
+						<a href="#" class="bal-del ms-1 text-danger" style="font-size:0.7rem;">×</a></span>
 				</div>
 			<?php endforeach; endif; ?>
+
+			<div class="fw-semibold small text-muted mb-1 mt-3">Credit Cards / Lines of Credit</div>
+			<?php if (empty($data['manual']['credit'])): ?>
+				<div class="text-muted small">None entered yet.</div>
+			<?php else: foreach ($data['manual']['credit'] as $a): ?>
+				<div class="d-flex justify-content-between align-items-center border-bottom py-1 small bal-row"
+					data-id="<?php echo $a['id']; ?>" data-label="<?php echo htmlspecialchars($a['label'], ENT_QUOTES); ?>" data-type="<?php echo $a['type']; ?>"
+					data-balance="<?php echo $a['balance']; ?>" data-limit="<?php echo $a['limit']; ?>" data-asof="<?php echo $a['as_of']; ?>" data-note="<?php echo htmlspecialchars((string)$a['note'], ENT_QUOTES); ?>">
+					<span><?php echo htmlspecialchars($a['label']); ?> <span class="text-muted" style="font-size:0.7rem;">· <?php echo htmlspecialchars($a['kind']); ?> · as of <?php echo fdate($a['as_of']); ?></span></span>
+					<span><span class="fw-semibold" style="color:#d9822b;"><?php echo money($a['balance']); ?></span>
+						<a href="#" class="bal-edit ms-1" style="font-size:0.7rem;">edit</a>
+						<a href="#" class="bal-del ms-1 text-danger" style="font-size:0.7rem;">×</a></span>
+				</div>
+			<?php endforeach; endif; ?>
+
+			<?php if ($data['qb_connected'] && (!empty($data['cash']['accounts']) || !empty($data['credit']['accounts']))): ?>
+			<details class="mt-3">
+				<summary class="text-muted small" style="cursor:pointer;">QuickBooks balances (for reference)</summary>
+				<div class="mt-2">
+					<?php foreach ($data['cash']['accounts'] as $a): ?>
+						<div class="d-flex justify-content-between small text-muted"><span><?php echo htmlspecialchars($a['name']); ?></span><span><?php echo money($a['balance']); ?></span></div>
+					<?php endforeach; ?>
+					<?php foreach ($data['credit']['accounts'] as $a): ?>
+						<div class="d-flex justify-content-between small text-muted"><span><?php echo htmlspecialchars($a['name']); ?> · <?php echo htmlspecialchars($a['kind']); ?></span><span><?php echo money($a['balance']); ?></span></div>
+					<?php endforeach; ?>
+				</div>
+			</details>
+			<?php endif; ?>
 		</div>
 		</div>
 	</div>
 
 </div>
+
+<script>
+	function balShowForm(show) { $('#balForm').toggleClass('hidden', !show); }
+	$('#balType').on('change', function(){ $('#balLimitWrap').toggle($(this).val() !== 'bank'); });
+	$('#addBalBtn').on('click', function(){
+		$('#balId,#balLabel,#balAmount,#balLimit,#balNote').val('');
+		$('#balType').val('bank').trigger('change');
+		$('#balAsOf').val('<?php echo date('Y-m-d'); ?>');
+		$('#balMsg').text(''); balShowForm(true);
+	});
+	$('#balCancelBtn').on('click', function(){ balShowForm(false); });
+	$(document).on('click', '.bal-edit', function(e){
+		e.preventDefault();
+		var $r = $(this).closest('.bal-row');
+		$('#balId').val($r.data('id'));
+		$('#balLabel').val($r.data('label'));
+		$('#balType').val($r.data('type')).trigger('change');
+		$('#balAmount').val($r.data('balance'));
+		$('#balLimit').val($r.data('limit') || '');
+		$('#balAsOf').val($r.data('asof') || '');
+		$('#balNote').val($r.data('note') || '');
+		$('#balMsg').text(''); balShowForm(true);
+	});
+	$('#balSaveBtn').on('click', function(){
+		var $btn = $(this).prop('disabled', true);
+		$.post('/ajax/cashflow/save_balance.php', {
+			id: $('#balId').val(), label: $('#balLabel').val(), acct_type: $('#balType').val(),
+			balance: $('#balAmount').val(), credit_limit: $('#balLimit').val(),
+			as_of: $('#balAsOf').val(), note: $('#balNote').val()
+		}, function(resp){
+			if ($.trim(resp) === 'ok') { location.reload(); }
+			else { $('#balMsg').addClass('text-danger').text(resp); $btn.prop('disabled', false); }
+		}).fail(function(x){ $('#balMsg').addClass('text-danger').text('Save failed: ' + (x.responseText||x.status)); $btn.prop('disabled', false); });
+	});
+	$(document).on('click', '.bal-del', function(e){
+		e.preventDefault();
+		if (!confirm('Remove this account balance?')) return;
+		var id = $(this).closest('.bal-row').data('id');
+		$.post('/ajax/cashflow/delete_balance.php', { id: id }, function(resp){
+			if ($.trim(resp) === 'ok') location.reload(); else alert(resp);
+		});
+	});
+</script>
 
 <!-- DETAIL TABLES -->
 <div class="row g-4 mt-1">

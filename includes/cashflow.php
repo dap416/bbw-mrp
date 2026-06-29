@@ -117,10 +117,19 @@
 			}
 		} catch (Throwable $e) { /* orders table issue — leave POs empty */ }
 
+		// Manually-entered balances (authoritative when QuickBooks is stale).
+		$out['manual'] = load_manual_balances($db);
+
+		// Effective balances: prefer manual entries when present, else QuickBooks.
+		$out['eff_cash']      = !empty($out['manual']['bank'])   ? $out['manual']['bank_total']   : $out['cash']['total'];
+		$out['eff_credit']    = !empty($out['manual']['credit']) ? $out['manual']['credit_total'] : $out['credit']['total'];
+		$out['cash_source']   = !empty($out['manual']['bank'])   ? 'manual' : 'quickbooks';
+		$out['credit_source'] = !empty($out['manual']['credit']) ? 'manual' : 'quickbooks';
+
 		// Derived totals.
 		$out['ar_total']  = $out['invoices']['total'];                       // owed to you (QBO)
 		$out['ap_total']  = $out['bills']['total'] + $out['pos']['total'];   // owed by you (bills + POs)
-		$out['net_quick'] = $out['cash']['total'] + $out['ar_total'] - $out['ap_total'];
+		$out['net_quick'] = $out['eff_cash'] + $out['ar_total'] - $out['ap_total'];
 
 		// Pay-planner queue: every obligation with a due date, soonest first.
 		// POs have no due date in the MRP, so they sort to the end as "no date".
@@ -138,7 +147,7 @@
 			return strcmp($a['due'], $b['due']);
 		});
 		// Running cash position after paying each obligation in order.
-		$running = $out['cash']['total'];
+		$running = $out['eff_cash'];
 		foreach ($queue as &$q) {
 			$running -= $q['amount'];
 			$q['running'] = $running;
@@ -146,5 +155,93 @@
 		unset($q);
 		$out['queue'] = $queue;
 
+		return $out;
+	}
+
+	/** Ensure the manual-balances table exists. */
+	function ensure_cash_balances_table($db) {
+		$db->exec("CREATE TABLE IF NOT EXISTS cash_balances (
+			id            INT AUTO_INCREMENT PRIMARY KEY,
+			label         VARCHAR(120) NOT NULL,
+			acct_type     VARCHAR(12)  NOT NULL DEFAULT 'bank',  -- bank | credit | loc
+			balance       DECIMAL(12,2) NOT NULL DEFAULT 0,
+			credit_limit  DECIMAL(12,2) NULL,
+			as_of         DATE NULL,
+			note          VARCHAR(255) NULL,
+			updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			user_id       INT NULL
+		) ENGINE=InnoDB");
+	}
+
+	/**
+	 * Manually-entered account balances, each with a "date of accuracy" (as_of).
+	 * Bank accounts are cash assets; credit/loc are debts (with optional limit so
+	 * we can show available credit). These are authoritative for the cash position
+	 * because QuickBooks balances can lag reality.
+	 */
+	function load_manual_balances($db) {
+		$res = [
+			'bank' => [], 'credit' => [],
+			'bank_total' => 0.0, 'credit_total' => 0.0,
+			'credit_limit_total' => 0.0, 'credit_available' => 0.0,
+			'oldest_asof' => null,
+		];
+		try {
+			ensure_cash_balances_table($db);
+			foreach ($db->query("SELECT * FROM cash_balances ORDER BY acct_type, label") as $r) {
+				$row = [
+					'id'      => (int)$r['id'],
+					'label'   => $r['label'],
+					'balance' => (float)$r['balance'],
+					'limit'   => $r['credit_limit'] !== null ? (float)$r['credit_limit'] : null,
+					'as_of'   => $r['as_of'],
+					'note'    => $r['note'],
+					'type'    => $r['acct_type'],
+				];
+				if ($r['acct_type'] === 'bank') {
+					$res['bank'][] = $row;
+					$res['bank_total'] += $row['balance'];
+				} else {
+					$row['kind'] = $r['acct_type'] === 'loc' ? 'Line of Credit' : 'Credit Card';
+					$res['credit'][] = $row;
+					$res['credit_total'] += $row['balance'];
+					if ($row['limit'] !== null) $res['credit_limit_total'] += $row['limit'];
+				}
+				if (!empty($r['as_of']) && ($res['oldest_asof'] === null || $r['as_of'] < $res['oldest_asof'])) {
+					$res['oldest_asof'] = $r['as_of'];
+				}
+			}
+			$res['credit_available'] = $res['credit_limit_total'] - $res['credit_total'];
+		} catch (Throwable $e) { /* table issue — return empty */ }
+		return $res;
+	}
+
+	/**
+	 * Projected monthly sales for the next 12 months, derived from last year's
+	 * Shopify sales in the same calendar month (a simple prior-year baseline).
+	 * Returns [ ['label'=>'Jul 2026','ym'=>'2026-07','projected'=>1234.56], ... ].
+	 * Pulls dollar totals per month from the `orders`+Shopify history if available;
+	 * falls back to an empty projection when Shopify isn't connected.
+	 */
+	function cashflow_sales_projection($db, $months = 12, $startTs = null) {
+		$out = [];
+		$haveShopify = function_exists('shopify_is_configured') && shopify_is_configured();
+		$start = $startTs ?: strtotime(date('Y-m-01'));
+		for ($i = 0; $i < $months; $i++) {
+			$ts  = strtotime("+$i month", $start);
+			$ym  = date('Y-m', $ts);
+			$out[] = ['label' => date('M Y', $ts), 'ym' => $ym, 'month' => (int)date('n', $ts), 'projected' => null];
+		}
+		if (!$haveShopify || !function_exists('shopify_revenue_in_range')) return $out;
+		// Prior-year revenue for each target month (same month, one year earlier).
+		foreach ($out as &$m) {
+			try {
+				$from = date('Y-m-01', strtotime($m['ym'] . '-01 -1 year'));
+				$to   = date('Y-m-t',  strtotime($from));
+				$rev  = shopify_revenue_in_range($from, $to);
+				if (!isset($rev['error'])) $m['projected'] = (float)($rev['total'] ?? 0);
+			} catch (Throwable $e) {}
+		}
+		unset($m);
 		return $out;
 	}
