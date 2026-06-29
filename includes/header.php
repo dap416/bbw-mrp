@@ -91,6 +91,15 @@
         </li>
         <?php } ?>
 
+        <?php if (in_array(($_SESSION['user_role'] ?? ''), ['admin','master'], true)) { ?>
+        <li class="pc-item">
+          <a href="/cashflow.php" class="pc-link">
+            <span class="pc-micon"><i class="ti ti-cash"></i></span>
+            <span class="pc-mtext">Cash Flow</span>
+          </a>
+        </li>
+        <?php } ?>
+
         <?php if (has_access('inventory')) { ?>
         <li class="pc-item">
           <a href="/index.php" class="pc-link">
