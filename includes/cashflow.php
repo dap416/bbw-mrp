@@ -158,7 +158,7 @@
 		return $out;
 	}
 
-	/** Ensure the manual-balances table exists. */
+	/** Ensure the manual-balances table exists (and has the debt-payment column). */
 	function ensure_cash_balances_table($db) {
 		$db->exec("CREATE TABLE IF NOT EXISTS cash_balances (
 			id            INT AUTO_INCREMENT PRIMARY KEY,
@@ -166,11 +166,15 @@
 			acct_type     VARCHAR(12)  NOT NULL DEFAULT 'bank',  -- bank | credit | loc
 			balance       DECIMAL(12,2) NOT NULL DEFAULT 0,
 			credit_limit  DECIMAL(12,2) NULL,
+			monthly_payment DECIMAL(12,2) NULL,
 			as_of         DATE NULL,
 			note          VARCHAR(255) NULL,
 			updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			user_id       INT NULL
 		) ENGINE=InnoDB");
+		// Add the column for tables created before it existed (ignore duplicate).
+		try { $db->exec("ALTER TABLE cash_balances ADD COLUMN monthly_payment DECIMAL(12,2) NULL"); }
+		catch (Throwable $e) { /* already there */ }
 	}
 
 	/**
@@ -194,6 +198,7 @@
 					'label'   => $r['label'],
 					'balance' => (float)$r['balance'],
 					'limit'   => $r['credit_limit'] !== null ? (float)$r['credit_limit'] : null,
+					'payment' => isset($r['monthly_payment']) && $r['monthly_payment'] !== null ? (float)$r['monthly_payment'] : 0.0,
 					'as_of'   => $r['as_of'],
 					'note'    => $r['note'],
 					'type'    => $r['acct_type'],
@@ -223,25 +228,128 @@
 	 * Pulls dollar totals per month from the `orders`+Shopify history if available;
 	 * falls back to an empty projection when Shopify isn't connected.
 	 */
-	function cashflow_sales_projection($db, $months = 12, $startTs = null) {
+	function cashflow_sales_projection($db, $months = 12, $startTs = null, $growthPct = 0.0) {
 		$out = [];
-		$haveShopify = function_exists('shopify_is_configured') && shopify_is_configured();
 		$start = $startTs ?: strtotime(date('Y-m-01'));
 		for ($i = 0; $i < $months; $i++) {
 			$ts  = strtotime("+$i month", $start);
-			$ym  = date('Y-m', $ts);
-			$out[] = ['label' => date('M Y', $ts), 'ym' => $ym, 'month' => (int)date('n', $ts), 'projected' => null];
+			$out[] = ['label' => date('M Y', $ts), 'ym' => date('Y-m', $ts), 'month' => (int)date('n', $ts), 'projected' => null];
 		}
-		if (!$haveShopify || !function_exists('shopify_revenue_in_range')) return $out;
-		// Prior-year revenue for each target month (same month, one year earlier).
-		foreach ($out as &$m) {
-			try {
-				$from = date('Y-m-01', strtotime($m['ym'] . '-01 -1 year'));
-				$to   = date('Y-m-t',  strtotime($from));
-				$rev  = shopify_revenue_in_range($from, $to);
-				if (!isset($rev['error'])) $m['projected'] = (float)($rev['total'] ?? 0);
-			} catch (Throwable $e) {}
-		}
-		unset($m);
+		if (!function_exists('shopify_revenue_in_range') || !shopify_is_configured()) return $out;
+
+		// One call: prior-year revenue by month across the whole horizon window.
+		try {
+			$priorFrom = date('Y-m-01', strtotime($out[0]['ym'] . '-01 -1 year'));
+			$priorTo   = date('Y-m-t',  strtotime("+" . ($months - 1) . " month", strtotime($priorFrom)));
+			$rev = shopify_revenue_in_range($priorFrom, $priorTo);
+			if (empty($rev['error'])) {
+				$mult = 1 + ($growthPct / 100.0);
+				foreach ($out as &$m) {
+					$priorYm = date('Y-m', strtotime($m['ym'] . '-01 -1 year'));
+					$m['projected'] = round((float)($rev['by_month'][$priorYm] ?? 0) * $mult, 2);
+				}
+				unset($m);
+			}
+		} catch (Throwable $e) {}
 		return $out;
+	}
+
+	/** Recurring monthly expenses entered by the user (the editable "cash out" list). */
+	function ensure_cash_expenses_table($db) {
+		$db->exec("CREATE TABLE IF NOT EXISTS cash_expenses (
+			id         INT AUTO_INCREMENT PRIMARY KEY,
+			label      VARCHAR(120) NOT NULL,
+			amount     DECIMAL(12,2) NOT NULL DEFAULT 0,
+			category   VARCHAR(60) NULL,
+			active     TINYINT NOT NULL DEFAULT 1,
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			user_id    INT NULL
+		) ENGINE=InnoDB");
+	}
+
+	function load_recurring_expenses($db) {
+		$res = ['items' => [], 'total' => 0.0];
+		try {
+			ensure_cash_expenses_table($db);
+			foreach ($db->query("SELECT * FROM cash_expenses WHERE active = 1 ORDER BY category, label") as $r) {
+				$amt = (float)$r['amount'];
+				$res['items'][] = ['id' => (int)$r['id'], 'label' => $r['label'], 'amount' => $amt, 'category' => $r['category']];
+				$res['total'] += $amt;
+			}
+		} catch (Throwable $e) {}
+		return $res;
+	}
+
+	/**
+	 * Build the rolling 12-month forecast.
+	 *   Cash in   = projected sales (Shopify prior-year, optional growth %).
+	 *   Cash out  = recurring expenses (or QuickBooks estimate if none entered)
+	 *               + planned debt payments + bills/POs due that month.
+	 *   Running   = ending cash carried forward; debt shrinks by payments.
+	 */
+	function build_cashflow_forecast($db, $data, $months = 12, $growthPct = 0.0) {
+		$proj     = cashflow_sales_projection($db, $months, strtotime(date('Y-m-01')), $growthPct);
+		$recur    = load_recurring_expenses($db);
+		$recurMo  = $recur['total'];
+
+		// "Both": if no recurring items entered, fall back to a QuickBooks estimate.
+		$qbEstimate = null;
+		if ($recurMo <= 0 && function_exists('qb_monthly_expense_estimate') && qb_is_connected()) {
+			$est = qb_monthly_expense_estimate(3);
+			if (empty($est['error']) && $est['monthly'] > 0) { $qbEstimate = $est['monthly']; $recurMo = $est['monthly']; }
+		}
+
+		// Planned monthly debt payment (sum across credit/LOC accounts).
+		$debtBalance = $data['manual']['credit_total'];
+		$debtPayMo   = 0.0;
+		foreach ($data['manual']['credit'] as $c) { $debtPayMo += (float)($c['payment'] ?? 0); }
+
+		// Map bills + POs into the month they're due (POs with no due date → month 1).
+		$dueByYm = [];
+		foreach ($data['bills']['items'] as $b) {
+			$ym = $b['due'] ? substr($b['due'], 0, 7) : date('Y-m');
+			$dueByYm[$ym] = ($dueByYm[$ym] ?? 0) + $b['balance'];
+		}
+		$firstYm = $proj[0]['ym'] ?? date('Y-m');
+		foreach ($data['pos']['items'] as $p) {
+			$dueByYm[$firstYm] = ($dueByYm[$firstYm] ?? 0) + $p['balance'];
+		}
+
+		$rows  = [];
+		$cash  = $data['eff_cash'];
+		$debt  = $debtBalance;
+		foreach ($proj as $m) {
+			$ym       = $m['ym'];
+			$income   = (float)($m['projected'] ?? 0);
+			$onetime  = (float)($dueByYm[$ym] ?? 0);
+			$pay      = min($debtPayMo, $debt);          // don't overpay the balance
+			$out      = $recurMo + $onetime + $pay;
+			$net      = $income - $out;
+			$cash    += $net;
+			$debt     = max(0, $debt - $pay);
+
+			$rows[] = [
+				'label'      => $m['label'],
+				'ym'         => $ym,
+				'income'     => $income,
+				'recurring'  => $recurMo,
+				'onetime'    => $onetime,
+				'debt_pay'   => $pay,
+				'cash_out'   => $out,
+				'net'        => $net,
+				'end_cash'   => $cash,
+				'end_debt'   => $debt,
+			];
+		}
+
+		return [
+			'rows'         => $rows,
+			'recur_total'  => $recur['total'],
+			'recur_items'  => $recur['items'],
+			'qb_estimate'  => $qbEstimate,
+			'debt_pay_mo'  => $debtPayMo,
+			'start_cash'   => $data['eff_cash'],
+			'start_debt'   => $debtBalance,
+			'growth_pct'   => $growthPct,
+		];
 	}

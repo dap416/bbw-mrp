@@ -17,6 +17,8 @@ $type    = in_array($type, ['bank','credit','loc'], true) ? $type : 'bank';
 $balance = round((float)($_POST['balance'] ?? 0), 2);
 $limit   = trim($_POST['credit_limit'] ?? '');
 $limit   = ($limit === '' || $type === 'bank') ? null : round((float)$limit, 2);
+$payment = trim($_POST['monthly_payment'] ?? '');
+$payment = ($payment === '' || $type === 'bank') ? null : round((float)$payment, 2);
 $asOf    = trim($_POST['as_of'] ?? '');
 $note    = trim($_POST['note'] ?? '');
 
@@ -27,11 +29,11 @@ if ($asOf === '') $asOf = date('Y-m-d');
 try {
 	ensure_cash_balances_table($db);
 	if ($id > 0) {
-		$db->prepare("UPDATE cash_balances SET label=?, acct_type=?, balance=?, credit_limit=?, as_of=?, note=?, updated_at=NOW(), user_id=? WHERE id=?")
-		   ->execute([$label, $type, $balance, $limit, $asOf, $note, $_SESSION['user_id'] ?? null, $id]);
+		$db->prepare("UPDATE cash_balances SET label=?, acct_type=?, balance=?, credit_limit=?, monthly_payment=?, as_of=?, note=?, updated_at=NOW(), user_id=? WHERE id=?")
+		   ->execute([$label, $type, $balance, $limit, $payment, $asOf, $note, $_SESSION['user_id'] ?? null, $id]);
 	} else {
-		$db->prepare("INSERT INTO cash_balances (label, acct_type, balance, credit_limit, as_of, note, user_id) VALUES (?,?,?,?,?,?,?)")
-		   ->execute([$label, $type, $balance, $limit, $asOf, $note, $_SESSION['user_id'] ?? null]);
+		$db->prepare("INSERT INTO cash_balances (label, acct_type, balance, credit_limit, monthly_payment, as_of, note, user_id) VALUES (?,?,?,?,?,?,?,?)")
+		   ->execute([$label, $type, $balance, $limit, $payment, $asOf, $note, $_SESSION['user_id'] ?? null]);
 	}
 	echo 'ok';
 } catch (Throwable $e) {

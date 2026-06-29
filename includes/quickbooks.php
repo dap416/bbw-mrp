@@ -248,6 +248,72 @@
 		return $j['QueryResponse'] ?? [];
 	}
 
+	/** Run a QuickBooks report (e.g. ProfitAndLoss). Returns decoded JSON or ['error'=>...]. */
+	function qb_report($name, $params = []) {
+		$s = qb_settings();
+		if (empty($s['qb_realm_id'])) return ['error' => 'QuickBooks is not connected.'];
+		$auth = qb_access_token();
+		if (!empty($auth['error'])) return ['error' => $auth['error']];
+
+		$url = qb_api_base() . '/v3/company/' . rawurlencode($s['qb_realm_id'])
+			 . '/reports/' . rawurlencode($name) . '?minorversion=' . QB_MINOR_VERSION;
+		foreach ($params as $k => $v) $url .= '&' . urlencode($k) . '=' . urlencode($v);
+
+		$ch = curl_init($url);
+		curl_setopt_array($ch, [
+			CURLOPT_RETURNTRANSFER => true,
+			CURLOPT_HTTPHEADER     => ['Authorization: Bearer ' . $auth['token'], 'Accept: application/json'],
+			CURLOPT_HEADER         => true,
+			CURLOPT_TIMEOUT        => 30,
+		]);
+		$raw        = curl_exec($ch);
+		$code       = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+		$headerSize = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
+		$err        = curl_error($ch);
+		curl_close($ch);
+
+		if ($raw === false) { qb_log('report', $err); return ['error' => 'Could not reach QuickBooks: ' . $err]; }
+		$tid  = qb_extract_tid(substr($raw, 0, $headerSize));
+		$j    = json_decode(substr($raw, $headerSize), true);
+		if ($code >= 400 || !is_array($j)) {
+			$msg = is_array($j) ? ($j['Fault']['Error'][0]['Message'] ?? 'HTTP ' . $code) : 'HTTP ' . $code;
+			qb_log('report', $name . ': ' . $msg, $tid);
+			return ['error' => 'QuickBooks report failed: ' . $msg];
+		}
+		return $j;
+	}
+
+	/**
+	 * Estimate average monthly expenses from the Profit & Loss report over the
+	 * trailing N whole months. Best-effort: returns ['monthly'=>float] (0 if it
+	 * can't be parsed) plus ['total','months'].
+	 */
+	function qb_monthly_expense_estimate($monthsBack = 3) {
+		$end   = date('Y-m-d', strtotime('last day of previous month'));
+		$start = date('Y-m-01', strtotime("first day of -$monthsBack month"));
+		$r = qb_report('ProfitAndLoss', ['start_date' => $start, 'end_date' => $end]);
+		if (!empty($r['error'])) return ['error' => $r['error'], 'monthly' => 0.0, 'total' => 0.0, 'months' => $monthsBack];
+
+		// Walk the report rows to find the "Expenses" section total.
+		$total = 0.0;
+		$walk = function($rows) use (&$walk, &$total) {
+			foreach (($rows ?? []) as $row) {
+				$grp  = $row['group'] ?? '';
+				$hdr  = $row['Header']['ColData'][0]['value'] ?? '';
+				if ($grp === 'Expenses' || strcasecmp($hdr, 'Expenses') === 0) {
+					$sum = $row['Summary']['ColData'] ?? [];
+					$val = end($sum)['value'] ?? '';
+					if ($val !== '') { $total = (float)str_replace([',','$'], '', $val); return; }
+				}
+				if (!empty($row['Rows']['Row'])) $walk($row['Rows']['Row']);
+			}
+		};
+		try { $walk($r['Rows']['Row'] ?? []); } catch (Throwable $e) {}
+
+		$months  = max(1, $monthsBack);
+		return ['error' => null, 'total' => $total, 'months' => $months, 'monthly' => round($total / $months, 2)];
+	}
+
 	/** Quick connectivity check — returns ['ok'=>bool,'name'=>string,'error'=>string]. */
 	function qb_company_info() {
 		$s = qb_settings();

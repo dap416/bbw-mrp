@@ -451,6 +451,51 @@
 		];
 	}
 
+	/**
+	 * Total order revenue in a date range, grouped by calendar month.
+	 * Returns ['error'=>..., 'total'=>float, 'by_month'=>['YYYY-MM'=>amount]].
+	 * Excludes cancelled orders. Uses the order's current total (after edits).
+	 */
+	function shopify_revenue_in_range($since, $until) {
+		$query = '
+		query($cursor: String, $q: String!) {
+		  orders(first: 100, after: $cursor, query: $q, sortKey: CREATED_AT) {
+		    pageInfo { hasNextPage endCursor }
+		    edges { node {
+		      createdAt
+		      cancelledAt
+		      currentTotalPriceSet { shopMoney { amount } }
+		    } }
+		  }
+		}';
+
+		$q = "created_at:>=$since AND created_at:<=$until";
+		$total = 0.0; $byMonth = []; $cursor = null; $pages = 0; $orders = 0;
+
+		do {
+			$res = shopify_graphql($query, ['cursor' => $cursor, 'q' => $q]);
+			if (!empty($res['error'])) return ['error' => $res['error'], 'total' => 0, 'by_month' => []];
+			$o = $res['data']['orders'] ?? null;
+			if ($o === null) return ['error' => 'Malformed Shopify orders response.', 'total' => 0, 'by_month' => []];
+
+			foreach ($o['edges'] as $oe) {
+				$n = $oe['node'];
+				if (!empty($n['cancelledAt'])) continue;
+				$amt = (float)($n['currentTotalPriceSet']['shopMoney']['amount'] ?? 0);
+				$ym  = substr((string)($n['createdAt'] ?? ''), 0, 7);
+				$total += $amt;
+				if ($ym !== '') $byMonth[$ym] = ($byMonth[$ym] ?? 0) + $amt;
+				$orders++;
+			}
+
+			$cursor  = $o['pageInfo']['endCursor']  ?? null;
+			$hasNext = $o['pageInfo']['hasNextPage'] ?? false;
+			$pages++;
+		} while ($hasNext && $pages < 40);
+
+		return ['error' => null, 'total' => $total, 'by_month' => $byMonth, 'orders' => $orders, 'truncated' => ($hasNext && $pages >= 40)];
+	}
+
 	/** The customer whose orders use Amazon (CDA) packaging cards. Configurable. */
 	function shopify_amazon_customer() {
 		static $name = null;

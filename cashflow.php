@@ -16,6 +16,10 @@
 	$db   = db_connect();
 	$data = build_cashflow_data($db);
 
+	$growth   = isset($_GET['growth']) ? (float)$_GET['growth'] : 0.0;
+	$forecast = build_cashflow_forecast($db, $data, 12, $growth);
+	$recur    = load_recurring_expenses($db);
+
 	function money($n) { return '$' . number_format((float)$n, 2); }
 	function fdate($d) { return ($d && $d !== '0000-00-00' && $d !== '0000-00-00 00:00:00') ? date('m/d/y', strtotime($d)) : '—'; }
 ?>
@@ -151,6 +155,7 @@
 					</div>
 					<div class="col-6"><div class="input-group input-group-sm"><span class="input-group-text">$</span><input type="text" id="balAmount" class="form-control" placeholder="Balance" /></div></div>
 					<div class="col-6" id="balLimitWrap" style="display:none;"><div class="input-group input-group-sm"><span class="input-group-text">Limit $</span><input type="text" id="balLimit" class="form-control" placeholder="Credit limit" /></div></div>
+					<div class="col-6" id="balPayWrap" style="display:none;"><div class="input-group input-group-sm"><span class="input-group-text">Pay/mo $</span><input type="text" id="balPayment" class="form-control" placeholder="Planned monthly payment" /></div></div>
 					<div class="col-6"><input type="date" id="balAsOf" class="form-control form-control-sm" value="<?php echo date('Y-m-d'); ?>" title="Date this balance is accurate as of" /></div>
 					<div class="col-12"><input type="text" id="balNote" class="form-control form-control-sm" placeholder="Note (optional)" /></div>
 					<div class="col-12 d-flex gap-2">
@@ -181,8 +186,8 @@
 			<?php else: foreach ($data['manual']['credit'] as $a): ?>
 				<div class="d-flex justify-content-between align-items-center border-bottom py-1 small bal-row"
 					data-id="<?php echo $a['id']; ?>" data-label="<?php echo htmlspecialchars($a['label'], ENT_QUOTES); ?>" data-type="<?php echo $a['type']; ?>"
-					data-balance="<?php echo $a['balance']; ?>" data-limit="<?php echo $a['limit']; ?>" data-asof="<?php echo $a['as_of']; ?>" data-note="<?php echo htmlspecialchars((string)$a['note'], ENT_QUOTES); ?>">
-					<span><?php echo htmlspecialchars($a['label']); ?> <span class="text-muted" style="font-size:0.7rem;">· <?php echo htmlspecialchars($a['kind']); ?> · as of <?php echo fdate($a['as_of']); ?></span></span>
+					data-balance="<?php echo $a['balance']; ?>" data-limit="<?php echo $a['limit']; ?>" data-payment="<?php echo $a['payment']; ?>" data-asof="<?php echo $a['as_of']; ?>" data-note="<?php echo htmlspecialchars((string)$a['note'], ENT_QUOTES); ?>">
+					<span><?php echo htmlspecialchars($a['label']); ?> <span class="text-muted" style="font-size:0.7rem;">· <?php echo htmlspecialchars($a['kind']); ?> · as of <?php echo fdate($a['as_of']); ?><?php echo $a['payment'] > 0 ? ' · pay '.money($a['payment']).'/mo' : ''; ?></span></span>
 					<span><span class="fw-semibold" style="color:#d9822b;"><?php echo money($a['balance']); ?></span>
 						<a href="#" class="bal-edit ms-1" style="font-size:0.7rem;">edit</a>
 						<a href="#" class="bal-del ms-1 text-danger" style="font-size:0.7rem;">×</a></span>
@@ -210,9 +215,9 @@
 
 <script>
 	function balShowForm(show) { $('#balForm').toggleClass('hidden', !show); }
-	$('#balType').on('change', function(){ $('#balLimitWrap').toggle($(this).val() !== 'bank'); });
+	$('#balType').on('change', function(){ var c = $(this).val() !== 'bank'; $('#balLimitWrap').toggle(c); $('#balPayWrap').toggle(c); });
 	$('#addBalBtn').on('click', function(){
-		$('#balId,#balLabel,#balAmount,#balLimit,#balNote').val('');
+		$('#balId,#balLabel,#balAmount,#balLimit,#balPayment,#balNote').val('');
 		$('#balType').val('bank').trigger('change');
 		$('#balAsOf').val('<?php echo date('Y-m-d'); ?>');
 		$('#balMsg').text(''); balShowForm(true);
@@ -226,6 +231,7 @@
 		$('#balType').val($r.data('type')).trigger('change');
 		$('#balAmount').val($r.data('balance'));
 		$('#balLimit').val($r.data('limit') || '');
+		$('#balPayment').val($r.data('payment') || '');
 		$('#balAsOf').val($r.data('asof') || '');
 		$('#balNote').val($r.data('note') || '');
 		$('#balMsg').text(''); balShowForm(true);
@@ -234,7 +240,7 @@
 		var $btn = $(this).prop('disabled', true);
 		$.post('/ajax/cashflow/save_balance.php', {
 			id: $('#balId').val(), label: $('#balLabel').val(), acct_type: $('#balType').val(),
-			balance: $('#balAmount').val(), credit_limit: $('#balLimit').val(),
+			balance: $('#balAmount').val(), credit_limit: $('#balLimit').val(), monthly_payment: $('#balPayment').val(),
 			as_of: $('#balAsOf').val(), note: $('#balNote').val()
 		}, function(resp){
 			if ($.trim(resp) === 'ok') { location.reload(); }
@@ -295,5 +301,133 @@
 		</div>
 	</div>
 </div>
+
+<!-- RECURRING EXPENSES + FORECAST -->
+<div class="row g-4 mt-1">
+	<div class="col-12 col-lg-4">
+		<div class="card h-100">
+		<div class="card-body">
+			<div class="d-flex justify-content-between align-items-center mb-2">
+				<h6 class="fw-bold mb-0">Recurring Monthly Expenses</h6>
+				<button class="btn btn-sm btn-light-primary" id="addExpBtn">+ Add</button>
+			</div>
+			<p class="text-muted mb-2" style="font-size:0.72rem;">Your fixed monthly costs (rent, payroll, software, etc.). These feed the forecast's "cash out."</p>
+
+			<div id="expForm" class="border rounded p-2 mb-3 hidden" style="background:#f8f9fb;">
+				<input type="hidden" id="expId" value="" />
+				<div class="row g-2">
+					<div class="col-12"><input type="text" id="expLabel" class="form-control form-control-sm" placeholder="Expense name (e.g. Rent)" /></div>
+					<div class="col-6"><div class="input-group input-group-sm"><span class="input-group-text">$</span><input type="text" id="expAmount" class="form-control" placeholder="Monthly" /></div></div>
+					<div class="col-6"><input type="text" id="expCategory" class="form-control form-control-sm" placeholder="Category (optional)" /></div>
+					<div class="col-12 d-flex gap-2">
+						<button class="btn btn-sm btn-primary" id="expSaveBtn">Save</button>
+						<button class="btn btn-sm btn-secondary" id="expCancelBtn">Cancel</button>
+						<span id="expMsg" class="small ms-1"></span>
+					</div>
+				</div>
+			</div>
+
+			<?php if (empty($recur['items'])): ?>
+				<div class="text-muted small mb-2">No recurring expenses entered.
+				<?php if ($forecast['qb_estimate'] !== null): ?><br>Using QuickBooks estimate of <strong><?php echo money($forecast['qb_estimate']); ?>/mo</strong> until you add line items.<?php endif; ?>
+				</div>
+			<?php else: foreach ($recur['items'] as $e): ?>
+				<div class="d-flex justify-content-between align-items-center border-bottom py-1 small exp-row"
+					data-id="<?php echo $e['id']; ?>" data-label="<?php echo htmlspecialchars($e['label'], ENT_QUOTES); ?>"
+					data-amount="<?php echo $e['amount']; ?>" data-category="<?php echo htmlspecialchars((string)$e['category'], ENT_QUOTES); ?>">
+					<span><?php echo htmlspecialchars($e['label']); ?><?php echo $e['category'] ? ' <span class="text-muted" style="font-size:0.7rem;">· '.htmlspecialchars($e['category']).'</span>' : ''; ?></span>
+					<span><span class="fw-semibold"><?php echo money($e['amount']); ?></span>
+						<a href="#" class="exp-edit ms-1" style="font-size:0.7rem;">edit</a>
+						<a href="#" class="exp-del ms-1 text-danger" style="font-size:0.7rem;">×</a></span>
+				</div>
+			<?php endforeach; ?>
+				<div class="d-flex justify-content-between py-1 small fw-bold border-top mt-1"><span>Total / month</span><span><?php echo money($recur['total']); ?></span></div>
+			<?php endif; ?>
+		</div>
+		</div>
+	</div>
+
+	<div class="col-12 col-lg-8">
+		<div class="card h-100">
+		<div class="card-body">
+			<div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
+				<h5 class="fw-bold mb-0">12-Month Forecast</h5>
+				<form method="get" class="d-flex align-items-center gap-2 mb-0">
+					<label class="small text-muted mb-0">Sales growth vs last yr:</label>
+					<div class="input-group input-group-sm" style="width:110px;">
+						<input type="number" step="1" name="growth" class="form-control" value="<?php echo (int)$growth; ?>" />
+						<span class="input-group-text">%</span>
+					</div>
+					<button class="btn btn-sm btn-light-primary">Apply</button>
+				</form>
+			</div>
+			<p class="text-muted small mb-3">
+				Sales = last year's same month from Shopify<?php echo $growth ? ' +'.(int)$growth.'%' : ''; ?>.
+				Cash out = recurring (<?php echo money($forecast['recur_total'] > 0 ? $forecast['recur_total'] : (float)$forecast['qb_estimate']); ?>/mo)<?php echo ($forecast['recur_total'] <= 0 && $forecast['qb_estimate'] !== null) ? ' <em>(QuickBooks estimate)</em>' : ''; ?> + bills/POs due + debt payments (<?php echo money($forecast['debt_pay_mo']); ?>/mo).
+				Starting cash <?php echo money($forecast['start_cash']); ?>, starting debt <?php echo money($forecast['start_debt']); ?>.
+			</p>
+			<div class="table-responsive">
+			<table class="table table-sm table-hover align-middle mb-0" style="font-size:0.82rem;">
+				<thead><tr style="background:#f1f3f5;">
+					<th class="text-muted">Month</th>
+					<th class="text-muted text-end">Sales In</th>
+					<th class="text-muted text-end">Recurring</th>
+					<th class="text-muted text-end">Bills/POs</th>
+					<th class="text-muted text-end">Debt Pay</th>
+					<th class="text-muted text-end">Net</th>
+					<th class="text-muted text-end">End Cash</th>
+					<th class="text-muted text-end">End Debt</th>
+				</tr></thead>
+				<tbody>
+				<?php foreach ($forecast['rows'] as $r): ?>
+					<tr<?php echo $r['end_cash'] < 0 ? ' style="background:#fdecea;"' : ''; ?>>
+						<td class="fw-semibold"><?php echo $r['label']; ?></td>
+						<td class="text-end text-success"><?php echo money($r['income']); ?></td>
+						<td class="text-end"><?php echo money($r['recurring']); ?></td>
+						<td class="text-end"><?php echo $r['onetime'] > 0 ? money($r['onetime']) : '—'; ?></td>
+						<td class="text-end"><?php echo $r['debt_pay'] > 0 ? money($r['debt_pay']) : '—'; ?></td>
+						<td class="text-end" style="color:<?php echo $r['net'] >= 0 ? '#2ca01c' : '#e64545'; ?>;"><?php echo money($r['net']); ?></td>
+						<td class="text-end fw-bold" style="color:<?php echo $r['end_cash'] >= 0 ? '#2ca01c' : '#e64545'; ?>;"><?php echo money($r['end_cash']); ?></td>
+						<td class="text-end" style="color:#d9822b;"><?php echo money($r['end_debt']); ?></td>
+					</tr>
+				<?php endforeach; ?>
+				</tbody>
+			</table>
+			</div>
+			<?php
+			$allZero = true;
+			foreach ($forecast['rows'] as $r) { if ($r['income'] > 0) { $allZero = false; break; } }
+			if ($allZero): ?>
+			<div class="text-muted small mt-2">Projected sales are all $0 — this usually means Shopify isn't connected or has no prior-year history in range. Connect Shopify on the Integrations page to populate projections.</div>
+			<?php endif; ?>
+		</div>
+		</div>
+	</div>
+</div>
+
+<script>
+	function expShowForm(s){ $('#expForm').toggleClass('hidden', !s); }
+	$('#addExpBtn').on('click', function(){ $('#expId,#expLabel,#expAmount,#expCategory').val(''); $('#expMsg').text(''); expShowForm(true); });
+	$('#expCancelBtn').on('click', function(){ expShowForm(false); });
+	$(document).on('click', '.exp-edit', function(e){
+		e.preventDefault(); var $r = $(this).closest('.exp-row');
+		$('#expId').val($r.data('id')); $('#expLabel').val($r.data('label'));
+		$('#expAmount').val($r.data('amount')); $('#expCategory').val($r.data('category') || '');
+		$('#expMsg').text(''); expShowForm(true);
+	});
+	$('#expSaveBtn').on('click', function(){
+		var $btn = $(this).prop('disabled', true);
+		$.post('/ajax/cashflow/save_expense.php', { id: $('#expId').val(), label: $('#expLabel').val(), amount: $('#expAmount').val(), category: $('#expCategory').val() }, function(resp){
+			if ($.trim(resp) === 'ok') location.reload();
+			else { $('#expMsg').addClass('text-danger').text(resp); $btn.prop('disabled', false); }
+		}).fail(function(x){ $('#expMsg').addClass('text-danger').text('Save failed: ' + (x.responseText||x.status)); $btn.prop('disabled', false); });
+	});
+	$(document).on('click', '.exp-del', function(e){
+		e.preventDefault(); if (!confirm('Remove this expense?')) return;
+		$.post('/ajax/cashflow/delete_expense.php', { id: $(this).closest('.exp-row').data('id') }, function(resp){
+			if ($.trim(resp) === 'ok') location.reload(); else alert(resp);
+		});
+	});
+</script>
 
 <?php require_once(__DIR__."/includes/footer.php"); ?>
