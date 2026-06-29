@@ -20,6 +20,25 @@
 	const QB_SCOPE         = 'com.intuit.quickbooks.accounting';
 	const QB_MINOR_VERSION = '70';
 
+	/**
+	 * Log a QuickBooks error to the server log for troubleshooting. Includes the
+	 * Intuit transaction id (intuit_tid) when present — Intuit support uses it to
+	 * trace a specific request.
+	 */
+	function qb_log($context, $message, $tid = '') {
+		$line = '[QuickBooks] ' . $context . ': ' . $message;
+		if ($tid !== '') $line .= ' (intuit_tid: ' . $tid . ')';
+		error_log($line);
+	}
+
+	/** Pull the intuit_tid value out of a raw response-header string. */
+	function qb_extract_tid($headers) {
+		if (preg_match('/^intuit_tid:\s*(.+)$/im', (string)$headers, $m)) {
+			return trim($m[1]);
+		}
+		return '';
+	}
+
 	/** All QB settings in one cached read. */
 	function qb_settings() {
 		static $s = null;
@@ -105,17 +124,24 @@
 				'Content-Type: application/x-www-form-urlencoded',
 				'Accept: application/json',
 			],
+			CURLOPT_HEADER         => true,   // capture response headers for intuit_tid
 			CURLOPT_TIMEOUT        => 30,
 		]);
-		$body = curl_exec($ch);
-		$code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-		$err  = curl_error($ch);
+		$raw         = curl_exec($ch);
+		$code        = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+		$headerSize  = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
+		$err         = curl_error($ch);
 		curl_close($ch);
 
-		if ($body === false) return ['error' => 'Could not reach Intuit: ' . $err];
+		if ($raw === false) { qb_log('token', $err); return ['error' => 'Could not reach Intuit: ' . $err]; }
+		$headers = substr($raw, 0, $headerSize);
+		$body    = substr($raw, $headerSize);
+		$tid     = qb_extract_tid($headers);
+
 		$j = json_decode($body, true);
 		if ($code >= 400 || !is_array($j) || empty($j['access_token'])) {
 			$msg = is_array($j) ? ($j['error_description'] ?? $j['error'] ?? 'HTTP ' . $code) : 'HTTP ' . $code;
+			qb_log('token', $msg, $tid);
 			return ['error' => 'QuickBooks token request failed: ' . $msg];
 		}
 		return ['data' => $j];
@@ -195,18 +221,28 @@
 				'Authorization: Bearer ' . $auth['token'],
 				'Accept: application/json',
 			],
+			CURLOPT_HEADER         => true,   // capture response headers for intuit_tid
 			CURLOPT_TIMEOUT        => 30,
 		]);
-		$body = curl_exec($ch);
-		$code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-		$err  = curl_error($ch);
+		$raw        = curl_exec($ch);
+		$code       = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+		$headerSize = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
+		$err        = curl_error($ch);
 		curl_close($ch);
 
-		if ($body === false) return ['error' => 'Could not reach QuickBooks: ' . $err];
+		if ($raw === false) { qb_log('query', $err); return ['error' => 'Could not reach QuickBooks: ' . $err]; }
+		$headers = substr($raw, 0, $headerSize);
+		$body    = substr($raw, $headerSize);
+		$tid     = qb_extract_tid($headers);
+
 		$j = json_decode($body, true);
-		if ($code === 401) return ['error' => 'QuickBooks rejected the token (401). Try reconnecting.'];
+		if ($code === 401) {
+			qb_log('query', 'HTTP 401 (token rejected) — ' . $sql, $tid);
+			return ['error' => 'QuickBooks rejected the token (401). Try reconnecting.'];
+		}
 		if ($code >= 400 || !is_array($j)) {
 			$msg = is_array($j) ? ($j['Fault']['Error'][0]['Message'] ?? 'HTTP ' . $code) : 'HTTP ' . $code;
+			qb_log('query', $msg . ' — ' . $sql, $tid);
 			return ['error' => 'QuickBooks query failed: ' . $msg];
 		}
 		return $j['QueryResponse'] ?? [];
