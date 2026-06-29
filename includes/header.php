@@ -21,6 +21,11 @@
 	<meta http-equiv="X-UA-Compatible" content="IE=edge" />
 	<title>BBW MRP</title>
 
+	<!-- [Favicon] -->
+	<link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32.png" />
+	<link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16.png" />
+	<link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon.png" />
+
 	<!-- [Google Font] -->
 	<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" id="main-font-link" />
 	<!-- [Berry Icons] -->
