@@ -5,8 +5,7 @@
 	require_once(__DIR__."/../../includes/anthropic.php");
 	require_login();
 
-	$role = $_SESSION['user_role'] ?? '';
-	if (!in_array($role, ['admin', 'master'], true)) { http_response_code(403); echo 'Access denied'; exit; }
+	if (!has_access('research')) { http_response_code(403); echo 'You do not have access to Research.'; exit; }
 
 	header('Content-Type: application/json');
 
