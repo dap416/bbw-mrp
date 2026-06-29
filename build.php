@@ -394,13 +394,24 @@
 			<td class="text-center fw-bold"><?php echo number_format($item['buildqty']); ?></td>
 			<td class="text-muted"><?php echo date('m/d/y g:i A', strtotime($item['builddate'])); ?></td>
 			<td class="text-end">
-				<button class="btn btn-sm btn-outline-danger undo-build-btn"
+				<div class="d-flex gap-2 justify-content-end">
+				<button class="btn btn-sm btn-outline-secondary undo-build-btn"
 					data-prodid="<?php echo $item['prodid']; ?>"
 					data-prodname="<?php echo htmlspecialchars($item['prodname'], ENT_QUOTES); ?>"
 					data-qty="<?php echo number_format($item['buildqty']); ?>"
-					data-whid="<?php echo (int)$activeWH; ?>">
+					data-whid="<?php echo (int)$activeWH; ?>"
+					title="Restore materials and move back to pending">
 					<i class="ti ti-arrow-back-up me-1"></i>Undo Build
 				</button>
+				<button class="btn btn-sm btn-outline-danger remove-built-btn"
+					data-prodid="<?php echo $item['prodid']; ?>"
+					data-prodname="<?php echo htmlspecialchars($item['prodname'], ENT_QUOTES); ?>"
+					data-qty="<?php echo number_format($item['buildqty']); ?>"
+					data-whid="<?php echo (int)$activeWH; ?>"
+					title="Restore materials and delete the order entirely">
+					<i class="ti ti-trash me-1"></i>Remove
+				</button>
+				</div>
 			</td>
 		</tr>
 		<?php endforeach; ?>
@@ -499,6 +510,32 @@ $('.undo-build-btn').on('click', function() {
 		} else {
 			alert('Error: ' + res);
 			$btn.prop('disabled', false).html('<i class="ti ti-arrow-back-up me-1"></i>Undo Build');
+		}
+	});
+});
+
+$('.remove-built-btn').on('click', function() {
+	var $btn     = $(this);
+	var prodName = $btn.data('prodname');
+	var qty      = $btn.data('qty');
+	var prodId   = $btn.data('prodid');
+	var whId     = $btn.data('whid');
+
+	if (!confirm(
+		'Remove the packaged order for "' + prodName + '" (' + qty + ' units)?\n\n' +
+		'This will:\n' +
+		'  • Add all deducted raw materials back to inventory (with a note on each part)\n' +
+		'  • Delete the order entirely (it will NOT return to pending)\n\n' +
+		'Use "Undo Build" instead if you want it to go back to pending.\n\nContinue?'
+	)) return;
+
+	$btn.prop('disabled', true).html('<i class="ti ti-loader"></i>');
+	$.post('/ajax/build/remove_built.php', { prodid: prodId, warehouse_id: whId }, function(res) {
+		if (res === 'ok') {
+			location.reload();
+		} else {
+			alert('Error: ' + res);
+			$btn.prop('disabled', false).html('<i class="ti ti-trash me-1"></i>Remove');
 		}
 	});
 });
