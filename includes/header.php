@@ -85,8 +85,8 @@
         <?php } ?>
 
         <?php if (has_access('orders')) { ?>
-        <li class="pc-item pc-hasmenu<?php echo $onOrders ? ' active' : ''; ?>">
-          <a href="#" class="pc-link pc-menu-toggle">
+        <li class="pc-item pc-hasmenu">
+          <a href="#!" class="pc-link">
             <span class="pc-micon"><i class="ti ti-shopping-cart"></i></span>
             <span class="pc-mtext">Orders</span>
             <span class="pc-arrow"><i data-feather="chevron-right"></i></span>
@@ -203,28 +203,8 @@
 <style>
   .pc-navbar .pc-caption { padding: 14px 22px 4px; pointer-events: none; }
   .pc-navbar .pc-caption label { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.07em; color: #9aa0ac; font-weight: 700; margin: 0; }
-  .pc-navbar .pc-hasmenu .pc-arrow { transition: transform .15s ease; }
-  .pc-navbar .pc-hasmenu.active > .pc-link .pc-arrow { transform: rotate(90deg); }
   .pc-navbar .pc-hasmenu > .pc-link { cursor: pointer; }
 </style>
-<script>
-(function(){
-  function initMenu($){
-    // Collapse any submenu whose parent isn't marked active on load.
-    $('.pc-navbar .pc-hasmenu').each(function(){
-      if (!$(this).hasClass('active')) $(this).children('.pc-submenu').hide();
-    });
-    // Toggle the group open/closed when its header is clicked.
-    $('.pc-navbar').on('click', '.pc-menu-toggle', function(e){
-      e.preventDefault();
-      var $li = $(this).closest('.pc-hasmenu');
-      $li.toggleClass('active');
-      $li.children('.pc-submenu').stop(true, true).slideToggle(150);
-    });
-  }
-  if (window.jQuery) { window.jQuery(function(){ initMenu(window.jQuery); }); }
-})();
-</script>
 
 <!-- [ Header ] start -->
 <header class="pc-header">
