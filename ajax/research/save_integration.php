@@ -58,6 +58,18 @@
 			setting_set($db, 'anthropic_api_key', $anthropicKey);
 		}
 
+		// ── QuickBooks Online (only when the QB form submits them) ────────────
+		if (array_key_exists('qb_client_id', $_POST)) {
+			$qbId  = trim($_POST['qb_client_id'] ?? '');
+			$qbEnv = (($_POST['qb_environment'] ?? '') === 'sandbox') ? 'sandbox' : 'production';
+			$qbSec = trim($_POST['qb_client_secret'] ?? '');
+
+			setting_set($db, 'qb_client_id', $qbId);
+			setting_set($db, 'qb_environment', $qbEnv);
+			// Only overwrite the secret when a new one is typed.
+			if ($qbSec !== '') setting_set($db, 'qb_client_secret', $qbSec);
+		}
+
 		echo 'ok';
 	} catch (Throwable $e) {
 		http_response_code(500);
