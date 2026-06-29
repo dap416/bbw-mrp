@@ -322,15 +322,44 @@
 			access_orders_receive: $("#"+record+"access_orders_receive").is(":checked") ? 1 : 0,
 		};
 
-		$.post('/ajax/users/save_access.php', { record: record, access: JSON.stringify(access) }, function(response) {
-			if (response === 'ok') {
-				var $notice = $('<span class="text-success ms-2 small">Saved</span>');
-				$btn.after($notice);
-				setTimeout(function() { $notice.fadeOut(500, function() { $(this).remove(); }); }, 3000);
-			} else {
-				alert(response);
+		$btn.prop('disabled', true);
+		$.post('/ajax/users/save_access.php', { record: record, access: JSON.stringify(access) }, function(resp) {
+			$btn.prop('disabled', false);
+			$("#"+record+"accessResult").remove();
+
+			if (!resp || !resp.ok) {
+				var err = (resp && resp.error) ? resp.error : 'Save failed. Please try again.';
+				alert(err);
+				return;
 			}
-		});
+
+			var s = resp.saved || {};
+			// Re-sync the form to exactly what the database now holds — proves it persisted.
+			$("#"+record+"access_orders").val(s.access_orders);
+			$("#"+record+"access_inventory").val(s.access_inventory);
+			$("#"+record+"access_products").val(s.access_products);
+			$("#"+record+"access_build").val(s.access_build);
+			$("#"+record+"access_manufacturers").val(s.access_manufacturers);
+			$("#"+record+"access_research").val(s.access_research);
+			$("#"+record+"access_orders_create").prop('checked', parseInt(s.access_orders_create, 10) === 1);
+			$("#"+record+"access_orders_receive").prop('checked', parseInt(s.access_orders_receive, 10) === 1);
+
+			var lvlTxt = ['No access', 'View only', 'Edit'];
+			var rows = [
+				['Orders', s.access_orders], ['Inventory', s.access_inventory], ['Products', s.access_products],
+				['Packaging', s.access_build], ['Manufacturers', s.access_manufacturers], ['Research', s.access_research]
+			].map(function(r){ return '<div>' + r[0] + ': <strong>' + lvlTxt[parseInt(r[1],10)||0] + '</strong></div>'; }).join('');
+			var actions = 'Can create POs: <strong>' + (parseInt(s.access_orders_create,10)===1?'Yes':'No') + '</strong>, ' +
+			              'Can receive: <strong>' + (parseInt(s.access_orders_receive,10)===1?'Yes':'No') + '</strong>';
+			var note = resp.self
+				? '<div class="text-success mt-1">Applied to your session immediately.</div>'
+				: '<div class="text-muted mt-1">Saved to the database. This user must sign out and back in for the new access to take effect.</div>';
+
+			var $box = $('<div id="'+record+'accessResult" class="alert alert-success mt-3 p-2 small mb-0">' +
+				'<div class="fw-semibold mb-1">✓ Saved for ' + (s.name ? $('<div>').text(s.name).html() : 'user') + '</div>' +
+				rows + '<div class="mt-1">' + actions + '</div>' + note + '</div>');
+			$btn.closest('div').append($box);
+		}, 'json');
 	});
 
 	// CHANGE PASSWORD
