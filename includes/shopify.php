@@ -499,6 +499,82 @@
 		return ['error' => null, 'total' => $total, 'by_month' => $byMonth, 'orders' => $orders, 'truncated' => ($hasNext && $pages >= 40)];
 	}
 
+	/**
+	 * Money owed to you on Shopify right now (accounts receivable):
+	 *   - open / invoice-sent DRAFT orders (quotes/invoices not yet paid), and
+	 *   - ORDERS with an unpaid balance (pending / partially paid / authorized).
+	 * A draft becomes a real order once converted, so the two buckets don't
+	 * overlap (completed drafts are excluded). Returns
+	 * ['error'=>..., 'total'=>float, 'items'=>[ {name,customer,amount,date,type} ]].
+	 *
+	 * IMPORTANT: this is NOT income — it's expected future cash. It is shown
+	 * separately and must never be added into the cash-in projection (which is
+	 * cash-basis QuickBooks income), or receipts would be counted twice.
+	 */
+	function shopify_open_receivables() {
+		$items = []; $total = 0.0;
+
+		// ── Open draft orders (unpaid invoices/quotes) ──
+		$dq = '
+		query($cursor: String) {
+		  draftOrders(first: 100, after: $cursor, query: "status:open OR status:invoice_sent") {
+		    pageInfo { hasNextPage endCursor }
+		    edges { node { name createdAt status totalPriceSet { shopMoney { amount } } customer { displayName } } }
+		  }
+		}';
+		$cursor = null; $pages = 0;
+		do {
+			$res = shopify_graphql($dq, ['cursor' => $cursor]);
+			if (!empty($res['error'])) return ['error' => $res['error'], 'total' => 0, 'items' => []];
+			$d = $res['data']['draftOrders'] ?? null;
+			if ($d === null) break;
+			foreach ($d['edges'] as $e) {
+				$n = $e['node'];
+				if (($n['status'] ?? '') === 'COMPLETED') continue;
+				$amt = (float)($n['totalPriceSet']['shopMoney']['amount'] ?? 0);
+				if ($amt <= 0) continue;
+				$items[] = ['name' => $n['name'] ?? '', 'customer' => $n['customer']['displayName'] ?? 'Customer',
+				            'amount' => $amt, 'date' => $n['createdAt'] ?? '', 'type' => 'Draft order'];
+				$total += $amt;
+			}
+			$cursor  = $d['pageInfo']['endCursor']  ?? null;
+			$hasNext = $d['pageInfo']['hasNextPage'] ?? false;
+			$pages++;
+		} while ($hasNext && $pages < 20);
+
+		// ── Orders with an outstanding (unpaid) balance ──
+		$oq = '
+		query($cursor: String) {
+		  orders(first: 100, after: $cursor, query: "financial_status:pending OR financial_status:partially_paid OR financial_status:authorized") {
+		    pageInfo { hasNextPage endCursor }
+		    edges { node { name createdAt cancelledAt customer { displayName } totalOutstandingSet { shopMoney { amount } } } }
+		  }
+		}';
+		$cursor = null; $pages = 0;
+		do {
+			$res = shopify_graphql($oq, ['cursor' => $cursor]);
+			if (!empty($res['error'])) return ['error' => $res['error'], 'total' => 0, 'items' => []];
+			$o = $res['data']['orders'] ?? null;
+			if ($o === null) break;
+			foreach ($o['edges'] as $e) {
+				$n = $e['node'];
+				if (!empty($n['cancelledAt'])) continue;
+				$amt = (float)($n['totalOutstandingSet']['shopMoney']['amount'] ?? 0);
+				if ($amt <= 0) continue;
+				$items[] = ['name' => $n['name'] ?? '', 'customer' => $n['customer']['displayName'] ?? 'Customer',
+				            'amount' => $amt, 'date' => $n['createdAt'] ?? '', 'type' => 'Unpaid order'];
+				$total += $amt;
+			}
+			$cursor  = $o['pageInfo']['endCursor']  ?? null;
+			$hasNext = $o['pageInfo']['hasNextPage'] ?? false;
+			$pages++;
+		} while ($hasNext && $pages < 20);
+
+		// Soonest first by date.
+		usort($items, fn($a, $b) => strcmp($a['date'], $b['date']));
+		return ['error' => null, 'total' => $total, 'items' => $items];
+	}
+
 	/** The customer whose orders use Amazon (CDA) packaging cards. Configurable. */
 	function shopify_amazon_customer() {
 		static $name = null;

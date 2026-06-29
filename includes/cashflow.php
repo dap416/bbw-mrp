@@ -20,7 +20,7 @@
 			'cash'    => ['accounts' => [], 'total' => 0.0, 'error' => null],
 			'credit'  => ['accounts' => [], 'total' => 0.0, 'error' => null], // credit cards + lines of credit
 			'bills'   => ['items' => [], 'total' => 0.0, 'error' => null],     // QBO AP
-			'invoices'=> ['items' => [], 'total' => 0.0, 'error' => null],     // QBO AR
+			'ar'      => ['items' => [], 'total' => 0.0, 'error' => null],     // Shopify receivables (owed to you)
 			'pos'     => ['items' => [], 'total' => 0.0],                       // MRP unpaid POs
 			'qb_accounts' => [],                                                // picker for manual balances
 		];
@@ -80,23 +80,18 @@
 				}
 			}
 
-			// Open invoices (money owed to you, from QuickBooks).
-			$inv = qb_query("SELECT * FROM Invoice WHERE Balance > '0' ORDERBY DueDate ASC MAXRESULTS 200");
-			if (!empty($inv['error'])) {
-				$out['invoices']['error'] = $inv['error'];
-			} else {
-				foreach (($inv['Invoice'] ?? []) as $iv) {
-					$bal = (float)($iv['Balance'] ?? 0);
-					if ($bal <= 0) continue;
-					$out['invoices']['items'][] = [
-						'customer' => $iv['CustomerRef']['name'] ?? 'Customer',
-						'balance'  => $bal,
-						'due'      => $iv['DueDate'] ?? '',
-						'date'     => $iv['TxnDate'] ?? '',
-					];
-					$out['invoices']['total'] += $bal;
-				}
-			}
+		}
+
+		// Money owed to YOU = open / unpaid Shopify orders (NOT income — this is
+		// expected future cash, shown separately and never added to the forecast).
+		if (function_exists('shopify_open_receivables') && shopify_is_configured()) {
+			try {
+				$rec = shopify_open_receivables();
+				if (!empty($rec['error'])) { $out['ar']['error'] = $rec['error']; }
+				else { $out['ar']['items'] = $rec['items']; $out['ar']['total'] = $rec['total']; }
+			} catch (Throwable $e) { $out['ar']['error'] = $e->getMessage(); }
+		} else {
+			$out['ar']['error'] = 'Shopify is not connected.';
 		}
 
 		// MRP unpaid purchase orders (what you still owe suppliers on placed POs).
@@ -132,7 +127,7 @@
 		$out['credit_source'] = !empty($out['manual']['credit']) ? 'manual' : 'quickbooks';
 
 		// Derived totals.
-		$out['ar_total']  = $out['invoices']['total'];                       // owed to you (QBO)
+		$out['ar_total']  = $out['ar']['total'];                             // owed to you (Shopify open/unpaid orders)
 		$out['ap_total']  = $out['bills']['total'] + $out['pos']['total'];   // owed by you (bills + POs)
 		$out['net_quick'] = $out['eff_cash'] + $out['ar_total'] - $out['ap_total'];
 

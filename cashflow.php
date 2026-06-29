@@ -59,7 +59,7 @@
 		<div class="card-body py-3">
 			<div class="text-muted small text-uppercase fw-semibold" style="font-size:0.68rem;letter-spacing:.04em;">Owed to You</div>
 			<div class="h4 fw-bold mb-0 text-primary"><?php echo money($data['ar_total']); ?></div>
-			<div class="text-muted" style="font-size:0.72rem;">Open QuickBooks invoices</div>
+			<div class="text-muted" style="font-size:0.72rem;">Open / unpaid Shopify orders</div>
 		</div>
 		</div>
 	</div>
@@ -331,6 +331,43 @@
 		</div>
 		</div>
 	</div>
+</div>
+
+<!-- OWED TO YOU (Shopify receivables) -->
+<div class="card mt-4">
+<div class="card-body">
+	<h5 class="fw-bold mb-1">Owed to You — open / unpaid Shopify orders</h5>
+	<p class="text-muted small mb-3">Money customers owe you: unpaid orders and open draft-order invoices (e.g. a Net-60 wholesale PO). <strong>This is not income yet</strong> — it's expected future cash. It only becomes "Cash In" in the forecast when it's actually paid into your bank (so nothing is double-counted).</p>
+	<?php if ($data['ar']['error']): ?>
+		<div class="text-muted small">Couldn't load Shopify receivables: <?php echo htmlspecialchars($data['ar']['error']); ?></div>
+	<?php elseif (empty($data['ar']['items'])): ?>
+		<div class="text-muted small">No open or unpaid Shopify orders. 🎉</div>
+	<?php else: ?>
+	<div class="table-responsive">
+	<table class="table table-sm table-hover align-middle mb-0" style="font-size:0.85rem;">
+		<thead><tr style="background:#f1f3f5;">
+			<th class="text-muted">Order</th>
+			<th class="text-muted">Customer</th>
+			<th class="text-muted">Type</th>
+			<th class="text-muted">Placed</th>
+			<th class="text-muted text-end">Amount</th>
+		</tr></thead>
+		<tbody>
+		<?php foreach ($data['ar']['items'] as $a): ?>
+			<tr>
+				<td><?php echo htmlspecialchars($a['name']); ?></td>
+				<td><?php echo htmlspecialchars($a['customer']); ?></td>
+				<td><span class="badge bg-light text-dark"><?php echo htmlspecialchars($a['type']); ?></span></td>
+				<td><?php echo fdate($a['date']); ?></td>
+				<td class="text-end fw-semibold text-primary"><?php echo money($a['amount']); ?></td>
+			</tr>
+		<?php endforeach; ?>
+		</tbody>
+		<tfoot><tr class="fw-bold border-top"><td colspan="4">Total owed to you</td><td class="text-end text-primary"><?php echo money($data['ar_total']); ?></td></tr></tfoot>
+	</table>
+	</div>
+	<?php endif; ?>
+</div>
 </div>
 
 <!-- RECURRING EXPENSES + FORECAST -->
