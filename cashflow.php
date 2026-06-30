@@ -23,6 +23,9 @@
 	$blocks   = $monthData['blocks'];
 	$loanPct  = $monthData['loan_pct'];
 	$syncedAt = cf_synced_at($db);
+	$hideBefore = (string) setting_get($db, 'cashflow_hide_before', '');
+	$curYm = date('Y-m');
+	if ($hideBefore !== '' && $hideBefore > $curYm) $hideBefore = $curYm; // never hide current/future
 
 	function money($n)  { return '$' . number_format((float)$n, 2); }
 	function money0($n) { return '$' . number_format((float)$n, 0); }
@@ -291,11 +294,15 @@
 	.month-drop.drop-hover { outline: 2px dashed #4680ff; outline-offset: -2px; background: #f5f9ff; }
 	.cf-drag:hover { background: #f6f8fa; }
 </style>
-<div class="text-muted small mb-2"><i class="ti ti-grip-vertical"></i> Tip: drag any manual cash-in/out item (your own events) into another month — the whole plan recalculates.</div>
+<div class="d-flex justify-content-between align-items-center mb-2 flex-wrap">
+	<div class="text-muted small"><i class="ti ti-grip-vertical"></i> Tip: drag any manual cash-in/out item (your own events) into another month — the whole plan recalculates.</div>
+	<?php if ($hideBefore !== ''): ?><a href="#" id="showHidden" class="small">Show hidden prior month(s)</a><?php endif; ?>
+</div>
 
 <!-- ── 12 MONTH BLOCKS ─────────────────────────────────────────────────────── -->
 <div class="row g-3">
 <?php foreach ($blocks as $b):
+	if ($hideBefore !== '' && $b['ym'] < $hideBefore) continue;   // hidden prior month(s)
 	$isPast    = !empty($b['is_past']);
 	$netColor  = $b['net'] >= 0 ? '#2ca01c' : '#e64545';
 	$cashColor = ($b['end_cash'] !== null && $b['end_cash'] < 0) ? '#e64545' : '#2ca01c';
@@ -309,7 +316,7 @@
 		<div class="d-flex justify-content-between align-items-start mb-2">
 			<h5 class="fw-bold mb-0"><?php echo $b['label']; ?><?php echo $isPast ? ' <span class="text-muted" style="font-size:0.58rem;vertical-align:middle;">prior</span>' : ''; ?></h5>
 			<div class="text-end">
-				<?php if ($isPast): ?><span class="badge bg-secondary" style="font-size:0.58rem;">enter actuals</span>
+				<?php if ($isPast): ?><span class="badge bg-secondary" style="font-size:0.58rem;">enter actuals</span> <a href="#" class="hide-month text-danger" data-ym="<?php echo $b['ym']; ?>" style="font-size:0.66rem;" title="Hide this month from the rotation">&times; hide</a>
 				<?php else: ?><div class="text-muted" style="font-size:0.66rem;">PROJECTED END CASH</div><div class="fw-bold" style="color:<?php echo $cashColor; ?>;"><?php echo money0($b['end_cash']); ?></div><?php endif; ?>
 			</div>
 		</div>
@@ -460,6 +467,10 @@
 	$(document).on('click', '.add-event-for', function(){ $('#addEvBtn').click(); $('#evMonth').val($(this).data('ym')); $('html,body').animate({scrollTop:$('#evForm').offset().top-90},200); $('#evLabel').focus(); });
 	$('#evSaveBtn').on('click', function(){ var $btn=$(this).prop('disabled',true); $.post('/ajax/cashflow/save_event.php', { id:$('#evId').val(), etype:$('#evType').val(), label:$('#evLabel').val(), amount:$('#evAmount').val(), ym:$('#evMonth').val(), week:$('#evWeek').val() }, function(resp){ if($.trim(resp)==='ok') location.reload(); else { $('#evMsg').addClass('text-danger').text(resp); $btn.prop('disabled',false); } }).fail(function(x){ $('#evMsg').addClass('text-danger').text('Save failed: '+(x.responseText||x.status)); $btn.prop('disabled',false); }); });
 	$(document).on('click', '.ev-del', function(e){ e.preventDefault(); if(!confirm('Remove this cash event?'))return; $.post('/ajax/cashflow/delete_event.php', { id:$(this).closest('.ev-row').data('id') }, function(resp){ if($.trim(resp)==='ok') location.reload(); else alert(resp); }); });
+
+	// ── Hide / show prior month(s) ──
+	$(document).on('click', '.hide-month', function(e){ e.preventDefault(); $.post('/ajax/cashflow/save_settings.php', { cashflow_hide_before: $(this).data('ym') }, function(){ location.reload(); }); });
+	$('#showHidden').on('click', function(e){ e.preventDefault(); $.post('/ajax/cashflow/save_settings.php', { cashflow_hide_before: 'reset' }, function(){ location.reload(); }); });
 
 	// ── Per-month actual projection / actual income ──
 	$(document).on('change', '.mo-actual', function(){ var $i=$(this).prop('disabled',true); $.post('/ajax/cashflow/save_month_actual.php', { ym:$(this).data('ym'), field:$(this).data('field'), value:$(this).val() }, function(resp){ if($.trim(resp)==='ok') location.reload(); else { alert(resp); $i.prop('disabled',false); } }).fail(function(){ alert('Save failed'); $i.prop('disabled',false); }); });

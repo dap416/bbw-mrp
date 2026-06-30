@@ -22,6 +22,11 @@ try {
 	if (isset($_POST['tax_monthly'])) {
 		setting_set($db, 'tax_monthly', (string)max(0.0, (float)$_POST['tax_monthly']));
 	}
+	if (isset($_POST['cashflow_hide_before'])) {
+		$v = trim($_POST['cashflow_hide_before']);
+		if ($v === '' || $v === 'reset')          { setting_set($db, 'cashflow_hide_before', ''); }
+		elseif (preg_match('/^\d{4}-\d{2}$/', $v)) { setting_set($db, 'cashflow_hide_before', date('Y-m', strtotime($v . '-01 +1 month'))); }
+	}
 	echo 'ok';
 } catch (Throwable $e) {
 	http_response_code(500);
