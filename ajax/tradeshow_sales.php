@@ -38,6 +38,7 @@ foreach (tradeshow_locations() as $loc) {
 
 	arsort($bySku);
 	ksort($byDate);
+	$dates = array_keys($byDate);
 	$items = [];
 	foreach ($bySku as $sku => $u) $items[] = ['sku' => $sku, 'title' => $titles[$sku] ?? '', 'units' => $u];
 	$byDateArr = [];
@@ -49,12 +50,14 @@ foreach (tradeshow_locations() as $loc) {
 		'total_units' => $total,
 		'revenue'     => round($rev, 2),
 		'orders'      => $orders,
+		'start'       => $dates ? reset($dates) : '9999-99-99',
+		'end'         => $dates ? end($dates) : '',
 		'items'       => $items,
 		'by_date'     => $byDateArr,
 	];
 }
 
-// Biggest shows first.
-usort($shows, fn($a, $b) => $b['total_units'] <=> $a['total_units']);
+// Chronological by show date (earliest first).
+usort($shows, fn($a, $b) => strcmp($a['start'], $b['start']) ?: ($b['total_units'] <=> $a['total_units']));
 
 echo json_encode(['error' => null, 'from' => $from, 'to' => $to, 'shows' => $shows]);
