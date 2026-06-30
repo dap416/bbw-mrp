@@ -516,6 +516,55 @@
 		return 25.0;
 	}
 
+	/** Minimum cash to keep in the bank all year (extra above this goes to debt). Default $30k. */
+	function cash_buffer($db) {
+		try { $v = setting_get($db, 'cash_buffer'); if ($v !== null && $v !== '') return max(0.0, (float)$v); }
+		catch (Throwable $e) {}
+		return 30000.0;
+	}
+
+	/** Monthly amount set aside for taxes (accrues, paid at quarter end). Default 0. */
+	function tax_monthly($db) {
+		try { $v = setting_get($db, 'tax_monthly'); if ($v !== null && $v !== '') return max(0.0, (float)$v); }
+		catch (Throwable $e) {}
+		return 0.0;
+	}
+
+	/**
+	 * Raw-material POs always go on credit cards — recommend which card for each.
+	 * Assigns each upcoming order (from the reorder list) to the LOWEST-APR card
+	 * that still has available credit (cheapest to carry while the avalanche pays
+	 * the highest-APR cards down first). Returns [['part','cost','card','note']].
+	 */
+	function build_po_card_plan($db, $data) {
+		$cards = [];
+		foreach (($data['manual']['credit'] ?? []) as $c) {
+			$avail = ($c['limit'] !== null) ? max(0.0, (float)$c['limit'] - (float)$c['balance']) : INF;
+			$cards[] = ['label' => $c['label'], 'apr' => $c['apr'], 'avail' => $avail];
+		}
+		// Lowest APR first (nulls last); tiebreak most available.
+		usort($cards, function($a, $b) {
+			$aa = $a['apr'] === null ? INF : $a['apr']; $bb = $b['apr'] === null ? INF : $b['apr'];
+			return $aa <=> $bb ?: $b['avail'] <=> $a['avail'];
+		});
+
+		$plan = [];
+		foreach (cashflow_reorder_suggestions($db, 8) as $po) {
+			$cost = (float)$po['cost'];
+			$assigned = null;
+			foreach ($cards as &$cd) {
+				if ($cd['avail'] >= $cost) { $assigned = $cd['label']; $cd['avail'] -= $cost; break; }
+			}
+			unset($cd);
+			$plan[] = [
+				'part' => $po['part'], 'order' => $po['order'], 'cost' => $cost,
+				'card' => $assigned,
+				'note' => $assigned ? '' : 'No single card has enough open credit — split it or pay a card down first.',
+			];
+		}
+		return $plan;
+	}
+
 	/** Manual cash-in / cash-out events placed in a specific month + week. */
 	function ensure_cash_events_table($db) {
 		$db->exec("CREATE TABLE IF NOT EXISTS cash_events (
@@ -581,67 +630,114 @@
 	 */
 	function build_month_blocks($db, $data, $forecast, $events) {
 		$loanPct = shopify_loan_pct($db);
-		$credit  = $data['manual']['credit'] ?? [];
+		$buffer  = cash_buffer($db);
+		$taxMo   = tax_monthly($db);
 
-		// Highest-cost card to target for "pay down high-interest" advice:
-		// prefer highest APR, else highest balance.
-		$target = null;
-		foreach ($credit as $c) {
-			if (($c['balance'] ?? 0) <= 0) continue;
-			if ($target === null) { $target = $c; continue; }
-			$ca = $c['apr']; $ta = $target['apr'];
-			if ($ca !== null && $ta !== null) { if ($ca > $ta) $target = $c; }
-			elseif ($ca !== null && $ta === null) { $target = $c; }
-			elseif ($ca === null && $ta === null && $c['balance'] > $target['balance']) { $target = $c; }
+		// Card balances we simulate paying down (avalanche = highest APR first).
+		$cards = [];
+		foreach (($data['manual']['credit'] ?? []) as $c) {
+			$cards[] = ['label' => $c['label'], 'apr' => $c['apr'],
+			            'bal' => max(0.0, (float)$c['balance']), 'min' => max(0.0, (float)($c['payment'] ?? 0))];
 		}
+		// Priority order for the avalanche: highest APR first (nulls last).
+		$order = array_keys($cards);
+		usort($order, function($a, $b) use ($cards) {
+			$aa = $cards[$a]['apr'] === null ? -1 : $cards[$a]['apr'];
+			$bb = $cards[$b]['apr'] === null ? -1 : $cards[$b]['apr'];
+			return $bb <=> $aa ?: $cards[$b]['bal'] <=> $cards[$a]['bal'];
+		});
 
 		$reorder = cashflow_reorder_suggestions($db);
 		$cash    = (float)$data['eff_cash'];
+		$reserve = 0.0;                 // tax reserve, accrues monthly, paid at quarter end
 		$blocks  = [];
 
 		foreach (($forecast['rows'] ?? []) as $i => $row) {
-			$ym = $row['ym'];
+			$ym  = $row['ym'];
+			$mon = (int)date('n', strtotime($ym . '-01'));
 			$in = []; $out = [];
 
-			// ── Automatic cash in ──
+			// ── Cash in ──
 			if ($row['income'] > 0) $in[] = ['label' => 'Projected sales (' . ($row['basis'] === 'qb' ? 'QB income' : 'Shopify') . ')', 'amount' => (float)$row['income'], 'week' => 0, 'source' => 'auto'];
 			foreach (($events['by_ym'][$ym]['in'] ?? []) as $e) $in[] = ['label' => $e['label'], 'amount' => $e['amount'], 'week' => $e['week'], 'source' => 'manual', 'id' => $e['id']];
+			$inTotal = array_sum(array_map(fn($x) => $x['amount'], $in));
 
-			// ── Automatic cash out ──
-			$loan = round((float)$row['income'] * $loanPct / 100, 2);
+			// ── Cash out BEFORE card payments ──
+			$loan    = round((float)$row['income'] * $loanPct / 100, 2);
+			$taxSet  = $taxMo;
 			if ($loan > 0)              $out[] = ['label' => 'Shopify Capital (' . rtrim(rtrim(number_format($loanPct, 2), '0'), '.') . '% of sales)', 'amount' => $loan, 'week' => 0, 'source' => 'auto'];
 			if ($row['recurring'] > 0)  $out[] = ['label' => 'Recurring expenses', 'amount' => (float)$row['recurring'], 'week' => 0, 'source' => 'auto'];
-			if ($row['debt_pay'] > 0)   $out[] = ['label' => 'Debt payments', 'amount' => (float)$row['debt_pay'], 'week' => 0, 'source' => 'auto'];
 			if ($row['onetime'] > 0)    $out[] = ['label' => 'Bills & POs due', 'amount' => (float)$row['onetime'], 'week' => 0, 'source' => 'auto'];
+			if ($taxSet > 0)            $out[] = ['label' => 'Tax reserve set-aside', 'amount' => $taxSet, 'week' => 0, 'source' => 'auto'];
 			foreach (($events['by_ym'][$ym]['out'] ?? []) as $e) $out[] = ['label' => $e['label'], 'amount' => $e['amount'], 'week' => $e['week'], 'source' => 'manual', 'id' => $e['id']];
 
-			$inTotal  = array_sum(array_map(fn($x) => $x['amount'], $in));
-			$outTotal = array_sum(array_map(fn($x) => $x['amount'], $out));
+			$outBeforeCards = array_sum(array_map(fn($x) => $x['amount'], $out));
+			$cashBeforeCards = $cash + $inTotal - $outBeforeCards;
+
+			// ── Tax reserve: accrue monthly, pay (from reserve) at quarter end ──
+			$reserve += $taxSet;
+			$taxPayment = 0.0;
+			if (in_array($mon, [3, 6, 9, 12], true) && $reserve > 0) { $taxPayment = $reserve; $reserve = 0.0; }
+
+			// ── Debt avalanche: minimums on all, extra (above buffer) to highest APR ──
+			$pay = array_fill(0, count($cards), 0.0);
+			$minTotal = 0.0;
+			foreach ($cards as $k => $c) { $m = min($c['min'], $c['bal']); $pay[$k] = $m; $minTotal += $m; }
+			$extraPool = max(0.0, $cashBeforeCards - $buffer - $minTotal);
+			$targetIdx = null;
+			foreach ($order as $k) {
+				if ($extraPool <= 0) break;
+				$remaining = $cards[$k]['bal'] - $pay[$k];
+				if ($remaining <= 0) continue;
+				$add = min($extraPool, $remaining);
+				$pay[$k] += $add; $extraPool -= $add;
+				if ($targetIdx === null) $targetIdx = $k;
+			}
+			$cardPayments = []; $cardTotal = 0.0;
+			foreach ($cards as $k => &$c) {
+				if ($pay[$k] <= 0 && $c['bal'] <= 0) continue;
+				$c['bal'] = max(0.0, $c['bal'] - $pay[$k]);
+				$cardTotal += $pay[$k];
+				if ($pay[$k] > 0) $cardPayments[] = ['label' => $c['label'], 'apr' => $c['apr'], 'amount' => round($pay[$k], 2), 'is_target' => ($k === $targetIdx), 'paid_off' => ($c['bal'] <= 0.005)];
+			}
+			unset($c);
+			if ($cardTotal > 0) $out[] = ['label' => 'Card payments (avalanche)', 'amount' => round($cardTotal, 2), 'week' => 0, 'source' => 'auto'];
+
+			$outTotal = $outBeforeCards + $cardTotal;
 			$net      = $inTotal - $outTotal;
-			$cash    += $net;
+			$cash     = $cashBeforeCards - $cardTotal;
+			$endDebt  = array_sum(array_map(fn($c) => $c['bal'], $cards));
 
 			// ── Advice ──
 			$advice = [];
-			if ($cash < 0) {
-				$advice[] = ['kind' => 'warn', 'text' => 'Projected cash goes negative (ending ' . '$' . number_format($cash, 0) . '). Defer non-essential spending or pull income forward.'];
-			} elseif ($net > 0 && $target) {
-				$nm = $target['label'] . ($target['apr'] !== null ? ' (' . rtrim(rtrim(number_format($target['apr'], 2), '0'), '.') . '% APR)' : '');
-				$advice[] = ['kind' => 'good', 'text' => 'Surplus of $' . number_format($net, 0) . ' — consider an extra payment toward ' . $nm . ' to cut interest.'];
+			if ($cash < 0)            $advice[] = ['kind' => 'warn', 'text' => 'Cash goes negative (ending $' . number_format($cash, 0) . '). Reduce card extra or pull income forward.'];
+			elseif ($cash < $buffer)  $advice[] = ['kind' => 'warn', 'text' => 'Ends below your $' . number_format($buffer, 0) . ' buffer ($' . number_format($cash, 0) . '). Paying minimums only this month.'];
+			if ($targetIdx !== null && $pay[$targetIdx] > $cards[$targetIdx]['min']) {
+				$t = $cards[$targetIdx];
+				$advice[] = ['kind' => 'good', 'text' => 'Focus debt paydown on ' . $t['label'] . ($t['apr'] !== null ? ' (' . rtrim(rtrim(number_format($t['apr'], 2), '0'), '.') . '% APR)' : '') . ' — pay $' . number_format($pay[$targetIdx], 0) . '; minimums on the rest.'];
 			}
-			if ($row['onetime'] > 0) $advice[] = ['kind' => 'info', 'text' => 'Bills/POs of $' . number_format($row['onetime'], 0) . ' due this month — reserve the cash.'];
-			if ($i === 0 && !empty($reorder)) {
-				$parts = array_map(fn($r) => $r['part'] . ' (' . number_format($r['order']) . ', ~' . $r['lead_days'] . 'd lead)', array_slice($reorder, 0, 4));
-				$advice[] = ['kind' => 'info', 'text' => 'Raw materials below stock level — order soon (lead times): ' . implode('; ', $parts) . '.'];
+			foreach ($cardPayments as $cp) if ($cp['paid_off']) $advice[] = ['kind' => 'good', 'text' => '🎉 ' . $cp['label'] . ' paid off this month.'];
+			if ($taxPayment > 0)      $advice[] = ['kind' => 'info', 'text' => 'Quarterly taxes ~$' . number_format($taxPayment, 0) . ' due — covered by the tax reserve you set aside.'];
+			if ($i === 0) {
+				$poPlan = build_po_card_plan($db, $data);
+				if (!empty($poPlan)) {
+					$lines = [];
+					foreach (array_slice($poPlan, 0, 4) as $p) $lines[] = $p['part'] . ' $' . number_format($p['cost'], 0) . ($p['card'] ? ' → ' . $p['card'] : ' → (needs credit room)');
+					$advice[] = ['kind' => 'info', 'text' => 'Raw-material POs to place on cards: ' . implode('; ', $lines) . '.'];
+				}
 			}
 
 			$blocks[] = [
 				'ym' => $ym, 'label' => $row['label'],
 				'cash_in' => $in, 'cash_out' => $out,
 				'in_total' => $inTotal, 'out_total' => $outTotal, 'net' => $net,
-				'end_cash' => $cash, 'end_debt' => (float)$row['end_debt'],
+				'end_cash' => $cash, 'end_debt' => $endDebt,
+				'card_payments' => $cardPayments,
+				'tax_setaside' => $taxSet, 'tax_payment' => $taxPayment, 'tax_reserve' => $reserve,
 				'advice' => $advice,
 			];
 		}
 
-		return ['blocks' => $blocks, 'loan_pct' => $loanPct, 'start_cash' => (float)$data['eff_cash']];
+		return ['blocks' => $blocks, 'loan_pct' => $loanPct, 'start_cash' => (float)$data['eff_cash'],
+		        'buffer' => $buffer, 'tax_monthly' => $taxMo, 'po_card_plan' => build_po_card_plan($db, $data)];
 	}

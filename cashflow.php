@@ -192,17 +192,74 @@
 			<?php endforeach; endif; ?>
 
 			<hr class="my-2">
-			<div class="fw-semibold small text-muted mb-1">Shopify loan (% of sales → cash out)</div>
-			<div class="d-flex gap-2 align-items-center">
-				<div class="input-group input-group-sm" style="width:120px;"><input type="text" id="loanPct" class="form-control" value="<?php echo rtrim(rtrim(number_format($loanPct,2),'0'),'.'); ?>" /><span class="input-group-text">%</span></div>
-				<button class="btn btn-sm btn-primary" id="loanSaveBtn">Save</button>
-				<span id="loanMsg" class="small"></span>
+			<div class="fw-semibold small text-muted mb-1">Planning settings</div>
+			<div class="row g-2">
+				<div class="col-12"><label class="form-text mb-0">Shopify loan — % of sales to cash out</label><div class="input-group input-group-sm"><input type="text" id="loanPct" class="form-control" value="<?php echo rtrim(rtrim(number_format($loanPct,2),'0'),'.'); ?>" /><span class="input-group-text">%</span></div></div>
+				<div class="col-12"><label class="form-text mb-0">Cash buffer — keep this in the bank all year</label><div class="input-group input-group-sm"><span class="input-group-text">$</span><input type="text" id="cashBuffer" class="form-control" value="<?php echo number_format($monthData['buffer'], 0, '.', ''); ?>" /></div></div>
+				<div class="col-12"><label class="form-text mb-0">Tax set-aside — saved each month, paid each quarter</label><div class="input-group input-group-sm"><span class="input-group-text">$</span><input type="text" id="taxMonthly" class="form-control" value="<?php echo number_format($monthData['tax_monthly'], 0, '.', ''); ?>" /><span class="input-group-text">/mo</span></div></div>
+				<div class="col-12"><button class="btn btn-sm btn-primary" id="loanSaveBtn">Save settings</button> <span id="loanMsg" class="small"></span></div>
 			</div>
-			<div class="text-muted" style="font-size:0.7rem;">25% repays the Shopify Capital loan. Set to 0 once it's paid off.</div>
+			<div class="text-muted" style="font-size:0.7rem;">Loan: 25% repays Shopify Capital (set 0 when paid off). Buffer: extra cash above this is thrown at the highest-APR card. Tax: builds a reserve, released each quarter-end.</div>
 		</div></div></div>
 
 	</div>
 </details>
+
+<?php $b0 = $blocks[0] ?? null; ?>
+<div class="row g-3 mb-1">
+	<!-- CARD PAYDOWN PLAN (this month) -->
+	<div class="col-12 col-lg-7">
+	<div class="card h-100" style="border-left:4px solid #6f42c1;"><div class="card-body py-2">
+		<h6 class="fw-bold mb-1">Card Paydown Plan — this month<?php echo $b0 ? ' ('.$b0['label'].')' : ''; ?></h6>
+		<p class="text-muted small mb-2">Keep a <strong><?php echo money0($monthData['buffer']); ?></strong> cash buffer; pay minimums on all cards, then throw every spare dollar at the <strong>highest-APR</strong> card first.</p>
+		<?php
+		$cps = $b0['card_payments'] ?? [];
+		usort($cps, fn($a,$b)=> ($b['is_target']<=>$a['is_target']) ?: (($b['apr']??-1)<=>($a['apr']??-1)));
+		if (empty($cps)): ?>
+			<div class="text-muted small">No card payments this month (no card balances, or no cash above the buffer).</div>
+		<?php else: ?>
+		<table class="table table-sm mb-0" style="font-size:0.84rem;">
+			<thead><tr style="background:#f1f3f5;"><th>#</th><th>Card</th><th class="text-end">APR</th><th class="text-end">Pay this month</th></tr></thead>
+			<tbody>
+			<?php $n=0; foreach ($cps as $c): $n++; ?>
+				<tr<?php echo $c['is_target'] ? ' style="background:#f3effc;"' : ''; ?>>
+					<td><?php echo $n; ?></td>
+					<td class="fw-semibold"><?php echo htmlspecialchars($c['label']); ?> <?php echo $c['is_target'] ? '<span class="badge bg-primary" style="font-size:0.58rem;">FOCUS</span>' : ''; ?><?php echo $c['paid_off'] ? ' <span class="badge bg-success" style="font-size:0.58rem;">PAID OFF</span>' : ''; ?></td>
+					<td class="text-end"><?php echo $c['apr'] !== null ? rtrim(rtrim(number_format($c['apr'],2),'0'),'.').'%' : '—'; ?></td>
+					<td class="text-end fw-bold"><?php echo money($c['amount']); ?></td>
+				</tr>
+			<?php endforeach; ?>
+			</tbody>
+			<tfoot><tr class="fw-bold border-top"><td colspan="3">Total to cards this month</td><td class="text-end"><?php echo money(array_sum(array_map(fn($c)=>$c['amount'],$cps))); ?></td></tr></tfoot>
+		</table>
+		<?php endif; ?>
+	</div></div>
+	</div>
+
+	<!-- PO → CARD -->
+	<div class="col-12 col-lg-5">
+	<div class="card h-100" style="border-left:4px solid #2ca01c;"><div class="card-body py-2">
+		<h6 class="fw-bold mb-1">Raw-Material POs → Which Card</h6>
+		<p class="text-muted small mb-2">POs go on cards. Charge each to the <strong>lowest-APR</strong> card with open credit (cheapest to carry while you pay the high-APR cards down).</p>
+		<?php if (empty($monthData['po_card_plan'])): ?>
+			<div class="text-muted small">No raw materials below stock level right now.</div>
+		<?php else: ?>
+		<table class="table table-sm mb-0" style="font-size:0.82rem;">
+			<thead><tr style="background:#f1f3f5;"><th>Part</th><th class="text-end">Est. $</th><th>Put on</th></tr></thead>
+			<tbody>
+			<?php foreach ($monthData['po_card_plan'] as $p): ?>
+				<tr>
+					<td><?php echo htmlspecialchars($p['part']); ?> <span class="text-muted" style="font-size:0.7rem;">×<?php echo number_format($p['order']); ?></span></td>
+					<td class="text-end"><?php echo money0($p['cost']); ?></td>
+					<td><?php echo $p['card'] ? '<span class="fw-semibold">'.htmlspecialchars($p['card']).'</span>' : '<span class="text-danger" style="font-size:0.72rem;">'.htmlspecialchars($p['note']).'</span>'; ?></td>
+				</tr>
+			<?php endforeach; ?>
+			</tbody>
+		</table>
+		<?php endif; ?>
+	</div></div>
+	</div>
+</div>
 
 <!-- ── 12 MONTH BLOCKS ─────────────────────────────────────────────────────── -->
 <div class="row g-3">
@@ -240,6 +297,15 @@
 				<span><span class="fw-semibold" style="color:#d9822b;"><?php echo money0($it['amount']); ?></span><?php echo $it['source']==='manual' ? ' <a href="#" class="ev-edit-id ms-1 text-muted" data-id="'.$it['id'].'" style="font-size:0.66rem;">edit</a>' : ''; ?></span>
 			</div>
 		<?php endforeach; endif; ?>
+
+		<?php if (!empty($b['card_payments'])): ?>
+		<div class="small text-muted mt-1" style="font-size:0.7rem;line-height:1.4;">
+			<span class="fw-semibold">Cards:</span> <?php $cpl=[]; foreach($b['card_payments'] as $c){ $cpl[]=htmlspecialchars($c['label']).' '.money0($c['amount']).($c['is_target']?' ◀':'').($c['paid_off']?' ✓':''); } echo implode(' · ', $cpl); ?>
+		</div>
+		<?php endif; ?>
+		<?php if ($b['tax_setaside'] > 0 || $b['tax_reserve'] > 0): ?>
+		<div class="small text-muted" style="font-size:0.7rem;">Tax reserve: <strong><?php echo money0($b['tax_reserve']); ?></strong><?php echo $b['tax_payment'] > 0 ? ' · <span style="color:#d9822b;">paid '.money0($b['tax_payment']).' (quarter-end)</span>' : ''; ?></div>
+		<?php endif; ?>
 
 		<?php if (!empty($b['advice'])): ?>
 		<div class="mt-2 p-2 rounded" style="background:#f8f9fb;">
@@ -334,8 +400,8 @@
 			.fail(function(xhr, status){ $('#syncLabel').text(status === 'timeout' ? 'Sync timed out — try again.' : 'Sync failed.'); $btn.prop('disabled', false); });
 	});
 
-	// ── Shopify loan % ──
-	$('#loanSaveBtn').on('click', function(){ var $btn=$(this).prop('disabled',true); $.post('/ajax/cashflow/save_settings.php', { shopify_loan_pct:$('#loanPct').val() }, function(resp){ if($.trim(resp)==='ok') location.reload(); else { $('#loanMsg').addClass('text-danger').text(resp); $btn.prop('disabled',false); } }).fail(function(x){ $('#loanMsg').addClass('text-danger').text('Failed'); $btn.prop('disabled',false); }); });
+	// ── Planning settings (loan %, cash buffer, monthly tax) ──
+	$('#loanSaveBtn').on('click', function(){ var $btn=$(this).prop('disabled',true); $.post('/ajax/cashflow/save_settings.php', { shopify_loan_pct:$('#loanPct').val(), cash_buffer:$('#cashBuffer').val(), tax_monthly:$('#taxMonthly').val() }, function(resp){ if($.trim(resp)==='ok') location.reload(); else { $('#loanMsg').addClass('text-danger').text(resp); $btn.prop('disabled',false); } }).fail(function(x){ $('#loanMsg').addClass('text-danger').text('Failed'); $btn.prop('disabled',false); }); });
 </script>
 
 <?php require_once(__DIR__."/includes/footer.php"); ?>

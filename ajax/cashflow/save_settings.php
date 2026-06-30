@@ -16,6 +16,12 @@ try {
 		$pct = max(0.0, min(100.0, (float)$_POST['shopify_loan_pct']));
 		setting_set($db, 'shopify_loan_pct', (string)$pct);
 	}
+	if (isset($_POST['cash_buffer'])) {
+		setting_set($db, 'cash_buffer', (string)max(0.0, (float)$_POST['cash_buffer']));
+	}
+	if (isset($_POST['tax_monthly'])) {
+		setting_set($db, 'tax_monthly', (string)max(0.0, (float)$_POST['tax_monthly']));
+	}
 	echo 'ok';
 } catch (Throwable $e) {
 	http_response_code(500);
