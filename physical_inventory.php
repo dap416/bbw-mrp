@@ -67,8 +67,41 @@
 	}
 	$totalParts = count($parts);
 
+	// Staged counts awaiting confirmation (across all warehouses).
+	phys_inv_ensure_tables($db);
+	$pendingBatches = $db->query("SELECT * FROM phys_inv_batches WHERE status = 'pending' ORDER BY created_at DESC")->fetchAll();
+	$appliedCount = isset($_GET['applied']) ? (int)$_GET['applied'] : null;
+
 	require_once(__DIR__."/includes/header.php");
 ?>
+
+<?php if ($appliedCount !== null): ?>
+<div class="container-fluid"><div class="alert alert-success alert-dismissible fade show mt-2" role="alert">
+	<i class="ti ti-check me-1"></i>Inventory updated — <?php echo $appliedCount; ?> part(s) adjusted from the confirmed count.
+	<button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div></div>
+<?php endif; ?>
+
+<?php if (!empty($pendingBatches)): ?>
+<div class="container-fluid"><div class="card border-warning mb-3 mt-2"><div class="card-body py-2">
+	<div class="fw-bold mb-2"><i class="ti ti-clock text-warning me-1"></i>Counts awaiting confirmation</div>
+	<div class="table-responsive"><table class="table table-sm mb-0">
+		<thead class="table-light"><tr><th>Report</th><th>Warehouse</th><th>Counted by</th><th>Submitted</th><th class="text-end">Changes</th><th></th></tr></thead>
+		<tbody>
+		<?php foreach ($pendingBatches as $pb): ?>
+			<tr>
+				<td>#<?php echo (int)$pb['id']; ?></td>
+				<td><?php echo htmlspecialchars($pb['warehouse_name'] ?: ('#'.$pb['warehouse_id'])); ?></td>
+				<td><?php echo htmlspecialchars($pb['user_name'] ?: '—'); ?></td>
+				<td class="text-muted small"><?php echo htmlspecialchars($pb['created_at']); ?></td>
+				<td class="text-end"><span class="badge bg-danger"><?php echo (int)$pb['variance_parts']; ?></span></td>
+				<td class="text-end"><a href="/physical_inv_report.php?batch=<?php echo (int)$pb['id']; ?>" class="btn btn-sm btn-outline-primary">Review &amp; Confirm</a></td>
+			</tr>
+		<?php endforeach; ?>
+		</tbody>
+	</table></div>
+</div></div></div>
+<?php endif; ?>
 
 <div class="container-fluid">
 
@@ -76,7 +109,7 @@
 	<div class="d-flex align-items-center justify-content-between mb-3 mt-2">
 		<div>
 			<h4 class="mb-0">Physical Inventory</h4>
-			<small class="text-muted">Count all parts and submit to update warehouse quantities</small>
+			<small class="text-muted">Count all parts and submit a report — you confirm before inventory changes</small>
 		</div>
 		<div class="text-end">
 			<span class="badge bg-secondary fs-6" id="progress-badge">0 / <?php echo $totalParts; ?> counted</span>
@@ -105,7 +138,7 @@
 			<span class="text-muted" id="variance-summary">No variances yet.</span>
 		</div>
 		<button class="btn btn-success" id="submit-top" onclick="confirmSubmit()">
-			<i class="ti ti-clipboard-check me-1"></i> Submit Physical Count
+			<i class="ti ti-clipboard-check me-1"></i> Submit Count for Review
 		</button>
 	</div>
 
@@ -222,7 +255,7 @@
 	<!-- Submit bar (bottom) -->
 	<div class="d-flex justify-content-end mb-4">
 		<button class="btn btn-success btn-lg" id="submit-bottom" onclick="confirmSubmit()">
-			<i class="ti ti-clipboard-check me-1"></i> Submit Physical Count
+			<i class="ti ti-clipboard-check me-1"></i> Submit Count for Review
 		</button>
 	</div>
 
@@ -233,16 +266,16 @@
 	<div class="modal-dialog">
 		<div class="modal-content">
 			<div class="modal-header">
-				<h5 class="modal-title">Confirm Physical Count Submission</h5>
+				<h5 class="modal-title">Submit Physical Count for Review</h5>
 				<button type="button" class="btn-close" data-bs-dismiss="modal"></button>
 			</div>
 			<div class="modal-body" id="confirm-body">
-				<p>Are you sure all counts are correct? This will adjust warehouse quantities and cannot be undone automatically.</p>
+				<p>This saves the count as a <strong>report</strong> for review. <strong>Inventory will not change yet</strong> — you'll see exactly what was counted and confirm before anything is adjusted.</p>
 				<div id="confirm-variance-detail" class="mt-2"></div>
 			</div>
 			<div class="modal-footer">
 				<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel — Go Back</button>
-				<button type="button" class="btn btn-success" id="confirm-submit-btn">Yes, Submit Count</button>
+				<button type="button" class="btn btn-success" id="confirm-submit-btn">Submit for Review</button>
 			</div>
 		</div>
 	</div>
@@ -383,7 +416,7 @@ function confirmSubmit() {
 
 $('#confirm-submit-btn').on('click', function() {
 	var $btn = $(this);
-	$btn.prop('disabled', true).text('Submitting…');
+	$btn.prop('disabled', true).text('Saving…');
 
 	// Build POST data — all inputs are guaranteed filled at this point
 	var data = { warehouse_id: $('[name="warehouse_id"]').val() };
@@ -392,29 +425,18 @@ $('#confirm-submit-btn').on('click', function() {
 	});
 
 	$.post('/ajax/physical_inv_submit.php', data, function(resp) {
-		$('#confirmModal').modal('hide');
-		if (resp.ok) {
-			var msg = 'Physical count submitted. ' + resp.adjusted + ' part(s) adjusted.';
-			// Show success alert at top
-			$('.container-fluid').prepend(
-				'<div class="alert alert-success alert-dismissible fade show mt-2" role="alert">' +
-				'<i class="ti ti-check me-1"></i>' + msg +
-				'<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>'
-			);
-			// Reset inputs and variances
-			$('.count-input').val('');
-			$('.variance-cell').html('<span class="text-muted">—</span>');
-			variances = {};
-			updateProgress();
-			updateVarianceSummary();
-			updateCatBadges();
+		if (resp.ok && resp.report_url) {
+			// Staged — go to the review report. Inventory has NOT changed yet.
+			window.location = resp.report_url;
 		} else {
+			$('#confirmModal').modal('hide');
 			alert('Error: ' + (resp.error || 'Unknown error'));
+			$btn.prop('disabled', false).text('Submit for Review');
 		}
-		$btn.prop('disabled', false).text('Yes, Submit Count');
 	}, 'json').fail(function() {
+		$('#confirmModal').modal('hide');
 		alert('Submission failed. Please try again.');
-		$btn.prop('disabled', false).text('Yes, Submit Count');
+		$btn.prop('disabled', false).text('Submit for Review');
 	});
 });
 </script>

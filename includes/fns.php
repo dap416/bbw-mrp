@@ -175,6 +175,40 @@
 		) WHERE id = $partId");
 	}
 
+	/**
+	 * Physical-inventory staging tables. A submitted count is saved here as a
+	 * "pending" batch (report) and does NOT touch inventory until confirmed.
+	 */
+	function phys_inv_ensure_tables($db) {
+		$db->exec("CREATE TABLE IF NOT EXISTS phys_inv_batches (
+			id             INT AUTO_INCREMENT PRIMARY KEY,
+			warehouse_id   INT NOT NULL,
+			warehouse_name VARCHAR(190) NULL,
+			user_id        INT NULL,
+			user_name      VARCHAR(190) NULL,
+			status         VARCHAR(12) NOT NULL DEFAULT 'pending',  -- pending | applied | discarded
+			total_parts    INT NOT NULL DEFAULT 0,
+			variance_parts INT NOT NULL DEFAULT 0,
+			created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			applied_at     DATETIME NULL,
+			applied_by     INT NULL,
+			applied_by_name VARCHAR(190) NULL,
+			adjusted_parts INT NULL,
+			INDEX (status), INDEX (warehouse_id)
+		) ENGINE=InnoDB");
+		$db->exec("CREATE TABLE IF NOT EXISTS phys_inv_batch_items (
+			id           INT AUTO_INCREMENT PRIMARY KEY,
+			batch_id     INT NOT NULL,
+			part_id      INT NOT NULL,
+			partno       VARCHAR(190) NULL,
+			pdesc        VARCHAR(255) NULL,
+			qoh_at_count INT NOT NULL DEFAULT 0,
+			counted      INT NOT NULL DEFAULT 0,
+			diff         INT NOT NULL DEFAULT 0,
+			INDEX (batch_id)
+		) ENGINE=InnoDB");
+	}
+
 	// ── LEGACY QTY HELPER (still used by some callers) ────────────────────────
 
 	function adjust_qty($partId,$type,$qty) {
