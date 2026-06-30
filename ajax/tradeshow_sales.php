@@ -17,25 +17,44 @@ $to   = date('Y-m-d', strtotime($to));
 
 $shows = [];
 foreach (tradeshow_locations() as $loc) {
-	$r = shopify_show_sales($loc['id'], $from, $to);
-	$items = [];
-	if (empty($r['error'])) {
-		foreach (($r['by_sku'] ?? []) as $sku => $units) {
-			$items[] = ['sku' => $sku, 'title' => $r['titles'][$sku] ?? '', 'units' => $units];
-		}
+	$ids = isset($loc['ids']) ? $loc['ids'] : (isset($loc['id']) ? [$loc['id']] : []);
+
+	// A show can span multiple Shopify location ids (e.g. a new one each year);
+	// merge them so the show is complete regardless of which year's id holds the data.
+	$bySku = []; $titles = []; $byDate = []; $total = 0; $rev = 0.0; $orders = 0; $err = null;
+	foreach ($ids as $id) {
+		$r = shopify_show_sales($id, $from, $to);
+		if (!empty($r['error'])) { $err = $r['error']; continue; }
+		foreach (($r['by_sku'] ?? []) as $sku => $u) $bySku[$sku] = ($bySku[$sku] ?? 0) + $u;
+		foreach (($r['titles'] ?? []) as $sku => $t) if (empty($titles[$sku])) $titles[$sku] = $t;
+		foreach (($r['by_date'] ?? []) as $d => $u) $byDate[$d] = ($byDate[$d] ?? 0) + $u;
+		$total  += $r['total_units'] ?? 0;
+		$rev    += $r['revenue'] ?? 0;
+		$orders += $r['orders'] ?? 0;
 	}
-	$byDate = [];
-	foreach (($r['by_date'] ?? []) as $d => $u) $byDate[] = ['date' => $d, 'units' => $u];
+
+	// Only surface shows that actually had sales in this window (keeps it focused).
+	if ($total <= 0 && !$err) continue;
+
+	arsort($bySku);
+	ksort($byDate);
+	$items = [];
+	foreach ($bySku as $sku => $u) $items[] = ['sku' => $sku, 'title' => $titles[$sku] ?? '', 'units' => $u];
+	$byDateArr = [];
+	foreach ($byDate as $d => $u) $byDateArr[] = ['date' => $d, 'units' => $u];
 
 	$shows[] = [
 		'name'        => $loc['name'],
-		'error'       => $r['error'] ?? null,
-		'total_units' => $r['total_units'] ?? 0,
-		'revenue'     => round($r['revenue'] ?? 0, 2),
-		'orders'      => $r['orders'] ?? 0,
+		'error'       => $err,
+		'total_units' => $total,
+		'revenue'     => round($rev, 2),
+		'orders'      => $orders,
 		'items'       => $items,
-		'by_date'     => $byDate,
+		'by_date'     => $byDateArr,
 	];
 }
+
+// Biggest shows first.
+usort($shows, fn($a, $b) => $b['total_units'] <=> $a['total_units']);
 
 echo json_encode(['error' => null, 'from' => $from, 'to' => $to, 'shows' => $shows]);

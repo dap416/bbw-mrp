@@ -881,22 +881,71 @@
 	}
 
 	/**
-	 * Tradeshow / event POS locations (name => numeric Shopify location id).
-	 * These are real Shopify locations, so sales attribute to a show exactly.
-	 * Overridable via the `tradeshow_locations` setting (JSON array of {name,id}).
+	 * ALL Shopify locations including DEACTIVATED ones. Critical: shows get
+	 * deactivated after they happen (and recurring shows get a new location each
+	 * year), so the default `locations` query silently omits them. Requires the
+	 * read_locations scope. Returns ['error'=>..., 'locations'=>[['id'(numeric),'name','active']]].
+	 */
+	function shopify_all_locations() {
+		$res = shopify_graphql('query { locations(first: 100, includeInactive: true) { edges { node { id name isActive } } } }');
+		if (!empty($res['error'])) return ['error' => $res['error'], 'locations' => []];
+		$out = [];
+		foreach (($res['data']['locations']['edges'] ?? []) as $e) {
+			$n   = $e['node'];
+			$gid = (string)($n['id'] ?? '');
+			$num = preg_replace('/\D/', '', strrchr($gid, '/') ?: '');
+			if ($num === '') continue;
+			$out[] = ['id' => $num, 'name' => trim((string)($n['name'] ?? '')), 'active' => !empty($n['isActive'])];
+		}
+		return ['error' => null, 'locations' => $out];
+	}
+
+	/**
+	 * Tradeshow / event POS locations grouped by show name: [['name'=>, 'ids'=>[...]]].
+	 * Auto-discovered from ALL Shopify locations (incl. deactivated), excluding
+	 * warehouses + the HQ address, and merging duplicate per-year locations of the
+	 * same show. This is what prevents future "missing show" gaps. Falls back to a
+	 * hardcoded full list when the app can't read locations (no read_locations
+	 * scope yet). Overridable via the `tradeshow_locations` setting.
 	 */
 	function tradeshow_locations() {
-		$default = [
-			['name' => 'Squadfest',               'id' => '106768269591'],
-			['name' => 'Game Fair (MN)',          'id' => '87163011351'],
-			['name' => 'Waterfowl Expo OshKosh',  'id' => '87163109655'],
-			['name' => 'ISE Sacramento',          'id' => '111770501399'],
-		];
 		try {
 			$db = db_connect();
 			if ($db) { $v = setting_get($db, 'tradeshow_locations'); if ($v) { $j = json_decode($v, true); if (is_array($j) && $j) return $j; } }
 		} catch (Throwable $e) {}
-		return $default;
+
+		// Preferred: discover dynamically so new/deactivated shows are never missed.
+		$dyn = shopify_all_locations();
+		if (empty($dyn['error']) && !empty($dyn['locations'])) {
+			$groups = [];
+			foreach ($dyn['locations'] as $loc) {
+				$name = $loc['name'];
+				if ($name === '') continue;
+				if (preg_match('/warehouse|jack london|\bdrive\b/i', $name)) continue; // skip warehouses + HQ
+				$key = strtolower(preg_replace('/\s+/', ' ', trim($name)));
+				if (!isset($groups[$key])) $groups[$key] = ['name' => $name, 'ids' => []];
+				$groups[$key]['ids'][] = $loc['id'];
+			}
+			if ($groups) return array_values($groups);
+		}
+
+		// Fallback (no read_locations scope): full known show list incl. deactivated.
+		return [
+			['name' => 'Squadfest',                       'ids' => ['106768269591', '87162716439']],
+			['name' => 'Delta Waterfowl - OKC',           'ids' => ['84464828695']],
+			['name' => 'DUX Waterfowl Expo',              'ids' => ['106768400663']],
+			['name' => 'Game Fair (MN)',                  'ids' => ['87163011351']],
+			['name' => 'Waterfowl Expo OshKosh',          'ids' => ['87163109655']],
+			['name' => 'ISE Sacramento',                  'ids' => ['111770501399', '94683988247']],
+			['name' => 'Easton Waterfowl Festival',       'ids' => ['101718294807']],
+			['name' => 'Fort Worth Hunters Extravaganza', 'ids' => ['87162913047']],
+			['name' => 'GAOS Harrisburg',                 'ids' => ['95259722007']],
+			['name' => 'Houston Hunters Extravaganza',    'ids' => ['87162814743']],
+			['name' => 'Las Vegas Convention Center',     'ids' => ['93992648983']],
+			['name' => 'NorCal Sportsman Show',           'ids' => ['92907929879']],
+			['name' => 'NWTF Nashville',                  'ids' => ['95661916439']],
+			['name' => 'Reno Tradeshow',                  'ids' => ['104532902167']],
+		];
 	}
 
 	/**
