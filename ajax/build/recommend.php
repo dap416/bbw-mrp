@@ -136,8 +136,8 @@ echo json_encode([
 		'prior_window' => "$lyStart to $lyEnd",
 		'warehouse'    => $whName ?: 'All',
 		'is_oregon'    => $isOregon,
-		'scope'        => ($isOregon && empty($sales['oregon_location'])
-			? '⚠ Could not find the Oregon Warehouse location in Shopify — numbers may be off. '
+		'scope'        => (empty($sales['oregon_location'])
+			? '⚠ The Shopify app is missing the "read_locations" permission, so it cannot split by warehouse yet — add that scope (Dev Dashboard → Versions), reinstall, and Save on Integrations. '
 			: '') . ($isOregon
 			? 'Oregon Warehouse: only orders fulfilled from Oregon.'
 			: ($whName ? $whName . ': everything NOT fulfilled from Oregon (incl. POS/tradeshows + open wholesale drafts).' : 'All warehouses.')),
