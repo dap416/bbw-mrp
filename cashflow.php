@@ -97,9 +97,13 @@
 <!-- AI ASSISTANT -->
 <div class="card mb-3" style="border-left:4px solid #d97757;">
 <div class="card-body py-2">
-	<div class="d-flex justify-content-between align-items-center">
+	<div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
 		<h6 class="fw-bold mb-0">🤖 Cash Flow Assistant <span class="text-muted fw-normal" style="font-size:0.72rem;">— talk to your plan; it proposes changes you approve</span></h6>
-		<button class="btn btn-sm btn-light-primary" id="cfChatToggle">Open</button>
+		<div class="d-flex align-items-center gap-2">
+			<select id="cfChatHistory" class="form-select form-select-sm" style="max-width:200px;"><option value="">History…</option></select>
+			<button class="btn btn-sm btn-light-secondary" id="cfChatNew" title="Start a new chat">New</button>
+			<button class="btn btn-sm btn-light-primary" id="cfChatToggle">Open</button>
+		</div>
 	</div>
 	<div id="cfChatPanel" class="mt-2 hidden">
 		<div id="cfChatMsgs" style="max-height:340px;overflow-y:auto;font-size:0.86rem;"></div>
@@ -108,7 +112,7 @@
 			<input type="text" id="cfChatInput" class="form-control form-control-sm" placeholder="e.g. June's card payments are already made and my reported balances reflect them" />
 			<button class="btn btn-sm btn-primary" id="cfChatSend">Send</button>
 		</div>
-		<div class="text-muted" style="font-size:0.7rem;">It reads your balances, months, events, receivables &amp; settings. Nothing changes until you click <strong>Apply</strong>.</div>
+		<div class="text-muted d-flex justify-content-between" style="font-size:0.7rem;"><span>It reads your balances, months, events, receivables &amp; settings. Nothing changes until you click <strong>Apply</strong>.</span><a href="#" id="cfChatDelete" class="text-danger hidden">Delete this chat</a></div>
 	</div>
 </div>
 </div>
@@ -517,12 +521,17 @@
 	// ── Planning settings (loan %, cash buffer, monthly tax) ──
 	$('#loanSaveBtn').on('click', function(){ var $btn=$(this).prop('disabled',true); $.post('/ajax/cashflow/save_settings.php', { shopify_loan_pct:$('#loanPct').val(), cash_buffer:$('#cashBuffer').val(), tax_monthly:$('#taxMonthly').val() }, function(resp){ if($.trim(resp)==='ok') location.reload(); else { $('#loanMsg').addClass('text-danger').text(resp); $btn.prop('disabled',false); } }).fail(function(x){ $('#loanMsg').addClass('text-danger').text('Failed'); $btn.prop('disabled',false); }); });
 
-	// ── AI Cash Flow Assistant ──
-	var cfMsgs = [];
-	$('#cfChatToggle').on('click', function(){ var p=$('#cfChatPanel'); p.toggleClass('hidden'); $(this).text(p.hasClass('hidden')?'Open':'Close'); if(!p.hasClass('hidden')) $('#cfChatInput').focus(); });
+	// ── AI Cash Flow Assistant (saved & resumable) ──
+	var cfMsgs = [], cfChatId = 0, cfHistLoaded = false;
+	function cfOpenPanel(){ var p=$('#cfChatPanel'); if(p.hasClass('hidden')){ p.removeClass('hidden'); $('#cfChatToggle').text('Close'); } }
+	$('#cfChatToggle').on('click', function(){ var p=$('#cfChatPanel'); p.toggleClass('hidden'); $(this).text(p.hasClass('hidden')?'Open':'Close'); if(!p.hasClass('hidden')){ $('#cfChatInput').focus(); if(!cfHistLoaded) cfLoadHistory(); } });
 	function cfEsc(s){ return $('<div>').text(s==null?'':String(s)).html(); }
-	function cfRender(){ var h=''; cfMsgs.forEach(function(m){ var who=m.role==='user'?'You':'Assistant'; var col=m.role==='user'?'#eef2f7':'#fff8f3'; h+='<div class="mb-2 p-2 rounded" style="background:'+col+';"><div class="fw-semibold small text-muted">'+who+'</div><div>'+cfEsc(m.content).replace(/\n/g,'<br>')+'</div></div>'; }); var $m=$('#cfChatMsgs').html(h); if($m[0]) $m.scrollTop($m[0].scrollHeight); }
-	function cfSend(){ var t=($('#cfChatInput').val()||'').trim(); if(!t) return; $('#cfChatInput').val(''); cfMsgs.push({role:'user',content:t}); cfRender(); $('#cfChatActions').addClass('hidden').html(''); window._cfActions=null; var $b=$('#cfChatSend').prop('disabled',true).text('…'); $.ajax({url:'/ajax/cashflow/chat.php',method:'POST',dataType:'json',timeout:120000,data:{messages:JSON.stringify(cfMsgs)}}).done(function(d){ if(!d||d.error){ cfMsgs.push({role:'assistant',content:'⚠ '+((d&&d.error)||'failed')}); cfRender(); return; } cfMsgs.push({role:'assistant',content:d.reply||'(no reply)'}); cfRender(); if(d.actions&&d.actions.length) cfShowActions(d.actions); }).fail(function(x,s){ cfMsgs.push({role:'assistant',content:'⚠ '+(s==='timeout'?'timed out — try again':'request failed')}); cfRender(); }).always(function(){ $b.prop('disabled',false).text('Send'); }); }
+	function cfRender(){ var h=''; cfMsgs.forEach(function(m){ var who=m.role==='user'?'You':'Assistant'; var col=m.role==='user'?'#eef2f7':'#fff8f3'; h+='<div class="mb-2 p-2 rounded" style="background:'+col+';"><div class="fw-semibold small text-muted">'+who+'</div><div>'+cfEsc(m.content).replace(/\n/g,'<br>')+'</div></div>'; }); var $m=$('#cfChatMsgs').html(h); if($m[0]) $m.scrollTop($m[0].scrollHeight); $('#cfChatDelete').toggleClass('hidden', cfChatId<=0); }
+	function cfLoadHistory(){ cfHistLoaded=true; $.getJSON('/ajax/cashflow/chat_list.php', function(d){ var o='<option value="">History…</option>'; (d.chats||[]).forEach(function(c){ o+='<option value="'+c.id+'"'+(c.id==cfChatId?' selected':'')+'>'+cfEsc(c.title)+'</option>'; }); $('#cfChatHistory').html(o); }); }
+	$('#cfChatHistory').on('change', function(){ var id=parseInt($(this).val(),10); if(!id){ return; } $.post('/ajax/cashflow/chat_get.php',{id:id},function(d){ if(d.error){ alert(d.error); return; } cfChatId=d.id; cfMsgs=d.messages||[]; $('#cfChatActions').addClass('hidden').html(''); window._cfActions=null; cfRender(); cfOpenPanel(); },'json'); });
+	$('#cfChatNew').on('click', function(){ cfChatId=0; cfMsgs=[]; $('#cfChatHistory').val(''); $('#cfChatActions').addClass('hidden').html(''); window._cfActions=null; cfRender(); cfOpenPanel(); $('#cfChatInput').focus(); });
+	$('#cfChatDelete').on('click', function(e){ e.preventDefault(); if(!cfChatId||!confirm('Delete this saved chat?')) return; $.post('/ajax/cashflow/chat_delete.php',{id:cfChatId},function(){ cfChatId=0; cfMsgs=[]; cfRender(); cfLoadHistory(); }); });
+	function cfSend(){ var t=($('#cfChatInput').val()||'').trim(); if(!t) return; $('#cfChatInput').val(''); cfMsgs.push({role:'user',content:t}); cfRender(); $('#cfChatActions').addClass('hidden').html(''); window._cfActions=null; var $b=$('#cfChatSend').prop('disabled',true).text('…'); $.ajax({url:'/ajax/cashflow/chat.php',method:'POST',dataType:'json',timeout:120000,data:{messages:JSON.stringify(cfMsgs), chat_id:cfChatId}}).done(function(d){ if(!d||d.error){ cfMsgs.push({role:'assistant',content:'⚠ '+((d&&d.error)||'failed')}); cfRender(); return; } cfMsgs.push({role:'assistant',content:d.reply||'(no reply)'}); if(d.chat_id){ cfChatId=d.chat_id; } cfRender(); cfLoadHistory(); if(d.actions&&d.actions.length) cfShowActions(d.actions); }).fail(function(x,s){ cfMsgs.push({role:'assistant',content:'⚠ '+(s==='timeout'?'timed out — try again':'request failed')}); cfRender(); }).always(function(){ $b.prop('disabled',false).text('Send'); }); }
 	$('#cfChatSend').on('click', cfSend);
 	$('#cfChatInput').on('keypress', function(e){ if(e.which===13) cfSend(); });
 	function cfActionText(a){ var w=a.why?(' — '+a.why):''; switch(a.type){

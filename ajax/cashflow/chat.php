@@ -104,4 +104,23 @@ if (preg_match('/```json\s*(\{.*?\})\s*```/s', $text, $mm)) {
 	$text = trim(str_replace($mm[0], '', $text));
 }
 
-echo json_encode(['reply' => $text, 'actions' => $actions]);
+// ── Persist the conversation (saved & resumable) ──
+$chatId = (int)($_POST['chat_id'] ?? 0);
+$title  = 'Chat';
+foreach ($clean as $m) { if ($m['role'] === 'user') { $title = mb_substr(trim($m['content']), 0, 60); break; } }
+$full = $clean;
+$full[] = ['role' => 'assistant', 'content' => $text];
+try {
+	$db->exec("CREATE TABLE IF NOT EXISTS cashflow_chats (
+		id INT AUTO_INCREMENT PRIMARY KEY, title VARCHAR(255) NOT NULL DEFAULT 'Chat',
+		messages LONGTEXT, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB");
+	if ($chatId > 0) {
+		$db->prepare("UPDATE cashflow_chats SET messages=?, updated_at=NOW() WHERE id=?")->execute([json_encode($full), $chatId]);
+	} else {
+		$db->prepare("INSERT INTO cashflow_chats (title, messages) VALUES (?,?)")->execute([$title, json_encode($full)]);
+		$chatId = (int)$db->lastInsertId();
+	}
+} catch (Throwable $e) { /* persistence best-effort */ }
+
+echo json_encode(['reply' => $text, 'actions' => $actions, 'chat_id' => $chatId, 'title' => $title]);
