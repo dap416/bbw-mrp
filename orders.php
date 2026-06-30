@@ -41,6 +41,7 @@
 					</select>
 					<input type="text" id="orderQty" class="form-control form-control-sm" style="width:70px" placeholder="QTY"/>
 					<input type="text" id="orderRef" class="form-control form-control-sm" style="width:120px" placeholder="Order #"/>
+					<div class="input-group input-group-sm" style="width:200px"><span class="input-group-text">Pay by</span><input type="date" id="orderPayBy" class="form-control" min="<?php echo date('Y-m-d'); ?>" title="When this card charge must be paid"/></div>
 					<button id="orderButton" class="btn btn-primary btn-sm">Add Order</button>
 					<button id="orderCancelButton" class="btn btn-secondary btn-sm">Cancel</button>
 				</div>
@@ -606,13 +607,19 @@
 		$("#orderButton").click(function() {
 			
 			var partid = $("#orderPart option:selected").val();
-			var qty = $("#orderQty").val(); 
+			var qty = $("#orderQty").val();
 			var refnum = $("#orderRef").val();
-			
-			$.post('/ajax/add_order.php', { partid: partid, refnum: refnum, qty: qty }, function() {
-				 location.reload();
+			var payby = $("#orderPayBy").val();
+
+			if (!partid) { alert('Select a component.'); return; }
+			if (!qty || parseInt(qty) < 1) { alert('Enter a quantity.'); return; }
+			if (!payby) { alert('Set a "Pay by" date — this PO is a card charge that hits cash flow on that date.'); return; }
+
+			$.post('/ajax/add_order.php', { partid: partid, refnum: refnum, qty: qty, pay_by: payby }, function(resp) {
+				if (typeof resp === 'string' && resp.indexOf('error') !== -1) { alert(resp); return; }
+				location.reload();
 			})
-			
+
 		});
 		
 		$(document).on("click", "#emptyAddOrder", function(e) {
@@ -631,6 +638,7 @@
 			$("#orderPart").val("");
 			$("#orderQty").val("");
 			$("#orderRef").val("");
+			$("#orderPayBy").val("");
 			$("#orderArea").hide();
 
 		});

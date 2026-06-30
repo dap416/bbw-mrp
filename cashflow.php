@@ -299,8 +299,18 @@
 		<?php endforeach; endif; ?>
 
 		<?php if (!empty($b['card_payments'])): ?>
-		<div class="small text-muted mt-1" style="font-size:0.7rem;line-height:1.4;">
-			<span class="fw-semibold">Cards:</span> <?php $cpl=[]; foreach($b['card_payments'] as $c){ $cpl[]=htmlspecialchars($c['label']).' '.money0($c['amount']).($c['is_target']?' ◀':'').($c['paid_off']?' ✓':''); } echo implode(' · ', $cpl); ?>
+		<div class="mt-2">
+			<div class="fw-semibold text-uppercase mb-1" style="font-size:0.6rem;letter-spacing:.04em;color:#6f42c1;">Card Payments</div>
+			<?php foreach ($b['card_payments'] as $c): ?>
+			<div class="d-flex justify-content-between align-items-center py-1" style="font-size:0.76rem;border-bottom:1px solid #f3f1fa;">
+				<span><?php echo htmlspecialchars($c['label']); ?><?php
+					echo $c['apr'] !== null ? ' <span class="text-muted" style="font-size:0.66rem;">'.rtrim(rtrim(number_format($c['apr'],2),'0'),'.').'%</span>' : '';
+					echo $c['is_target'] ? ' <span class="badge bg-primary" style="font-size:0.54rem;vertical-align:middle;">FOCUS</span>' : '';
+					echo $c['paid_off'] ? ' <span class="badge bg-success" style="font-size:0.54rem;vertical-align:middle;">PAID OFF</span>' : '';
+				?></span>
+				<span class="fw-semibold" style="color:#6f42c1;"><?php echo money0($c['amount']); ?></span>
+			</div>
+			<?php endforeach; ?>
 		</div>
 		<?php endif; ?>
 		<?php if ($b['tax_setaside'] > 0 || $b['tax_reserve'] > 0): ?>

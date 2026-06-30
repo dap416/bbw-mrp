@@ -90,8 +90,9 @@
 		else { $out['ar']['items'] = $arR['items']; $out['ar']['total'] = $arR['total']; }
 
 		// MRP unpaid purchase orders (what you still owe suppliers on placed POs).
+		try { $db->exec("ALTER TABLE `orders` ADD COLUMN `pay_by` DATE NULL"); } catch (Throwable $e) {}
 		try {
-			$sql = "SELECT o.id, o.orderref, o.ordval, o.paidamt, o.orderdate,
+			$sql = "SELECT o.id, o.orderref, o.ordval, o.paidamt, o.orderdate, o.pay_by,
 			               p.partno, p.desc AS pdesc, m.name AS supplier
 			        FROM `orders` o
 			        LEFT JOIN `parts` p ON p.id = o.partid
@@ -107,6 +108,7 @@
 					'part'    => trim(($r['partno'] ?? '') . ' ' . ($r['pdesc'] ?? '')),
 					'balance' => $bal,
 					'date'    => $r['orderdate'],
+					'pay_by'  => $r['pay_by'] ?? null,
 				];
 				$out['pos']['total'] += $bal;
 			}
@@ -347,8 +349,13 @@
 			$dueByYm[$ym] = ($dueByYm[$ym] ?? 0) + $b['balance'];
 		}
 		$firstYm = $proj[0]['ym'] ?? date('Y-m');
+		$lastYm  = end($proj)['ym'] ?? $firstYm;
 		foreach ($data['pos']['items'] as $p) {
-			$dueByYm[$firstYm] = ($dueByYm[$firstYm] ?? 0) + $p['balance'];
+			// POs are card charges due on their pay-by date — land them in that month.
+			$ym = !empty($p['pay_by']) ? substr($p['pay_by'], 0, 7) : $firstYm;
+			if ($ym < $firstYm) $ym = $firstYm;   // overdue → this month
+			if ($ym > $lastYm)  continue;          // beyond the 12-month window
+			$dueByYm[$ym] = ($dueByYm[$ym] ?? 0) + $p['balance'];
 		}
 
 		$rows  = [];
