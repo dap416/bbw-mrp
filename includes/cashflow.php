@@ -255,16 +255,24 @@
 	 * user can confirm the numbers.
 	 */
 	function cashflow_projection($db, $months = 12, $growthPct = 0.0) {
-		$start = strtotime(date('Y-m-01'));
-		$rows  = [];
-		for ($i = 0; $i < $months; $i++) {
+		// Window starts ONE MONTH BACK so the just-finished month stays visible for
+		// entering actuals; produces $months+1 blocks (prior → +($months-1)).
+		$start   = strtotime('first day of -1 month');
+		$count   = $months + 1;
+		$curYm   = date('Y-m');
+		$actuals = load_month_actuals($db);
+		$rows    = [];
+		for ($i = 0; $i < $count; $i++) {
 			$ts = strtotime("+$i month", $start);
-			$rows[] = ['label' => date('M Y', $ts), 'ym' => date('Y-m', $ts), 'projected' => 0.0,
-			           'prior_shopify' => null, 'prior_qb' => null, 'basis' => 'none'];
+			$rows[] = ['label' => date('M Y', $ts), 'ym' => date('Y-m', $ts),
+			           'suggested' => 0.0, 'actual_proj' => null, 'actual_income' => null,
+			           'projected' => 0.0, 'income_source' => 'suggested',
+			           'prior_shopify' => null, 'prior_qb' => null, 'basis' => 'none',
+			           'is_past' => (date('Y-m', $ts) < $curYm)];
 		}
 
 		$priorFrom = date('Y-m-01', strtotime($rows[0]['ym'] . '-01 -1 year'));
-		$priorTo   = date('Y-m-t',  strtotime("+" . ($months - 1) . " month", strtotime($priorFrom)));
+		$priorTo   = date('Y-m-t',  strtotime("+" . ($count - 1) . " month", strtotime($priorFrom)));
 
 		// Served from the nightly cache (wide window covers any rolling prior year).
 		$shop = cf_revenue($db);
@@ -277,15 +285,23 @@
 			$qVal = isset($qb['by_month'][$pYm])   ? (float)$qb['by_month'][$pYm]   : null;
 			$m['prior_shopify'] = $sVal;
 			$m['prior_qb']      = $qVal;
-			// Prefer QuickBooks actual income (true cash); fall back to Shopify.
-			if ($qVal !== null && $qVal != 0) { $m['projected'] = round($qVal * $mult, 2); $m['basis'] = 'qb'; }
-			elseif ($sVal !== null)           { $m['projected'] = round($sVal * $mult, 2); $m['basis'] = 'shopify'; }
+			// Suggested (auto) baseline: QB income preferred, else Shopify net sales.
+			if ($qVal !== null && $qVal != 0) { $m['suggested'] = round($qVal * $mult, 2); $m['basis'] = 'qb'; }
+			elseif ($sVal !== null)           { $m['suggested'] = round($sVal * $mult, 2); $m['basis'] = 'shopify'; }
+
+			// Overlay user actuals. Effective income = actual_income ?? actual_proj ?? suggested.
+			$a = $actuals[$m['ym']] ?? null;
+			$m['actual_proj']   = $a['proj']   ?? null;
+			$m['actual_income'] = $a['income'] ?? null;
+			if ($m['actual_income'] !== null)   { $m['projected'] = $m['actual_income']; $m['income_source'] = 'income'; }
+			elseif ($m['actual_proj'] !== null) { $m['projected'] = $m['actual_proj'];   $m['income_source'] = 'projection'; }
+			else                                { $m['projected'] = $m['suggested'];     $m['income_source'] = 'suggested'; }
 		}
 		unset($m);
 
-		// Prior-year reconciliation table (Shopify sales vs QB income, by month).
+		// Prior-year reconciliation table (over the same window).
 		$reconcile = [];
-		for ($i = 0; $i < $months; $i++) {
+		for ($i = 0; $i < $count; $i++) {
 			$ym = date('Y-m', strtotime("+$i month", strtotime($priorFrom)));
 			$s  = isset($shop['by_month'][$ym]) ? (float)$shop['by_month'][$ym] : null;
 			$q  = isset($qb['by_month'][$ym])   ? (float)$qb['by_month'][$ym]   : null;
@@ -382,6 +398,11 @@
 				'ym'         => $ym,
 				'income'     => $income,
 				'basis'      => $m['basis'],
+				'suggested'    => (float)($m['suggested'] ?? 0),
+				'actual_proj'  => $m['actual_proj'] ?? null,
+				'actual_income'=> $m['actual_income'] ?? null,
+				'income_source'=> $m['income_source'] ?? 'suggested',
+				'is_past'      => !empty($m['is_past']),
 				'recurring'  => $recurMo,
 				'onetime'    => $onetime,
 				'debt_pay'   => $pay,
@@ -611,6 +632,34 @@
 		return $res;
 	}
 
+	/**
+	 * Per-month income overrides. Priority for the income a month uses:
+	 *   actual_income  (real money received — highest)
+	 *   → actual_projection (your refined forecast)
+	 *   → suggested (auto QB/Shopify baseline — lowest).
+	 */
+	function ensure_month_actuals_table($db) {
+		$db->exec("CREATE TABLE IF NOT EXISTS cash_month_actuals (
+			ym VARCHAR(7) PRIMARY KEY,
+			actual_projection DECIMAL(14,2) NULL,
+			actual_income     DECIMAL(14,2) NULL,
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		) ENGINE=InnoDB");
+	}
+	function load_month_actuals($db) {
+		$out = [];
+		try {
+			ensure_month_actuals_table($db);
+			foreach ($db->query("SELECT * FROM cash_month_actuals") as $r) {
+				$out[$r['ym']] = [
+					'proj'   => $r['actual_projection'] !== null ? (float)$r['actual_projection'] : null,
+					'income' => $r['actual_income']     !== null ? (float)$r['actual_income']     : null,
+				];
+			}
+		} catch (Throwable $e) {}
+		return $out;
+	}
+
 	/** Expected-payment dates for open Shopify receivables (keyed by order name). */
 	function ensure_ar_schedule_table($db) {
 		$db->exec("CREATE TABLE IF NOT EXISTS ar_schedule (order_key VARCHAR(80) PRIMARY KEY, expected_date DATE NULL, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB");
@@ -674,6 +723,7 @@
 		$reorder = cashflow_reorder_suggestions($db);
 		$cash    = (float)$data['eff_cash'];
 		$reserve = 0.0;                 // tax reserve, accrues monthly, paid at quarter end
+		$firstFutureDone = false;       // PO advice shows on the current month, not the prior
 		$blocks  = [];
 
 		// Receivables the user scheduled into a specific month → that month's cash in.
@@ -686,6 +736,8 @@
 		foreach (($forecast['rows'] ?? []) as $i => $row) {
 			$ym  = $row['ym'];
 			$mon = (int)date('n', strtotime($ym . '-01'));
+			$isPast = !empty($row['is_past']);
+			$incFields = ['suggested' => (float)($row['suggested'] ?? 0), 'actual_proj' => $row['actual_proj'] ?? null, 'actual_income' => $row['actual_income'] ?? null, 'income_source' => $row['income_source'] ?? 'suggested', 'is_past' => $isPast];
 			$in = []; $out = [];
 
 			// ── Cash in ──
@@ -704,6 +756,19 @@
 			foreach (($events['by_ym'][$ym]['out'] ?? []) as $e) $out[] = ['label' => $e['label'], 'amount' => $e['amount'], 'week' => $e['week'], 'source' => 'manual', 'id' => $e['id']];
 
 			$outBeforeCards = array_sum(array_map(fn($x) => $x['amount'], $out));
+
+			// Prior month: shown for entering actuals only — no avalanche, no running carry.
+			if ($isPast) {
+				$blocks[] = array_merge([
+					'ym' => $ym, 'label' => $row['label'], 'cash_in' => $in, 'cash_out' => $out,
+					'in_total' => $inTotal, 'out_total' => $outBeforeCards, 'net' => $inTotal - $outBeforeCards,
+					'end_cash' => null, 'end_debt' => array_sum(array_map(fn($c) => $c['bal'], $cards)),
+					'card_payments' => [], 'tax_setaside' => $taxSet, 'tax_payment' => 0.0, 'tax_reserve' => 0.0,
+					'advice' => [],
+				], $incFields);
+				continue;
+			}
+
 			$cashBeforeCards = $cash + $inTotal - $outBeforeCards;
 
 			// ── Tax reserve: accrue monthly, pay (from reserve) at quarter end ──
@@ -750,7 +815,8 @@
 			}
 			foreach ($cardPayments as $cp) if ($cp['paid_off']) $advice[] = ['kind' => 'good', 'text' => '🎉 ' . $cp['label'] . ' paid off this month.'];
 			if ($taxPayment > 0)      $advice[] = ['kind' => 'info', 'text' => 'Quarterly taxes ~$' . number_format($taxPayment, 0) . ' due — covered by the tax reserve you set aside.'];
-			if ($i === 0) {
+			if (!$firstFutureDone) {
+				$firstFutureDone = true;
 				$poPlan = build_po_card_plan($db, $data);
 				if (!empty($poPlan)) {
 					$lines = [];
@@ -759,7 +825,7 @@
 				}
 			}
 
-			$blocks[] = [
+			$blocks[] = array_merge([
 				'ym' => $ym, 'label' => $row['label'],
 				'cash_in' => $in, 'cash_out' => $out,
 				'in_total' => $inTotal, 'out_total' => $outTotal, 'net' => $net,
@@ -767,7 +833,7 @@
 				'card_payments' => $cardPayments,
 				'tax_setaside' => $taxSet, 'tax_payment' => $taxPayment, 'tax_reserve' => $reserve,
 				'advice' => $advice,
-			];
+			], $incFields);
 		}
 
 		return ['blocks' => $blocks, 'loan_pct' => $loanPct, 'start_cash' => (float)$data['eff_cash'],

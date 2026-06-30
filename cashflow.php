@@ -296,15 +296,22 @@
 <!-- ── 12 MONTH BLOCKS ─────────────────────────────────────────────────────── -->
 <div class="row g-3">
 <?php foreach ($blocks as $b):
+	$isPast    = !empty($b['is_past']);
 	$netColor  = $b['net'] >= 0 ? '#2ca01c' : '#e64545';
-	$cashColor = $b['end_cash'] >= 0 ? '#2ca01c' : '#e64545';
+	$cashColor = ($b['end_cash'] !== null && $b['end_cash'] < 0) ? '#e64545' : '#2ca01c';
+	$topColor  = $isPast ? '#adb5bd' : $cashColor;
+	$eff       = $b['actual_income'] !== null ? $b['actual_income'] : ($b['actual_proj'] !== null ? $b['actual_proj'] : (float)$b['suggested']);
+	$effSrc    = $b['income_source'];
 ?>
 	<div class="col-12 col-lg-6 col-xxl-4">
-	<div class="card h-100 month-drop" data-ym="<?php echo $b['ym']; ?>" style="border-top:3px solid <?php echo $cashColor; ?>;">
+	<div class="card h-100 month-drop" data-ym="<?php echo $b['ym']; ?>" style="border-top:3px solid <?php echo $topColor; ?>;<?php echo $isPast ? 'background:#fbfbfc;' : ''; ?>">
 	<div class="card-body">
 		<div class="d-flex justify-content-between align-items-start mb-2">
-			<h5 class="fw-bold mb-0"><?php echo $b['label']; ?></h5>
-			<div class="text-end"><div class="text-muted" style="font-size:0.66rem;">PROJECTED END CASH</div><div class="fw-bold" style="color:<?php echo $cashColor; ?>;"><?php echo money0($b['end_cash']); ?></div></div>
+			<h5 class="fw-bold mb-0"><?php echo $b['label']; ?><?php echo $isPast ? ' <span class="text-muted" style="font-size:0.58rem;vertical-align:middle;">prior</span>' : ''; ?></h5>
+			<div class="text-end">
+				<?php if ($isPast): ?><span class="badge bg-secondary" style="font-size:0.58rem;">enter actuals</span>
+				<?php else: ?><div class="text-muted" style="font-size:0.66rem;">PROJECTED END CASH</div><div class="fw-bold" style="color:<?php echo $cashColor; ?>;"><?php echo money0($b['end_cash']); ?></div><?php endif; ?>
+			</div>
 		</div>
 		<div class="d-flex justify-content-between align-items-center mb-2 px-2 py-1 rounded" style="background:#f6f8fa;">
 			<span class="small"><span class="text-muted">In</span> <span class="fw-bold text-success"><?php echo money0($b['in_total']); ?></span></span>
@@ -313,13 +320,34 @@
 		</div>
 
 		<div class="fw-semibold text-uppercase text-success mb-1" style="font-size:0.66rem;letter-spacing:.04em;">Cash In</div>
-		<?php if (empty($b['cash_in'])): ?><div class="text-muted small mb-1">—</div>
-		<?php else: foreach ($b['cash_in'] as $it): ?>
+
+		<!-- Income tiers: suggested → actual projection → actual income (highest wins) -->
+		<div class="px-2 py-1 mb-1" style="background:#f6fbf7;border-radius:5px;">
+			<div class="d-flex justify-content-between align-items-center" style="font-size:0.72rem;">
+				<span class="text-muted">Suggested projection</span>
+				<span class="<?php echo $effSrc==='suggested' ? 'fw-bold text-success' : 'text-muted'; ?>"><?php echo money0($b['suggested']); ?></span>
+			</div>
+			<div class="d-flex justify-content-between align-items-center mt-1" style="font-size:0.72rem;">
+				<span class="text-muted">Actual projection</span>
+				<div class="input-group input-group-sm" style="width:115px;"><span class="input-group-text">$</span><input type="text" class="form-control mo-actual" data-ym="<?php echo $b['ym']; ?>" data-field="proj" value="<?php echo $b['actual_proj'] !== null ? number_format($b['actual_proj'],0,'.','') : ''; ?>" placeholder="—" /></div>
+			</div>
+			<div class="d-flex justify-content-between align-items-center mt-1" style="font-size:0.72rem;">
+				<span class="text-muted">Actual income</span>
+				<div class="input-group input-group-sm" style="width:115px;"><span class="input-group-text">$</span><input type="text" class="form-control mo-actual" data-ym="<?php echo $b['ym']; ?>" data-field="income" value="<?php echo $b['actual_income'] !== null ? number_format($b['actual_income'],0,'.','') : ''; ?>" placeholder="—" /></div>
+			</div>
+			<div class="d-flex justify-content-between align-items-center mt-1 pt-1" style="font-size:0.74rem;border-top:1px solid #e3f1e8;">
+				<span class="fw-semibold">Using <span class="badge bg-<?php echo $effSrc==='income'?'success':($effSrc==='projection'?'primary':'secondary'); ?>" style="font-size:0.52rem;vertical-align:middle;"><?php echo $effSrc==='income'?'ACTUAL INCOME':($effSrc==='projection'?'ACTUAL PROJ':'SUGGESTED'); ?></span></span>
+				<span class="fw-bold text-success"><?php echo money0($eff); ?></span>
+			</div>
+		</div>
+
+		<?php $otherIn = array_values(array_filter($b['cash_in'], fn($it) => $it['source'] !== 'auto'));
+		foreach ($otherIn as $it): ?>
 			<div class="d-flex justify-content-between small py-1<?php echo $it['source']==='manual' ? ' cf-drag' : ''; ?>"<?php echo $it['source']==='manual' ? ' draggable="true" data-event-id="'.$it['id'].'" style="border-bottom:1px solid #f1f3f5;cursor:grab;" title="Drag to another month"' : ' style="border-bottom:1px solid #f1f3f5;"'; ?>>
 				<span><?php echo htmlspecialchars($it['label']); ?><?php echo ($it['source']==='manual' && $it['week']) ? ' <span class="text-muted" style="font-size:0.68rem;">wk'.$it['week'].'</span>' : ''; ?></span>
 				<span><span class="fw-semibold text-success"><?php echo money0($it['amount']); ?></span><?php echo $it['source']==='manual' ? ' <a href="#" class="ev-edit-id ms-1 text-muted" data-id="'.$it['id'].'" style="font-size:0.66rem;">edit</a>' : ''; ?></span>
 			</div>
-		<?php endforeach; endif; ?>
+		<?php endforeach; ?>
 
 		<div class="fw-semibold text-uppercase mb-1 mt-2" style="font-size:0.66rem;letter-spacing:.04em;color:#d9822b;">Cash Out</div>
 		<?php if (empty($b['cash_out'])): ?><div class="text-muted small mb-1">—</div>
@@ -432,6 +460,9 @@
 	$(document).on('click', '.add-event-for', function(){ $('#addEvBtn').click(); $('#evMonth').val($(this).data('ym')); $('html,body').animate({scrollTop:$('#evForm').offset().top-90},200); $('#evLabel').focus(); });
 	$('#evSaveBtn').on('click', function(){ var $btn=$(this).prop('disabled',true); $.post('/ajax/cashflow/save_event.php', { id:$('#evId').val(), etype:$('#evType').val(), label:$('#evLabel').val(), amount:$('#evAmount').val(), ym:$('#evMonth').val(), week:$('#evWeek').val() }, function(resp){ if($.trim(resp)==='ok') location.reload(); else { $('#evMsg').addClass('text-danger').text(resp); $btn.prop('disabled',false); } }).fail(function(x){ $('#evMsg').addClass('text-danger').text('Save failed: '+(x.responseText||x.status)); $btn.prop('disabled',false); }); });
 	$(document).on('click', '.ev-del', function(e){ e.preventDefault(); if(!confirm('Remove this cash event?'))return; $.post('/ajax/cashflow/delete_event.php', { id:$(this).closest('.ev-row').data('id') }, function(resp){ if($.trim(resp)==='ok') location.reload(); else alert(resp); }); });
+
+	// ── Per-month actual projection / actual income ──
+	$(document).on('change', '.mo-actual', function(){ var $i=$(this).prop('disabled',true); $.post('/ajax/cashflow/save_month_actual.php', { ym:$(this).data('ym'), field:$(this).data('field'), value:$(this).val() }, function(resp){ if($.trim(resp)==='ok') location.reload(); else { alert(resp); $i.prop('disabled',false); } }).fail(function(){ alert('Save failed'); $i.prop('disabled',false); }); });
 
 	// ── Receivables: expected payment date ──
 	$(document).on('change', '.ar-date', function(){ var $i=$(this).prop('disabled',true); $.post('/ajax/cashflow/save_ar_date.php', { order_key:$(this).data('key'), date:$(this).val() }, function(resp){ if($.trim(resp)==='ok') location.reload(); else { alert(resp); $i.prop('disabled',false); } }).fail(function(){ alert('Save failed'); $i.prop('disabled',false); }); });
