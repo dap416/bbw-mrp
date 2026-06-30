@@ -465,7 +465,7 @@ $('#recBtn').on('click', function() {
 	$('#recMsg').removeClass('text-danger').addClass('text-muted').text('Pulling sales history, draft orders & stock — this can take a few seconds…');
 	$('#recResults').html('');
 
-	$.ajax({ url: '/ajax/build/recommend.php', method: 'POST', dataType: 'json', timeout: 120000, data: { until: until } })
+	$.ajax({ url: '/ajax/build/recommend.php', method: 'POST', dataType: 'json', timeout: 120000, data: { until: until, warehouse_id: REC_WH } })
 	.done(function(d) {
 		if (!d || d.error) { $('#recMsg').removeClass('text-muted').addClass('text-danger').text(d && d.error ? d.error : 'Could not build a recommendation.'); return; }
 		renderRec(d);
@@ -482,7 +482,9 @@ function renderRec(d) {
 	var m = d.meta || {};
 	var rows = d.rows || [];
 	$('#recMsg').removeClass('text-danger').addClass('text-muted')
-		.text('Demand through ' + m.until + ' (' + m.window_days + ' days). Baseline: last year ' + m.prior_window + '. ' + (m.draft_orders||0) + ' open wholesale draft order(s) counted.');
+		.html('<strong>' + $('<div>').text(m.warehouse || 'All').html() + '</strong> — ' + $('<div>').text(m.scope || '').html() +
+			'<br>Demand through ' + m.until + ' (' + m.window_days + ' days); baseline last year ' + m.prior_window +
+			(m.draft_orders ? '; ' + m.draft_orders + ' open wholesale draft order(s) counted.' : '.'));
 
 	if (!rows.length) { $('#recResults').html('<div class="text-muted small mt-2">Nothing needs building for this window — stock and pipeline already cover projected demand. 🎉</div>'); return; }
 

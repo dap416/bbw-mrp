@@ -30,21 +30,34 @@ if (!$ts || date('Y-m-d', $ts) <= $today) { echo json_encode(['error' => 'Pick a
 $until = date('Y-m-d', $ts);
 $windowDays = max(1, (int)round(($ts - strtotime($today)) / 86400));
 
+// Which warehouse are we planning for? Oregon = its own shipments only;
+// anything else (Arkansas) = EVERYTHING NOT shipped from Oregon (incl. POS).
+$whId   = (int)($_POST['warehouse_id'] ?? 0);
+$whRow  = $whId ? $db->query("SELECT name FROM warehouses WHERE id = $whId")->fetch() : null;
+$whName = $whRow['name'] ?? '';
+$isOregon = stripos($whName, 'oregon') !== false;
+
 // Prior-year equivalent window (same calendar span, one year earlier).
 $lyStart = date('Y-m-d', strtotime('-1 year', strtotime($today)));
 $lyEnd   = date('Y-m-d', strtotime('-1 year', $ts));
 
-// ── Demand + supply signals from Shopify ──
-$sales = shopify_sales_in_range($lyStart, $lyEnd);
+// ── Demand split by fulfilling warehouse ──
+$sales = shopify_sales_by_location($lyStart, $lyEnd);
 if (!empty($sales['error'])) { echo json_encode(['error' => 'Shopify sales lookup failed: ' . $sales['error']]); exit; }
-$retailBySku = $sales['by_sku'] ?? [];
+$retailBySku = $isOregon ? ($sales['by_sku_oregon'] ?? []) : ($sales['by_sku_rest'] ?? []);
 
-$drafts = shopify_open_draft_demand(10);
-$draftBySku = empty($drafts['error']) ? ($drafts['by_sku'] ?? []) : [];
-$draftErr   = $drafts['error'] ?? null;
+// Open wholesale draft orders (>=10 units) — not yet fulfilled, so treated as
+// Arkansas (everything-not-Oregon) demand; excluded from the Oregon view.
+$draftBySku = []; $draftErr = null; $draftOrders = 0;
+if (!$isOregon) {
+	$drafts = shopify_open_draft_demand(10);
+	if (empty($drafts['error'])) { $draftBySku = $drafts['by_sku'] ?? []; $draftOrders = $drafts['orders'] ?? 0; }
+	else { $draftErr = $drafts['error']; }
+}
 
-$variants = shopify_fetch_variants();
-$shopSkus = $variants['skus'] ?? [];
+// FP stock per location (Oregon vs rest).
+$fpLoc    = shopify_fp_by_location();
+$fpBySku  = $fpLoc['skus'] ?? [];
 
 // ── Products with a BOM = animators we build ──
 $hasSku   = column_exists($db, 'products', 'shopify_sku');
@@ -57,10 +70,12 @@ foreach ($db->query("SELECT b.prodid, b.qty, p.id AS partid, p.partno, p.qoh
 	$bomByProd[$bl['prodid']][] = $bl;
 }
 
-// In-pipeline finished product per product = intransit orders not yet received.
+// In-pipeline finished product per product = intransit orders not yet received,
+// at THIS warehouse (so each warehouse only nets out its own planned builds).
 $pipelineByProd = [];
+$pipeWh = $whId ? " AND warehouse_id = $whId" : "";
 foreach ($db->query("SELECT prodid, SUM(qty) AS v FROM intransit
-                     WHERE recdate = '0000-00-00 00:00:00' GROUP BY prodid") as $r) {
+                     WHERE recdate = '0000-00-00 00:00:00' $pipeWh GROUP BY prodid") as $r) {
 	$pipelineByProd[$r['prodid']] = max(0, (int)$r['v']);
 }
 
@@ -74,17 +89,19 @@ foreach ($products as $p) {
 	$draft    = $sku !== '' ? (int)($draftBySku[$sku]  ?? 0) : 0;
 	$demand   = $retail + $draft;
 
-	$fpStock  = ($sku !== '' && isset($shopSkus[$sku])) ? (int)$shopSkus[$sku]['qty'] : 0;
+	$fp       = ($sku !== '' && isset($fpBySku[$sku])) ? $fpBySku[$sku] : ['oregon' => 0, 'rest' => 0];
+	$fpStock  = (int)($isOregon ? $fp['oregon'] : $fp['rest']);   // may be negative (oversold)
 	$pipeline = (int)($pipelineByProd[$p['id']] ?? 0);
 	$covered  = $fpStock + $pipeline;
 
 	$recommend = max(0, $demand - $covered);
 
-	// Buildable-now from raw materials (and the limiting part).
+	// Buildable-now from raw materials AT THIS WAREHOUSE (and the limiting part).
 	$buildable = null; $limitPart = null;
 	foreach ($bom as $b) {
 		$need = (int)$b['qty']; if ($need <= 0) continue;
-		$can  = intdiv((int)$b['qoh'], $need);
+		$onhand = $whId ? (int)wh_get_qty($db, (int)$b['partid'], $whId) : (int)$b['qoh'];
+		$can    = intdiv(max(0, $onhand), $need);
 		if ($buildable === null || $can < $buildable) { $buildable = $can; $limitPart = $b['partno']; }
 	}
 	$buildable = $buildable === null ? 0 : $buildable;
@@ -117,9 +134,16 @@ echo json_encode([
 		'until'        => $until,
 		'window_days'  => $windowDays,
 		'prior_window' => "$lyStart to $lyEnd",
-		'draft_orders' => $drafts['orders'] ?? 0,
+		'warehouse'    => $whName ?: 'All',
+		'is_oregon'    => $isOregon,
+		'scope'        => ($isOregon && empty($sales['oregon_location'])
+			? '⚠ Could not find the Oregon Warehouse location in Shopify — numbers may be off. '
+			: '') . ($isOregon
+			? 'Oregon Warehouse: only orders fulfilled from Oregon.'
+			: ($whName ? $whName . ': everything NOT fulfilled from Oregon (incl. POS/tradeshows + open wholesale drafts).' : 'All warehouses.')),
+		'draft_orders' => $draftOrders,
 		'draft_error'  => $draftErr,
-		'channels'     => $sales['by_channel'] ?? [],
+		'oregon_location' => $sales['oregon_location'] ?? '',
 	],
 	'rows'   => $rows,
 ]);

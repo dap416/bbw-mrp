@@ -619,6 +619,144 @@
 		return ['error' => null, 'by_sku' => $bySku, 'orders' => $orders];
 	}
 
+	/**
+	 * The Oregon Warehouse Shopify location id (GID). Found by name match
+	 * ("oregon"), overridable via the `oregon_location_id` setting. Cached.
+	 * Used to split demand/stock: Oregon vs everything-else (Arkansas).
+	 */
+	function shopify_oregon_location_id() {
+		static $id = null;
+		if ($id !== null) return $id;
+		$id = '';
+		try { $db = db_connect(); if ($db) { $v = setting_get($db, 'oregon_location_id'); if ($v) { return $id = $v; } } } catch (Throwable $e) {}
+		$res = shopify_graphql('query { locations(first: 50) { edges { node { id name } } } }');
+		if (empty($res['error'])) {
+			foreach (($res['data']['locations']['edges'] ?? []) as $e) {
+				if (stripos($e['node']['name'] ?? '', 'oregon') !== false) { $id = $e['node']['id'] ?? ''; break; }
+			}
+		}
+		return $id;
+	}
+
+	/**
+	 * Prior-window units sold per SKU, SPLIT by fulfilling warehouse:
+	 *   by_sku_oregon = orders fulfilled from the Oregon Warehouse location
+	 *   by_sku_rest   = EVERYTHING ELSE (Arkansas + all POS/tradeshow + online
+	 *                   shipped elsewhere + unfulfilled)
+	 * Mirrors shopify_sales_in_range (excludes cancelled, explodes bundles) but
+	 * buckets by the order's fulfillment location.
+	 */
+	function shopify_sales_by_location($since, $until) {
+		$oregonId = shopify_oregon_location_id();
+		$query = '
+		query($cursor: String, $q: String!) {
+		  orders(first: 100, after: $cursor, query: $q, sortKey: CREATED_AT) {
+		    pageInfo { hasNextPage endCursor }
+		    edges { node {
+		      cancelledAt
+		      fulfillments(first: 10) { location { id } }
+		      lineItems(first: 50) { edges { node { quantity sku variant { id } } } }
+		    } }
+		  }
+		}';
+		$q = "created_at:>=$since AND created_at:<=$until";
+		$oregon = []; $rest = []; $cursor = null; $pages = 0; $orders = 0;
+		$bundles = shopify_bundle_map();
+
+		do {
+			$res = shopify_graphql($query, ['cursor' => $cursor, 'q' => $q]);
+			if (!empty($res['error'])) return ['error' => $res['error'], 'by_sku_oregon' => [], 'by_sku_rest' => []];
+			$o = $res['data']['orders'] ?? null;
+			if ($o === null) return ['error' => 'Malformed Shopify orders response.', 'by_sku_oregon' => [], 'by_sku_rest' => []];
+
+			foreach ($o['edges'] as $oe) {
+				$n = $oe['node'];
+				if (!empty($n['cancelledAt'])) continue;
+				$orders++;
+
+				$isOregon = false;
+				if ($oregonId !== '') {
+					foreach (($n['fulfillments'] ?? []) as $f) {
+						if (($f['location']['id'] ?? '') === $oregonId) { $isOregon = true; break; }
+					}
+				}
+
+				// This order's SKU units (bundle-exploded).
+				$orderSku = [];
+				foreach ($n['lineItems']['edges'] as $le) {
+					$li  = $le['node'];
+					$sku = trim((string)($li['sku'] ?? ''));
+					$qty = (int)($li['quantity'] ?? 0);
+					if ($qty <= 0) continue;
+					$vid = $li['variant']['id'] ?? '';
+					if ($sku === '' && $vid && isset($bundles[$vid])) {
+						foreach ($bundles[$vid] as $c) $orderSku[$c['sku']] = ($orderSku[$c['sku']] ?? 0) + $qty * (int)$c['qty'];
+						continue;
+					}
+					if ($sku === '') continue;
+					$orderSku[$sku] = ($orderSku[$sku] ?? 0) + $qty;
+				}
+				foreach ($orderSku as $sku => $qv) {
+					if ($isOregon) $oregon[$sku] = ($oregon[$sku] ?? 0) + $qv;
+					else           $rest[$sku]   = ($rest[$sku]   ?? 0) + $qv;
+				}
+			}
+
+			$cursor  = $o['pageInfo']['endCursor']  ?? null;
+			$hasNext = $o['pageInfo']['hasNextPage'] ?? false;
+			$pages++;
+		} while ($hasNext && $pages < 40);
+
+		return ['error' => null, 'by_sku_oregon' => $oregon, 'by_sku_rest' => $rest,
+		        'orders' => $orders, 'oregon_location' => $oregonId, 'truncated' => ($hasNext && $pages >= 40)];
+	}
+
+	/**
+	 * Finished-product available inventory per SKU, split by location:
+	 *   [sku => ['oregon' => qty at Oregon Warehouse, 'rest' => qty everywhere else]]
+	 * Negative (oversold) values are preserved so a backorder increases build need.
+	 */
+	function shopify_fp_by_location() {
+		$oregonId = shopify_oregon_location_id();
+		$query = '
+		query($cursor: String) {
+		  productVariants(first: 50, after: $cursor) {
+		    pageInfo { hasNextPage endCursor }
+		    edges { node { sku inventoryItem { inventoryLevels(first: 20) {
+		      edges { node { location { id } quantities(names: ["available"]) { quantity } } }
+		    } } } }
+		  }
+		}';
+		$bySku = []; $cursor = null; $pages = 0;
+		do {
+			$res = shopify_graphql($query, ['cursor' => $cursor]);
+			if (!empty($res['error'])) return ['error' => $res['error'], 'skus' => []];
+			$pv = $res['data']['productVariants'] ?? null;
+			if ($pv === null) return ['error' => 'Malformed Shopify response.', 'skus' => []];
+
+			foreach ($pv['edges'] as $ve) {
+				$v   = $ve['node'];
+				$sku = trim((string)($v['sku'] ?? ''));
+				if ($sku === '') continue;
+				$o = 0; $r = 0;
+				foreach (($v['inventoryItem']['inventoryLevels']['edges'] ?? []) as $le) {
+					$lvl   = $le['node'];
+					$lid   = $lvl['location']['id'] ?? '';
+					$avail = 0;
+					foreach (($lvl['quantities'] ?? []) as $qn) $avail = (int)($qn['quantity'] ?? 0);
+					if ($oregonId !== '' && $lid === $oregonId) $o += $avail; else $r += $avail;
+				}
+				$bySku[$sku] = ['oregon' => $o, 'rest' => $r];
+			}
+
+			$cursor  = $pv['pageInfo']['endCursor']  ?? null;
+			$hasNext = $pv['pageInfo']['hasNextPage'] ?? false;
+			$pages++;
+		} while ($hasNext && $pages < 40);
+
+		return ['error' => null, 'skus' => $bySku, 'oregon_location' => $oregonId];
+	}
+
 	/** The customer whose orders use Amazon (CDA) packaging cards. Configurable. */
 	function shopify_amazon_customer() {
 		static $name = null;
