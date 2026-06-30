@@ -265,24 +265,25 @@
 		<h6 class="fw-bold mb-1">Card Paydown Plan — this month<?php echo $b0 ? ' ('.$b0['label'].')' : ''; ?></h6>
 		<p class="text-muted small mb-2">Keep a <strong><?php echo money0($monthData['buffer']); ?></strong> cash buffer; pay minimums on all cards, then throw every spare dollar at the <strong>highest-APR</strong> card first.</p>
 		<?php
-		$cps = $b0['card_payments'] ?? [];
+		$cps = array_values(array_filter($b0['card_payments'] ?? [], fn($c)=>$c['amount']>0));
 		usort($cps, fn($a,$b)=> ($b['is_target']<=>$a['is_target']) ?: (($b['apr']??-1)<=>($a['apr']??-1)));
 		if (empty($cps)): ?>
 			<div class="text-muted small">No card payments this month (no card balances, or no cash above the buffer).</div>
 		<?php else: ?>
 		<table class="table table-sm mb-0" style="font-size:0.84rem;">
-			<thead><tr style="background:#f1f3f5;"><th>#</th><th>Card</th><th class="text-end">APR</th><th class="text-end">Pay this month</th></tr></thead>
+			<thead><tr style="background:#f1f3f5;"><th>#</th><th>Card</th><th class="text-end">APR</th><th class="text-end">Balance</th><th class="text-end">Pay this month</th></tr></thead>
 			<tbody>
 			<?php $n=0; foreach ($cps as $c): $n++; ?>
 				<tr<?php echo $c['is_target'] ? ' style="background:#f3effc;"' : ''; ?>>
 					<td><?php echo $n; ?></td>
 					<td class="fw-semibold"><?php echo htmlspecialchars($c['label']); ?> <?php echo $c['is_target'] ? '<span class="badge bg-primary" style="font-size:0.58rem;">FOCUS</span>' : ''; ?><?php echo $c['paid_off'] ? ' <span class="badge bg-success" style="font-size:0.58rem;">PAID OFF</span>' : ''; ?></td>
 					<td class="text-end"><?php echo $c['apr'] !== null ? rtrim(rtrim(number_format($c['apr'],2),'0'),'.').'%' : '—'; ?></td>
+					<td class="text-end text-muted"><?php echo money0($c['balance']); ?><?php echo isset($c['available']) && $c['available'] !== null ? '<br><span style="font-size:0.66rem;">'.money0($c['available']).' open</span>' : ''; ?></td>
 					<td class="text-end fw-bold"><?php echo money($c['amount']); ?></td>
 				</tr>
 			<?php endforeach; ?>
 			</tbody>
-			<tfoot><tr class="fw-bold border-top"><td colspan="3">Total to cards this month</td><td class="text-end"><?php echo money(array_sum(array_map(fn($c)=>$c['amount'],$cps))); ?></td></tr></tfoot>
+			<tfoot><tr class="fw-bold border-top"><td colspan="4">Total to cards this month</td><td class="text-end"><?php echo money(array_sum(array_map(fn($c)=>$c['amount'],$cps))); ?></td></tr></tfoot>
 		</table>
 		<?php endif; ?>
 	</div></div>
@@ -391,15 +392,17 @@
 
 		<?php if (!empty($b['card_payments'])): ?>
 		<div class="mt-2">
-			<div class="fw-semibold text-uppercase mb-1" style="font-size:0.6rem;letter-spacing:.04em;color:#6f42c1;">Card Payments</div>
+			<div class="fw-semibold text-uppercase mb-1" style="font-size:0.6rem;letter-spacing:.04em;color:#6f42c1;">Card Payments &amp; Balances</div>
 			<?php foreach ($b['card_payments'] as $c): ?>
 			<div class="d-flex justify-content-between align-items-center py-1" style="font-size:0.76rem;border-bottom:1px solid #f3f1fa;">
 				<span><?php echo htmlspecialchars($c['label']); ?><?php
 					echo $c['apr'] !== null ? ' <span class="text-muted" style="font-size:0.66rem;">'.rtrim(rtrim(number_format($c['apr'],2),'0'),'.').'%</span>' : '';
 					echo $c['is_target'] ? ' <span class="badge bg-primary" style="font-size:0.54rem;vertical-align:middle;">FOCUS</span>' : '';
 					echo $c['paid_off'] ? ' <span class="badge bg-success" style="font-size:0.54rem;vertical-align:middle;">PAID OFF</span>' : '';
-				?></span>
-				<span class="fw-semibold" style="color:#6f42c1;"><?php echo money0($c['amount']); ?></span>
+				?><br><span class="text-muted" style="font-size:0.66rem;">Bal <?php echo money0($c['balance']); ?><?php echo isset($c['available']) && $c['available'] !== null ? ' · '.money0($c['available']).' open' : ''; ?></span></span>
+				<span class="text-end">
+					<?php if ($c['amount'] > 0): ?><span class="fw-semibold" style="color:#6f42c1;"><?php echo money0($c['amount']); ?></span><?php else: ?><span class="text-muted" style="font-size:0.66rem;">no pay</span><?php endif; ?>
+				</span>
 			</div>
 			<?php endforeach; ?>
 		</div>

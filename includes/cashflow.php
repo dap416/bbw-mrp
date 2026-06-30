@@ -725,7 +725,8 @@
 		$cards = [];
 		foreach (($data['manual']['credit'] ?? []) as $c) {
 			$cards[] = ['label' => $c['label'], 'apr' => $c['apr'],
-			            'bal' => max(0.0, (float)$c['balance']), 'min' => max(0.0, (float)($c['payment'] ?? 0))];
+			            'bal' => max(0.0, (float)$c['balance']), 'min' => max(0.0, (float)($c['payment'] ?? 0)),
+			            'limit' => $c['limit'], 'type' => $c['type'] ?? 'credit', 'as_of' => $c['as_of'] ?? null];
 		}
 		// Priority order for the avalanche: highest APR first (nulls last).
 		$order = array_keys($cards);
@@ -820,7 +821,11 @@
 				if ($pay[$k] <= 0 && $c['bal'] <= 0) continue;
 				$c['bal'] = max(0.0, $c['bal'] - $pay[$k]);
 				$cardTotal += $pay[$k];
-				if ($pay[$k] > 0) $cardPayments[] = ['label' => $c['label'], 'apr' => $c['apr'], 'amount' => round($pay[$k], 2), 'is_target' => ($k === $targetIdx), 'paid_off' => ($c['bal'] <= 0.005)];
+				$avail = $c['limit'] !== null ? max(0.0, (float)$c['limit'] - (float)$c['bal']) : null;
+				$cardPayments[] = ['label' => $c['label'], 'apr' => $c['apr'], 'amount' => round($pay[$k], 2),
+				                   'is_target' => ($k === $targetIdx), 'paid_off' => ($c['bal'] <= 0.005),
+				                   'balance' => round((float)$c['bal'], 2), 'limit' => $c['limit'],
+				                   'available' => $avail === null ? null : round($avail, 2), 'type' => $c['type']];
 			}
 			unset($c);
 			if ($cardTotal > 0) $out[] = ['label' => 'Card payments (avalanche)', 'amount' => round($cardTotal, 2), 'week' => 0, 'source' => 'auto'];
