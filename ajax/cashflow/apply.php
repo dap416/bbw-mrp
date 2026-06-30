@@ -35,6 +35,16 @@ foreach ($actions as $a) {
 				$results[] = ($type === 'mark_cards_paid' ? 'Marked' : 'Unmarked') . ' card payments for ' . $a['ym'];
 				break;
 
+			case 'mark_expenses_paid':
+			case 'unmark_expenses_paid':
+				if (!ymok($a['ym'] ?? '')) { $results[] = "skip $type: bad month"; break; }
+				$list = expenses_done_months($db);
+				if ($type === 'mark_expenses_paid') { if (!in_array($a['ym'], $list, true)) $list[] = $a['ym']; }
+				else { $list = array_values(array_diff($list, [$a['ym']])); }
+				setting_set($db, 'expenses_done_months', json_encode(array_values($list)));
+				$results[] = ($type === 'mark_expenses_paid' ? 'Marked' : 'Unmarked') . ' operating expenses for ' . $a['ym'];
+				break;
+
 			case 'set_month_actual':
 				if (!ymok($a['ym'] ?? '')) { $results[] = 'skip set_month_actual: bad month'; break; }
 				$field = (($a['field'] ?? '') === 'income') ? 'actual_income' : 'actual_projection';

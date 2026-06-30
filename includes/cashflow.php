@@ -571,6 +571,13 @@
 		return [];
 	}
 
+	/** Months whose operating expenses (recurring, Shopify loan, tax set-aside) are already paid. */
+	function expenses_done_months($db) {
+		try { $v = setting_get($db, 'expenses_done_months'); if ($v) { $j = json_decode($v, true); if (is_array($j)) return $j; } }
+		catch (Throwable $e) {}
+		return [];
+	}
+
 	/**
 	 * Raw-material POs always go on credit cards — recommend which card for each.
 	 * Assigns each upcoming order (from the reorder list) to the LOWEST-APR card
@@ -580,6 +587,7 @@
 	function build_po_card_plan($db, $data) {
 		$cards = [];
 		foreach (($data['manual']['credit'] ?? []) as $c) {
+			if (($c['type'] ?? '') !== 'credit') continue;   // POs go on CREDIT CARDS only — never LOCs / loans
 			$avail = ($c['limit'] !== null) ? max(0.0, (float)$c['limit'] - (float)$c['balance']) : INF;
 			$cards[] = ['label' => $c['label'], 'apr' => $c['apr'], 'avail' => $avail];
 		}
@@ -729,6 +737,7 @@
 
 		$reorder  = cashflow_reorder_suggestions($db);
 		$cardDone = cardpay_done_months($db);
+		$expDone  = expenses_done_months($db);
 		$cash     = (float)$data['eff_cash'];
 		$reserve  = 0.0;                // tax reserve, accrues monthly, paid at quarter end
 		$firstFutureDone = false;       // PO advice shows on the current month, not the prior
@@ -755,11 +764,14 @@
 			$inTotal = array_sum(array_map(fn($x) => $x['amount'], $in));
 
 			// ── Cash out BEFORE card payments ──
-			$loan    = round((float)$row['income'] * $loanPct / 100, 2);
-			$taxSet  = $taxMo;
-			if ($loan > 0)              $out[] = ['label' => 'Shopify Capital (' . rtrim(rtrim(number_format($loanPct, 2), '0'), '.') . '% of sales)', 'amount' => $loan, 'week' => 0, 'source' => 'auto'];
-			if ($row['recurring'] > 0)  $out[] = ['label' => 'Recurring expenses', 'amount' => (float)$row['recurring'], 'week' => 0, 'source' => 'auto'];
-			if ($row['onetime'] > 0)    $out[] = ['label' => 'Bills & POs due', 'amount' => (float)$row['onetime'], 'week' => 0, 'source' => 'auto'];
+			// If a month's operating expenses are already paid (reflected in the bank
+			// balance), skip the recurring/loan/tax projections so they aren't double-counted.
+			$expensesDone = in_array($ym, $expDone, true);
+			$loan    = $expensesDone ? 0.0 : round((float)$row['income'] * $loanPct / 100, 2);
+			$taxSet  = $expensesDone ? 0.0 : $taxMo;
+			if ($loan > 0)                              $out[] = ['label' => 'Shopify Capital (' . rtrim(rtrim(number_format($loanPct, 2), '0'), '.') . '% of sales)', 'amount' => $loan, 'week' => 0, 'source' => 'auto'];
+			if (!$expensesDone && $row['recurring'] > 0)$out[] = ['label' => 'Recurring expenses', 'amount' => (float)$row['recurring'], 'week' => 0, 'source' => 'auto'];
+			if ($row['onetime'] > 0)                    $out[] = ['label' => 'Bills & POs due', 'amount' => (float)$row['onetime'], 'week' => 0, 'source' => 'auto'];
 			if ($taxSet > 0)            $out[] = ['label' => 'Tax reserve set-aside', 'amount' => $taxSet, 'week' => 0, 'source' => 'auto'];
 			foreach (($events['by_ym'][$ym]['out'] ?? []) as $e) $out[] = ['label' => $e['label'], 'amount' => $e['amount'], 'week' => $e['week'], 'source' => 'manual', 'id' => $e['id']];
 
@@ -827,6 +839,7 @@
 				$advice[] = ['kind' => 'good', 'text' => 'Focus debt paydown on ' . $t['label'] . ($t['apr'] !== null ? ' (' . rtrim(rtrim(number_format($t['apr'], 2), '0'), '.') . '% APR)' : '') . ' — pay $' . number_format($pay[$targetIdx], 0) . '; minimums on the rest.'];
 			}
 			if ($cardsDone) $advice[] = ['kind' => 'good', 'text' => 'Card payments already made this month — your reported balances reflect them, so no further payment is recommended.'];
+			if ($expensesDone) $advice[] = ['kind' => 'good', 'text' => 'Operating expenses (recurring, loan, tax) already paid this month — excluded so they are not double-counted.'];
 			foreach ($cardPayments as $cp) if ($cp['paid_off']) $advice[] = ['kind' => 'good', 'text' => '🎉 ' . $cp['label'] . ' paid off this month.'];
 			if ($taxPayment > 0)      $advice[] = ['kind' => 'info', 'text' => 'Quarterly taxes ~$' . number_format($taxPayment, 0) . ' due — covered by the tax reserve you set aside.'];
 			if (!$firstFutureDone) {
