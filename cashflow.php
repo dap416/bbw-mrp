@@ -309,6 +309,7 @@
 			</tbody>
 		</table>
 		<?php endif; ?>
+		<p class="text-muted small mb-0 mt-2"><i class="ti ti-info-circle"></i> These PO's have to be marked paid in the MRP (Orders tab).</p>
 	</div></div>
 	</div>
 </div>
