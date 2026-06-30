@@ -203,6 +203,32 @@
 		</div></div></div>
 
 	</div>
+
+	<!-- RECEIVABLES — schedule expected payment into the right month -->
+	<div class="card mt-2"><div class="card-body">
+		<h6 class="fw-bold mb-1">Owed to You — schedule expected payment</h6>
+		<p class="text-muted small mb-2">Set when each open Shopify order is expected to be paid (e.g. a Net-60 wholesale PO) — it then shows as <strong>cash in</strong> that month. Leave blank to keep it out of the forecast.</p>
+		<?php if (!empty($data['ar']['error'])): ?>
+			<div class="text-muted small"><?php echo htmlspecialchars($data['ar']['error']); ?></div>
+		<?php elseif (empty($data['ar']['items'])): ?>
+			<div class="text-muted small">No open Shopify orders.</div>
+		<?php else: ?>
+		<div class="table-responsive"><table class="table table-sm align-middle mb-0" style="font-size:0.84rem;">
+			<thead><tr style="background:#f1f3f5;"><th>Order</th><th>Customer</th><th>Type</th><th class="text-end">Amount</th><th style="width:175px;">Expected payment</th></tr></thead>
+			<tbody>
+			<?php foreach ($data['ar']['items'] as $a): ?>
+				<tr>
+					<td><?php echo htmlspecialchars($a['name']); ?></td>
+					<td><?php echo htmlspecialchars($a['customer']); ?></td>
+					<td><span class="badge bg-light text-dark" style="font-size:0.6rem;"><?php echo htmlspecialchars($a['type']); ?></span></td>
+					<td class="text-end fw-semibold text-primary"><?php echo money($a['amount']); ?></td>
+					<td><input type="date" class="form-control form-control-sm ar-date" data-key="<?php echo htmlspecialchars($a['name'], ENT_QUOTES); ?>" value="<?php echo htmlspecialchars((string)($a['expected'] ?? ''), ENT_QUOTES); ?>" /></td>
+				</tr>
+			<?php endforeach; ?>
+			</tbody>
+		</table></div>
+		<?php endif; ?>
+	</div></div>
 </details>
 
 <?php $b0 = $blocks[0] ?? null; ?>
@@ -261,6 +287,12 @@
 	</div>
 </div>
 
+<style>
+	.month-drop.drop-hover { outline: 2px dashed #4680ff; outline-offset: -2px; background: #f5f9ff; }
+	.cf-drag:hover { background: #f6f8fa; }
+</style>
+<div class="text-muted small mb-2"><i class="ti ti-grip-vertical"></i> Tip: drag any manual cash-in/out item (your own events) into another month — the whole plan recalculates.</div>
+
 <!-- ── 12 MONTH BLOCKS ─────────────────────────────────────────────────────── -->
 <div class="row g-3">
 <?php foreach ($blocks as $b):
@@ -268,7 +300,7 @@
 	$cashColor = $b['end_cash'] >= 0 ? '#2ca01c' : '#e64545';
 ?>
 	<div class="col-12 col-lg-6 col-xxl-4">
-	<div class="card h-100" style="border-top:3px solid <?php echo $cashColor; ?>;">
+	<div class="card h-100 month-drop" data-ym="<?php echo $b['ym']; ?>" style="border-top:3px solid <?php echo $cashColor; ?>;">
 	<div class="card-body">
 		<div class="d-flex justify-content-between align-items-start mb-2">
 			<h5 class="fw-bold mb-0"><?php echo $b['label']; ?></h5>
@@ -283,7 +315,7 @@
 		<div class="fw-semibold text-uppercase text-success mb-1" style="font-size:0.66rem;letter-spacing:.04em;">Cash In</div>
 		<?php if (empty($b['cash_in'])): ?><div class="text-muted small mb-1">—</div>
 		<?php else: foreach ($b['cash_in'] as $it): ?>
-			<div class="d-flex justify-content-between small py-1" style="border-bottom:1px solid #f1f3f5;">
+			<div class="d-flex justify-content-between small py-1<?php echo $it['source']==='manual' ? ' cf-drag' : ''; ?>"<?php echo $it['source']==='manual' ? ' draggable="true" data-event-id="'.$it['id'].'" style="border-bottom:1px solid #f1f3f5;cursor:grab;" title="Drag to another month"' : ' style="border-bottom:1px solid #f1f3f5;"'; ?>>
 				<span><?php echo htmlspecialchars($it['label']); ?><?php echo ($it['source']==='manual' && $it['week']) ? ' <span class="text-muted" style="font-size:0.68rem;">wk'.$it['week'].'</span>' : ''; ?></span>
 				<span><span class="fw-semibold text-success"><?php echo money0($it['amount']); ?></span><?php echo $it['source']==='manual' ? ' <a href="#" class="ev-edit-id ms-1 text-muted" data-id="'.$it['id'].'" style="font-size:0.66rem;">edit</a>' : ''; ?></span>
 			</div>
@@ -292,7 +324,7 @@
 		<div class="fw-semibold text-uppercase mb-1 mt-2" style="font-size:0.66rem;letter-spacing:.04em;color:#d9822b;">Cash Out</div>
 		<?php if (empty($b['cash_out'])): ?><div class="text-muted small mb-1">—</div>
 		<?php else: foreach ($b['cash_out'] as $it): ?>
-			<div class="d-flex justify-content-between small py-1" style="border-bottom:1px solid #f1f3f5;">
+			<div class="d-flex justify-content-between small py-1<?php echo $it['source']==='manual' ? ' cf-drag' : ''; ?>"<?php echo $it['source']==='manual' ? ' draggable="true" data-event-id="'.$it['id'].'" style="border-bottom:1px solid #f1f3f5;cursor:grab;" title="Drag to another month"' : ' style="border-bottom:1px solid #f1f3f5;"'; ?>>
 				<span><?php echo htmlspecialchars($it['label']); ?><?php echo ($it['source']==='manual' && $it['week']) ? ' <span class="text-muted" style="font-size:0.68rem;">wk'.$it['week'].'</span>' : ''; ?></span>
 				<span><span class="fw-semibold" style="color:#d9822b;"><?php echo money0($it['amount']); ?></span><?php echo $it['source']==='manual' ? ' <a href="#" class="ev-edit-id ms-1 text-muted" data-id="'.$it['id'].'" style="font-size:0.66rem;">edit</a>' : ''; ?></span>
 			</div>
@@ -400,6 +432,17 @@
 	$(document).on('click', '.add-event-for', function(){ $('#addEvBtn').click(); $('#evMonth').val($(this).data('ym')); $('html,body').animate({scrollTop:$('#evForm').offset().top-90},200); $('#evLabel').focus(); });
 	$('#evSaveBtn').on('click', function(){ var $btn=$(this).prop('disabled',true); $.post('/ajax/cashflow/save_event.php', { id:$('#evId').val(), etype:$('#evType').val(), label:$('#evLabel').val(), amount:$('#evAmount').val(), ym:$('#evMonth').val(), week:$('#evWeek').val() }, function(resp){ if($.trim(resp)==='ok') location.reload(); else { $('#evMsg').addClass('text-danger').text(resp); $btn.prop('disabled',false); } }).fail(function(x){ $('#evMsg').addClass('text-danger').text('Save failed: '+(x.responseText||x.status)); $btn.prop('disabled',false); }); });
 	$(document).on('click', '.ev-del', function(e){ e.preventDefault(); if(!confirm('Remove this cash event?'))return; $.post('/ajax/cashflow/delete_event.php', { id:$(this).closest('.ev-row').data('id') }, function(resp){ if($.trim(resp)==='ok') location.reload(); else alert(resp); }); });
+
+	// ── Receivables: expected payment date ──
+	$(document).on('change', '.ar-date', function(){ var $i=$(this).prop('disabled',true); $.post('/ajax/cashflow/save_ar_date.php', { order_key:$(this).data('key'), date:$(this).val() }, function(resp){ if($.trim(resp)==='ok') location.reload(); else { alert(resp); $i.prop('disabled',false); } }).fail(function(){ alert('Save failed'); $i.prop('disabled',false); }); });
+
+	// ── Drag a manual cash event to another month (recalculates everything) ──
+	var cfDragId = null;
+	$(document).on('dragstart', '.cf-drag', function(e){ cfDragId = $(this).data('event-id'); try { e.originalEvent.dataTransfer.setData('text/plain', String(cfDragId)); e.originalEvent.dataTransfer.effectAllowed='move'; } catch(_){} $(this).css('opacity','0.4'); });
+	$(document).on('dragend', '.cf-drag', function(){ $(this).css('opacity',''); $('.month-drop').removeClass('drop-hover'); });
+	$(document).on('dragover', '.month-drop', function(e){ e.preventDefault(); $(this).addClass('drop-hover'); });
+	$(document).on('dragleave', '.month-drop', function(){ $(this).removeClass('drop-hover'); });
+	$(document).on('drop', '.month-drop', function(e){ e.preventDefault(); $(this).removeClass('drop-hover'); var ym=$(this).data('ym'); var id=cfDragId; cfDragId=null; if(!id){ try{ id=e.originalEvent.dataTransfer.getData('text/plain'); }catch(_){} } if(!id) return; var ev=(EVENTS||[]).filter(function(x){return String(x.id)===String(id);})[0]; if(!ev||ev.ym===ym) return; $.post('/ajax/cashflow/save_event.php', { id:ev.id, etype:ev.etype, label:ev.label, amount:ev.amount, ym:ym, week:ev.week }, function(resp){ if($.trim(resp)==='ok') location.reload(); else alert(resp); }); });
 
 	// ── Manual sync (refresh the QuickBooks + Shopify cache) ──
 	$('#syncBtn').on('click', function(){

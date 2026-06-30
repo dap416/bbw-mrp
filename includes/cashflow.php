@@ -89,6 +89,12 @@
 		if (!empty($arR['error'])) { $out['ar']['error'] = $arR['error']; }
 		else { $out['ar']['items'] = $arR['items']; $out['ar']['total'] = $arR['total']; }
 
+		// Overlay user-set expected payment dates (live, not cached) so big
+		// receivables can be moved into the month they're really expected.
+		$arSched = load_ar_schedule($db);
+		foreach ($out['ar']['items'] as &$it) { $it['expected'] = $arSched[$it['name']] ?? null; }
+		unset($it);
+
 		// MRP unpaid purchase orders (what you still owe suppliers on placed POs).
 		try { $db->exec("ALTER TABLE `orders` ADD COLUMN `pay_by` DATE NULL"); } catch (Throwable $e) {}
 		try {
@@ -605,6 +611,17 @@
 		return $res;
 	}
 
+	/** Expected-payment dates for open Shopify receivables (keyed by order name). */
+	function ensure_ar_schedule_table($db) {
+		$db->exec("CREATE TABLE IF NOT EXISTS ar_schedule (order_key VARCHAR(80) PRIMARY KEY, expected_date DATE NULL, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB");
+	}
+	function load_ar_schedule($db) {
+		$out = [];
+		try { ensure_ar_schedule_table($db); foreach ($db->query("SELECT order_key, expected_date FROM ar_schedule") as $r) { if (!empty($r['expected_date'])) $out[$r['order_key']] = $r['expected_date']; } }
+		catch (Throwable $e) {}
+		return $out;
+	}
+
 	/**
 	 * Raw materials that are below their stock level and should be ordered, with
 	 * MOQ-rounded order qty and lead time. Light DB-only heuristic (no Shopify),
@@ -659,6 +676,13 @@
 		$reserve = 0.0;                 // tax reserve, accrues monthly, paid at quarter end
 		$blocks  = [];
 
+		// Receivables the user scheduled into a specific month → that month's cash in.
+		$arByYm = [];
+		foreach (($data['ar']['items'] ?? []) as $it) {
+			if (empty($it['expected'])) continue;
+			$arByYm[substr($it['expected'], 0, 7)][] = $it;
+		}
+
 		foreach (($forecast['rows'] ?? []) as $i => $row) {
 			$ym  = $row['ym'];
 			$mon = (int)date('n', strtotime($ym . '-01'));
@@ -666,6 +690,7 @@
 
 			// ── Cash in ──
 			if ($row['income'] > 0) $in[] = ['label' => 'Projected sales (' . ($row['basis'] === 'qb' ? 'QB income' : 'Shopify') . ')', 'amount' => (float)$row['income'], 'week' => 0, 'source' => 'auto'];
+			foreach (($arByYm[$ym] ?? []) as $it) $in[] = ['label' => 'Receivable: ' . ($it['customer'] ?: $it['name']), 'amount' => (float)$it['amount'], 'week' => 0, 'source' => 'receivable'];
 			foreach (($events['by_ym'][$ym]['in'] ?? []) as $e) $in[] = ['label' => $e['label'], 'amount' => $e['amount'], 'week' => $e['week'], 'source' => 'manual', 'id' => $e['id']];
 			$inTotal = array_sum(array_map(fn($x) => $x['amount'], $in));
 
