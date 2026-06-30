@@ -177,6 +177,8 @@
 		catch (Throwable $e) { /* already there */ }
 		try { $db->exec("ALTER TABLE cash_balances ADD COLUMN qb_account_id VARCHAR(40) NULL"); }
 		catch (Throwable $e) { /* already there */ }
+		try { $db->exec("ALTER TABLE cash_balances ADD COLUMN apr DECIMAL(5,2) NULL"); }
+		catch (Throwable $e) { /* already there */ }
 	}
 
 	/**
@@ -201,6 +203,7 @@
 					'balance' => (float)$r['balance'],
 					'limit'   => $r['credit_limit'] !== null ? (float)$r['credit_limit'] : null,
 					'payment' => isset($r['monthly_payment']) && $r['monthly_payment'] !== null ? (float)$r['monthly_payment'] : 0.0,
+					'apr'     => isset($r['apr']) && $r['apr'] !== null ? (float)$r['apr'] : null,
 					'qb_id'   => $r['qb_account_id'] ?? '',
 					'as_of'   => $r['as_of'],
 					'note'    => $r['note'],
@@ -390,4 +393,141 @@
 			'start_debt'   => $debtBalance,
 			'growth_pct'   => $growthPct,
 		];
+	}
+
+	/** Shopify Capital loan repayment as a % of sales (cash out). Default 25%. */
+	function shopify_loan_pct($db) {
+		try { $v = setting_get($db, 'shopify_loan_pct'); if ($v !== null && $v !== '') return max(0.0, (float)$v); }
+		catch (Throwable $e) {}
+		return 25.0;
+	}
+
+	/** Manual cash-in / cash-out events placed in a specific month + week. */
+	function ensure_cash_events_table($db) {
+		$db->exec("CREATE TABLE IF NOT EXISTS cash_events (
+			id         INT AUTO_INCREMENT PRIMARY KEY,
+			etype      VARCHAR(3)  NOT NULL DEFAULT 'out',  -- in | out
+			label      VARCHAR(160) NOT NULL,
+			amount     DECIMAL(12,2) NOT NULL DEFAULT 0,
+			ym         VARCHAR(7) NOT NULL,                 -- YYYY-MM
+			week       TINYINT NOT NULL DEFAULT 1,          -- 1..4
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			user_id    INT NULL
+		) ENGINE=InnoDB");
+	}
+
+	function load_cash_events($db) {
+		$res = ['by_ym' => [], 'all' => [], 'labels_in' => [], 'labels_out' => []];
+		try {
+			ensure_cash_events_table($db);
+			$li = []; $lo = [];
+			foreach ($db->query("SELECT * FROM cash_events ORDER BY ym, week, id") as $r) {
+				$ev = ['id' => (int)$r['id'], 'etype' => $r['etype'] === 'in' ? 'in' : 'out',
+				       'label' => $r['label'], 'amount' => (float)$r['amount'],
+				       'ym' => $r['ym'], 'week' => max(1, min(4, (int)$r['week']))];
+				$res['all'][] = $ev;
+				$res['by_ym'][$ev['ym']][$ev['etype']][] = $ev;
+				if ($ev['etype'] === 'in') $li[$ev['label']] = true; else $lo[$ev['label']] = true;
+			}
+			$res['labels_in']  = array_keys($li);
+			$res['labels_out'] = array_keys($lo);
+		} catch (Throwable $e) {}
+		return $res;
+	}
+
+	/**
+	 * Raw materials that are below their stock level and should be ordered, with
+	 * MOQ-rounded order qty and lead time. Light DB-only heuristic (no Shopify),
+	 * used for near-month "order raw materials" advice.
+	 */
+	function cashflow_reorder_suggestions($db, $limit = 6) {
+		$onOrder = [];
+		try { foreach ($db->query("SELECT partid, SUM(qty - recqty) AS v FROM orders WHERE (qty - recqty) > 0 GROUP BY partid") as $r) $onOrder[$r['partid']] = max(0, (int)$r['v']); }
+		catch (Throwable $e) {}
+		$out = [];
+		try {
+			foreach ($db->query("SELECT id, partno, `desc`, qoh, bsl, imoq, lead_time, cost FROM parts WHERE bsl > 0") as $p) {
+				$need = (int)$p['bsl'] - (int)$p['qoh'] - (int)($onOrder[$p['id']] ?? 0);
+				if ($need <= 0) continue;
+				$moq   = max(1, (int)$p['imoq']);
+				$order = (int)(ceil($need / $moq) * $moq);
+				$out[] = ['part' => $p['partno'], 'desc' => $p['desc'], 'order' => $order,
+				          'lead_days' => (int)($p['lead_time'] ?? 45), 'cost' => round($order * (float)$p['cost'], 2), 'need' => $need];
+			}
+		} catch (Throwable $e) {}
+		usort($out, fn($a, $b) => $b['need'] <=> $a['need']);
+		return array_slice($out, 0, $limit);
+	}
+
+	/**
+	 * Assemble 12 rolling month blocks (current month → +11). Each block merges
+	 * automatic flows (projected sales, the Shopify-loan % cash-out, recurring
+	 * expenses, planned debt payments, bills/POs due) with the user's manual
+	 * cash-in/out events, and produces per-month totals, running cash, and advice.
+	 */
+	function build_month_blocks($db, $data, $forecast, $events) {
+		$loanPct = shopify_loan_pct($db);
+		$credit  = $data['manual']['credit'] ?? [];
+
+		// Highest-cost card to target for "pay down high-interest" advice:
+		// prefer highest APR, else highest balance.
+		$target = null;
+		foreach ($credit as $c) {
+			if (($c['balance'] ?? 0) <= 0) continue;
+			if ($target === null) { $target = $c; continue; }
+			$ca = $c['apr']; $ta = $target['apr'];
+			if ($ca !== null && $ta !== null) { if ($ca > $ta) $target = $c; }
+			elseif ($ca !== null && $ta === null) { $target = $c; }
+			elseif ($ca === null && $ta === null && $c['balance'] > $target['balance']) { $target = $c; }
+		}
+
+		$reorder = cashflow_reorder_suggestions($db);
+		$cash    = (float)$data['eff_cash'];
+		$blocks  = [];
+
+		foreach (($forecast['rows'] ?? []) as $i => $row) {
+			$ym = $row['ym'];
+			$in = []; $out = [];
+
+			// ── Automatic cash in ──
+			if ($row['income'] > 0) $in[] = ['label' => 'Projected sales (' . ($row['basis'] === 'qb' ? 'QB income' : 'Shopify') . ')', 'amount' => (float)$row['income'], 'week' => 0, 'source' => 'auto'];
+			foreach (($events['by_ym'][$ym]['in'] ?? []) as $e) $in[] = ['label' => $e['label'], 'amount' => $e['amount'], 'week' => $e['week'], 'source' => 'manual', 'id' => $e['id']];
+
+			// ── Automatic cash out ──
+			$loan = round((float)$row['income'] * $loanPct / 100, 2);
+			if ($loan > 0)              $out[] = ['label' => 'Shopify Capital (' . rtrim(rtrim(number_format($loanPct, 2), '0'), '.') . '% of sales)', 'amount' => $loan, 'week' => 0, 'source' => 'auto'];
+			if ($row['recurring'] > 0)  $out[] = ['label' => 'Recurring expenses', 'amount' => (float)$row['recurring'], 'week' => 0, 'source' => 'auto'];
+			if ($row['debt_pay'] > 0)   $out[] = ['label' => 'Debt payments', 'amount' => (float)$row['debt_pay'], 'week' => 0, 'source' => 'auto'];
+			if ($row['onetime'] > 0)    $out[] = ['label' => 'Bills & POs due', 'amount' => (float)$row['onetime'], 'week' => 0, 'source' => 'auto'];
+			foreach (($events['by_ym'][$ym]['out'] ?? []) as $e) $out[] = ['label' => $e['label'], 'amount' => $e['amount'], 'week' => $e['week'], 'source' => 'manual', 'id' => $e['id']];
+
+			$inTotal  = array_sum(array_map(fn($x) => $x['amount'], $in));
+			$outTotal = array_sum(array_map(fn($x) => $x['amount'], $out));
+			$net      = $inTotal - $outTotal;
+			$cash    += $net;
+
+			// ── Advice ──
+			$advice = [];
+			if ($cash < 0) {
+				$advice[] = ['kind' => 'warn', 'text' => 'Projected cash goes negative (ending ' . '$' . number_format($cash, 0) . '). Defer non-essential spending or pull income forward.'];
+			} elseif ($net > 0 && $target) {
+				$nm = $target['label'] . ($target['apr'] !== null ? ' (' . rtrim(rtrim(number_format($target['apr'], 2), '0'), '.') . '% APR)' : '');
+				$advice[] = ['kind' => 'good', 'text' => 'Surplus of $' . number_format($net, 0) . ' — consider an extra payment toward ' . $nm . ' to cut interest.'];
+			}
+			if ($row['onetime'] > 0) $advice[] = ['kind' => 'info', 'text' => 'Bills/POs of $' . number_format($row['onetime'], 0) . ' due this month — reserve the cash.'];
+			if ($i === 0 && !empty($reorder)) {
+				$parts = array_map(fn($r) => $r['part'] . ' (' . number_format($r['order']) . ', ~' . $r['lead_days'] . 'd lead)', array_slice($reorder, 0, 4));
+				$advice[] = ['kind' => 'info', 'text' => 'Raw materials below stock level — order soon (lead times): ' . implode('; ', $parts) . '.'];
+			}
+
+			$blocks[] = [
+				'ym' => $ym, 'label' => $row['label'],
+				'cash_in' => $in, 'cash_out' => $out,
+				'in_total' => $inTotal, 'out_total' => $outTotal, 'net' => $net,
+				'end_cash' => $cash, 'end_debt' => (float)$row['end_debt'],
+				'advice' => $advice,
+			];
+		}
+
+		return ['blocks' => $blocks, 'loan_pct' => $loanPct, 'start_cash' => (float)$data['eff_cash']];
 	}
