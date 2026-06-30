@@ -27,6 +27,15 @@
 	function money($n)  { return '$' . number_format((float)$n, 2); }
 	function money0($n) { return '$' . number_format((float)$n, 0); }
 	function fdate($d)  { return ($d && $d !== '0000-00-00' && $d !== '0000-00-00 00:00:00') ? date('m/d/y', strtotime($d)) : '—'; }
+	function bal_badge($a) {
+		if (!empty($a['due'])) {
+			$t = $a['days_old'] === null ? 'no date — update' : $a['days_old'] . 'd · update due';
+			return ' <span class="badge bg-danger" style="font-size:0.58rem;vertical-align:middle;">' . $t . '</span>';
+		}
+		return ' <span class="badge" style="font-size:0.58rem;vertical-align:middle;background:#e6f4ea;color:#1e7e34;">' . (int)$a['days_old'] . 'd ago</span>';
+	}
+	$balDue = (int)($data['manual']['due_count'] ?? 0);
+	$updDays = (int)($data['manual']['update_days'] ?? 7);
 
 	$monthOpts = '';
 	foreach ($blocks as $b) $monthOpts .= '<option value="'.$b['ym'].'">'.htmlspecialchars($b['label']).'</option>';
@@ -82,15 +91,22 @@
 	</div></div></div>
 </div>
 
-<!-- ── MANAGE (background inputs, collapsed) ───────────────────────────────── -->
-<details class="mb-3">
+<?php if ($balDue > 0): ?>
+<div class="alert alert-warning d-flex justify-content-between align-items-center flex-wrap gap-2 py-2">
+	<div>⚠ <strong><?php echo $balDue; ?> account balance<?php echo $balDue === 1 ? '' : 's'; ?></strong> need the weekly update (older than <?php echo $updDays; ?> days). Keeping balances current keeps the whole forecast accurate.</div>
+	<button class="btn btn-sm btn-warning" id="openBalances">Update now</button>
+</div>
+<?php endif; ?>
+
+<!-- ── MANAGE (background inputs) ───────────────────────────────────────────── -->
+<details class="mb-3" id="manageDetails"<?php echo $balDue > 0 ? ' open' : ''; ?>>
 	<summary class="btn btn-sm btn-light-secondary">⚙ Manage balances, recurring costs, cash events &amp; settings</summary>
 	<div class="row g-3 mt-1">
 
 		<!-- BALANCES -->
 		<div class="col-12 col-lg-4"><div class="card h-100"><div class="card-body">
-			<div class="d-flex justify-content-between align-items-center mb-2"><h6 class="fw-bold mb-0">Account Balances</h6><button class="btn btn-sm btn-light-primary" id="addBalBtn">+ Add / Update</button></div>
-			<p class="text-muted mb-2" style="font-size:0.72rem;">Keep current — balance + date of accuracy. Add a card's <strong>APR</strong> so paydown advice targets the costliest debt.</p>
+			<div class="d-flex justify-content-between align-items-center mb-2"><h6 class="fw-bold mb-0">Account Balances</h6><button class="btn btn-sm btn-light-primary" id="addBalBtn">+ Add account</button></div>
+			<p class="text-muted mb-2" style="font-size:0.72rem;">Permanent accounts. <strong>Update each balance weekly</strong> (every <?php echo $updDays; ?> days) — a red badge means it's due. APR rarely changes but stays editable.</p>
 			<div id="balForm" class="border rounded p-2 mb-3 hidden" style="background:#f8f9fb;">
 				<input type="hidden" id="balId" value="" /><input type="hidden" id="balQbId" value="" />
 				<div class="row g-2">
@@ -114,16 +130,16 @@
 			<?php if (empty($data['manual']['bank'])): ?><div class="text-muted small mb-2">None entered.</div>
 			<?php else: foreach ($data['manual']['bank'] as $a): ?>
 				<div class="d-flex justify-content-between align-items-center border-bottom py-1 small bal-row" data-id="<?php echo $a['id']; ?>" data-label="<?php echo htmlspecialchars($a['label'], ENT_QUOTES); ?>" data-type="bank" data-balance="<?php echo $a['balance']; ?>" data-qbid="<?php echo htmlspecialchars((string)$a['qb_id'], ENT_QUOTES); ?>" data-asof="<?php echo $a['as_of']; ?>" data-note="<?php echo htmlspecialchars((string)$a['note'], ENT_QUOTES); ?>">
-					<span><?php echo htmlspecialchars($a['label']); ?> <span class="text-muted" style="font-size:0.7rem;">· <?php echo fdate($a['as_of']); ?></span></span>
-					<span><span class="fw-semibold"><?php echo money($a['balance']); ?></span> <a href="#" class="bal-edit ms-1" style="font-size:0.7rem;">edit</a> <a href="#" class="bal-del ms-1 text-danger" style="font-size:0.7rem;">×</a></span>
+					<span><?php echo htmlspecialchars($a['label']); ?> <span class="text-muted" style="font-size:0.7rem;">· <?php echo fdate($a['as_of']); ?></span><?php echo bal_badge($a); ?></span>
+					<span><span class="fw-semibold"><?php echo money($a['balance']); ?></span> <a href="#" class="bal-update ms-1 fw-semibold" style="font-size:0.7rem;">update</a> <a href="#" class="bal-edit ms-1 text-muted" style="font-size:0.7rem;">edit</a> <a href="#" class="bal-del ms-1 text-danger" style="font-size:0.7rem;">×</a></span>
 				</div>
 			<?php endforeach; endif; ?>
 			<div class="fw-semibold small text-muted mb-1 mt-3">Credit Cards / Lines of Credit</div>
 			<?php if (empty($data['manual']['credit'])): ?><div class="text-muted small">None entered.</div>
 			<?php else: foreach ($data['manual']['credit'] as $a): ?>
 				<div class="d-flex justify-content-between align-items-center border-bottom py-1 small bal-row" data-id="<?php echo $a['id']; ?>" data-label="<?php echo htmlspecialchars($a['label'], ENT_QUOTES); ?>" data-type="<?php echo $a['type']; ?>" data-balance="<?php echo $a['balance']; ?>" data-limit="<?php echo $a['limit']; ?>" data-payment="<?php echo $a['payment']; ?>" data-apr="<?php echo $a['apr'] !== null ? $a['apr'] : ''; ?>" data-qbid="<?php echo htmlspecialchars((string)$a['qb_id'], ENT_QUOTES); ?>" data-asof="<?php echo $a['as_of']; ?>" data-note="<?php echo htmlspecialchars((string)$a['note'], ENT_QUOTES); ?>">
-					<span><?php echo htmlspecialchars($a['label']); ?> <span class="text-muted" style="font-size:0.7rem;">· <?php echo htmlspecialchars($a['kind']); ?><?php echo $a['apr'] !== null ? ' · '.rtrim(rtrim(number_format($a['apr'],2),'0'),'.').'% APR' : ''; ?><?php echo $a['payment'] > 0 ? ' · '.money($a['payment']).'/mo' : ''; ?></span></span>
-					<span><span class="fw-semibold" style="color:#d9822b;"><?php echo money($a['balance']); ?></span> <a href="#" class="bal-edit ms-1" style="font-size:0.7rem;">edit</a> <a href="#" class="bal-del ms-1 text-danger" style="font-size:0.7rem;">×</a></span>
+					<span><?php echo htmlspecialchars($a['label']); ?> <span class="text-muted" style="font-size:0.7rem;">· <?php echo htmlspecialchars($a['kind']); ?><?php echo $a['apr'] !== null ? ' · '.rtrim(rtrim(number_format($a['apr'],2),'0'),'.').'% APR' : ''; ?><?php echo $a['payment'] > 0 ? ' · '.money($a['payment']).'/mo' : ''; ?></span><?php echo bal_badge($a); ?></span>
+					<span><span class="fw-semibold" style="color:#d9822b;"><?php echo money($a['balance']); ?></span> <a href="#" class="bal-update ms-1 fw-semibold" style="font-size:0.7rem;">update</a> <a href="#" class="bal-edit ms-1 text-muted" style="font-size:0.7rem;">edit</a> <a href="#" class="bal-del ms-1 text-danger" style="font-size:0.7rem;">×</a></span>
 				</div>
 			<?php endforeach; endif; ?>
 		</div></div></div>
@@ -283,6 +299,9 @@
 	$('#addBalBtn').on('click', function(){ $('#balId,#balQbId,#balLabel,#balAmount,#balLimit,#balPayment,#balApr,#balNote').val(''); $('#balQbAccount').val(''); $('#balType').val('bank').trigger('change'); $('#balAsOf').val('<?php echo date('Y-m-d'); ?>'); $('#balMsg').text(''); balShowForm(true); });
 	$('#balCancelBtn').on('click', function(){ balShowForm(false); });
 	$(document).on('click', '.bal-edit', function(e){ e.preventDefault(); var $r=$(this).closest('.bal-row'); $('#balId').val($r.data('id')); $('#balQbId').val($r.data('qbid')||''); $('#balQbAccount').val($r.data('qbid')||''); $('#balLabel').val($r.data('label')); $('#balType').val($r.data('type')).trigger('change'); $('#balAmount').val($r.data('balance')); $('#balLimit').val($r.data('limit')||''); $('#balPayment').val($r.data('payment')||''); $('#balApr').val($r.data('apr')||''); $('#balAsOf').val($r.data('asof')||''); $('#balNote').val($r.data('note')||''); $('#balMsg').text(''); balShowForm(true); });
+	// Quick weekly update: prefill everything, set the date to TODAY, focus the amount.
+	$(document).on('click', '.bal-update', function(e){ e.preventDefault(); $('#manageDetails').attr('open','open'); var $r=$(this).closest('.bal-row'); $('#balId').val($r.data('id')); $('#balQbId').val($r.data('qbid')||''); $('#balQbAccount').val($r.data('qbid')||''); $('#balLabel').val($r.data('label')); $('#balType').val($r.data('type')).trigger('change'); $('#balAmount').val($r.data('balance')); $('#balLimit').val($r.data('limit')||''); $('#balPayment').val($r.data('payment')||''); $('#balApr').val($r.data('apr')||''); $('#balAsOf').val('<?php echo date('Y-m-d'); ?>'); $('#balNote').val($r.data('note')||''); $('#balMsg').text(''); balShowForm(true); $('html,body').animate({scrollTop:$('#balForm').offset().top-90},200); $('#balAmount').focus().select(); });
+	$('#openBalances').on('click', function(){ $('#manageDetails').attr('open','open'); $('html,body').animate({scrollTop:$('#manageDetails').offset().top-90},200); });
 	$('#balSaveBtn').on('click', function(){ var $btn=$(this).prop('disabled',true); $.post('/ajax/cashflow/save_balance.php', { id:$('#balId').val(), label:$('#balLabel').val(), acct_type:$('#balType').val(), balance:$('#balAmount').val(), credit_limit:$('#balLimit').val(), monthly_payment:$('#balPayment').val(), apr:$('#balApr').val(), qb_account_id:$('#balQbId').val(), as_of:$('#balAsOf').val(), note:$('#balNote').val() }, function(resp){ if($.trim(resp)==='ok') location.reload(); else { $('#balMsg').addClass('text-danger').text(resp); $btn.prop('disabled',false); } }).fail(function(x){ $('#balMsg').addClass('text-danger').text('Save failed: '+(x.responseText||x.status)); $btn.prop('disabled',false); }); });
 	$(document).on('click', '.bal-del', function(e){ e.preventDefault(); if(!confirm('Remove this account balance?'))return; $.post('/ajax/cashflow/delete_balance.php', { id:$(this).closest('.bal-row').data('id') }, function(resp){ if($.trim(resp)==='ok') location.reload(); else alert(resp); }); });
 

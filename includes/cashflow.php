@@ -187,11 +187,18 @@
 			'bank' => [], 'credit' => [],
 			'bank_total' => 0.0, 'credit_total' => 0.0,
 			'credit_limit_total' => 0.0, 'credit_available' => 0.0,
-			'oldest_asof' => null,
+			'oldest_asof' => null, 'due_count' => 0, 'update_days' => 7,
 		];
 		try {
 			ensure_cash_balances_table($db);
+			$updDays   = balance_update_days($db);
+			$res['due_count']   = 0;
+			$res['update_days'] = $updDays;
 			foreach ($db->query("SELECT * FROM cash_balances ORDER BY acct_type, label") as $r) {
+				$daysOld = (!empty($r['as_of']) && $r['as_of'] !== '0000-00-00')
+					? (int)floor((strtotime(date('Y-m-d')) - strtotime($r['as_of'])) / 86400) : null;
+				$due = ($daysOld === null || $daysOld >= $updDays);
+				if ($due) $res['due_count']++;
 				$row = [
 					'id'      => (int)$r['id'],
 					'label'   => $r['label'],
@@ -201,6 +208,8 @@
 					'apr'     => isset($r['apr']) && $r['apr'] !== null ? (float)$r['apr'] : null,
 					'qb_id'   => $r['qb_account_id'] ?? '',
 					'as_of'   => $r['as_of'],
+					'days_old'=> $daysOld,
+					'due'     => $due,
 					'note'    => $r['note'],
 					'type'    => $r['acct_type'],
 				];
@@ -491,6 +500,13 @@
 		}
 		cf_cache_set($db, '__synced_at', date('Y-m-d H:i:s'));
 		return $log;
+	}
+
+	/** How many days before a manual account balance is "due" for its formal update. Default 7. */
+	function balance_update_days($db) {
+		try { $v = setting_get($db, 'balance_update_days'); if ($v !== null && $v !== '') return max(1, (int)$v); }
+		catch (Throwable $e) {}
+		return 7;
 	}
 
 	/** Shopify Capital loan repayment as a % of sales (cash out). Default 25%. */
