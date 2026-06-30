@@ -22,6 +22,7 @@
 	$monthData= build_month_blocks($db, $data, $forecast, $events);
 	$blocks   = $monthData['blocks'];
 	$loanPct  = $monthData['loan_pct'];
+	$syncedAt = cf_synced_at($db);
 
 	function money($n)  { return '$' . number_format((float)$n, 2); }
 	function money0($n) { return '$' . number_format((float)$n, 0); }
@@ -37,11 +38,20 @@
 		<h2 class="fw-bold mb-0">Cash Flow<?php echo $data['qb_company'] ? ' <span class="text-muted fw-normal" style="font-size:0.6em;">· '.htmlspecialchars($data['qb_company']).'</span>' : ''; ?></h2>
 		<div class="text-muted small">12-month rolling plan. Each month combines projected sales, the <?php echo rtrim(rtrim(number_format($loanPct,2),'0'),'.'); ?>% Shopify loan, recurring costs, debt payments, bills/POs, and your own cash events.</div>
 	</div>
-	<form method="get" class="d-flex align-items-center gap-2 mb-0">
-		<label class="small text-muted mb-0">Sales growth vs last yr:</label>
-		<div class="input-group input-group-sm" style="width:110px;"><input type="number" step="1" name="growth" class="form-control" value="<?php echo (int)$growth; ?>" /><span class="input-group-text">%</span></div>
-		<button class="btn btn-sm btn-light-primary">Apply</button>
-	</form>
+	<div class="d-flex align-items-center gap-3 flex-wrap">
+		<div class="text-end">
+			<div class="small text-muted" id="syncLabel">
+				<?php if ($syncedAt): ?>QuickBooks synced <?php echo date('M j, g:i A', strtotime($syncedAt)); ?>
+				<?php else: ?>Not synced yet — click Refresh<?php endif; ?>
+			</div>
+			<button id="syncBtn" class="btn btn-sm btn-light-secondary py-0" style="font-size:0.75rem;"><i class="ti ti-refresh me-1"></i>Refresh now</button>
+		</div>
+		<form method="get" class="d-flex align-items-center gap-2 mb-0">
+			<label class="small text-muted mb-0">Growth vs last yr:</label>
+			<div class="input-group input-group-sm" style="width:100px;"><input type="number" step="1" name="growth" class="form-control" value="<?php echo (int)$growth; ?>" /><span class="input-group-text">%</span></div>
+			<button class="btn btn-sm btn-light-primary">Apply</button>
+		</form>
+	</div>
 </div>
 
 <?php if (!$data['qb_connected']): ?>
@@ -295,6 +305,15 @@
 	$(document).on('click', '.add-event-for', function(){ $('#addEvBtn').click(); $('#evMonth').val($(this).data('ym')); $('html,body').animate({scrollTop:$('#evForm').offset().top-90},200); $('#evLabel').focus(); });
 	$('#evSaveBtn').on('click', function(){ var $btn=$(this).prop('disabled',true); $.post('/ajax/cashflow/save_event.php', { id:$('#evId').val(), etype:$('#evType').val(), label:$('#evLabel').val(), amount:$('#evAmount').val(), ym:$('#evMonth').val(), week:$('#evWeek').val() }, function(resp){ if($.trim(resp)==='ok') location.reload(); else { $('#evMsg').addClass('text-danger').text(resp); $btn.prop('disabled',false); } }).fail(function(x){ $('#evMsg').addClass('text-danger').text('Save failed: '+(x.responseText||x.status)); $btn.prop('disabled',false); }); });
 	$(document).on('click', '.ev-del', function(e){ e.preventDefault(); if(!confirm('Remove this cash event?'))return; $.post('/ajax/cashflow/delete_event.php', { id:$(this).closest('.ev-row').data('id') }, function(resp){ if($.trim(resp)==='ok') location.reload(); else alert(resp); }); });
+
+	// ── Manual sync (refresh the QuickBooks + Shopify cache) ──
+	$('#syncBtn').on('click', function(){
+		var $btn = $(this).prop('disabled', true);
+		$('#syncLabel').text('Refreshing from QuickBooks & Shopify…');
+		$.ajax({ url: '/ajax/cashflow/sync.php', method: 'POST', dataType: 'json', timeout: 180000 })
+			.done(function(d){ if (d && d.ok) { location.reload(); } else { $('#syncLabel').text(d && d.error ? d.error : 'Sync failed.'); $btn.prop('disabled', false); } })
+			.fail(function(xhr, status){ $('#syncLabel').text(status === 'timeout' ? 'Sync timed out — try again.' : 'Sync failed.'); $btn.prop('disabled', false); });
+	});
 
 	// ── Shopify loan % ──
 	$('#loanSaveBtn').on('click', function(){ var $btn=$(this).prop('disabled',true); $.post('/ajax/cashflow/save_settings.php', { shopify_loan_pct:$('#loanPct').val() }, function(resp){ if($.trim(resp)==='ok') location.reload(); else { $('#loanMsg').addClass('text-danger').text(resp); $btn.prop('disabled',false); } }).fail(function(x){ $('#loanMsg').addClass('text-danger').text('Failed'); $btn.prop('disabled',false); }); });

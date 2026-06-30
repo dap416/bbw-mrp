@@ -26,12 +26,12 @@
 		];
 
 		if (qb_is_connected()) {
-			// Company name (also acts as a connectivity check).
-			$ci = qb_query("SELECT * FROM CompanyInfo");
-			if (empty($ci['error'])) $out['qb_company'] = $ci['CompanyInfo'][0]['CompanyName'] ?? '';
+			// Company name (from cache).
+			$out['qb_company'] = cf_company($db);
 
-			// Accounts — split into cash vs credit/LOC liabilities.
-			$acc = qb_query("SELECT * FROM Account WHERE Active = true");
+			// Accounts — split into cash vs credit/LOC liabilities (from cache).
+			$accW = cf_accounts($db);
+			$acc  = ['error' => $accW['error'], 'Account' => $accW['accounts']];
 			if (!empty($acc['error'])) {
 				$out['cash']['error']   = $acc['error'];
 				$out['credit']['error'] = $acc['error'];
@@ -61,8 +61,9 @@
 				}
 			}
 
-			// Open bills (money you owe vendors, with due dates).
-			$bills = qb_query("SELECT * FROM Bill WHERE Balance > '0' ORDERBY DueDate ASC MAXRESULTS 200");
+			// Open bills (money you owe vendors, with due dates) — from cache.
+			$billW = cf_bills($db);
+			$bills = ['error' => $billW['error'], 'Bill' => $billW['bills']];
 			if (!empty($bills['error'])) {
 				$out['bills']['error'] = $bills['error'];
 			} else {
@@ -84,15 +85,9 @@
 
 		// Money owed to YOU = open / unpaid Shopify orders (NOT income — this is
 		// expected future cash, shown separately and never added to the forecast).
-		if (function_exists('shopify_open_receivables') && shopify_is_configured()) {
-			try {
-				$rec = shopify_open_receivables();
-				if (!empty($rec['error'])) { $out['ar']['error'] = $rec['error']; }
-				else { $out['ar']['items'] = $rec['items']; $out['ar']['total'] = $rec['total']; }
-			} catch (Throwable $e) { $out['ar']['error'] = $e->getMessage(); }
-		} else {
-			$out['ar']['error'] = 'Shopify is not connected.';
-		}
+		$arR = cf_ar($db);
+		if (!empty($arR['error'])) { $out['ar']['error'] = $arR['error']; }
+		else { $out['ar']['items'] = $arR['items']; $out['ar']['total'] = $arR['total']; }
 
 		// MRP unpaid purchase orders (what you still owe suppliers on placed POs).
 		try {
@@ -254,14 +249,9 @@
 		$priorFrom = date('Y-m-01', strtotime($rows[0]['ym'] . '-01 -1 year'));
 		$priorTo   = date('Y-m-t',  strtotime("+" . ($months - 1) . " month", strtotime($priorFrom)));
 
-		$shop = ['by_month' => [], 'error' => 'not connected'];
-		$qb   = ['by_month' => [], 'error' => 'not connected'];
-		if (function_exists('shopify_revenue_in_range') && shopify_is_configured()) {
-			try { $shop = shopify_revenue_in_range($priorFrom, $priorTo); } catch (Throwable $e) { $shop = ['by_month'=>[], 'error'=>$e->getMessage()]; }
-		}
-		if (function_exists('qb_monthly_income') && qb_is_connected()) {
-			try { $qb = qb_monthly_income($priorFrom, $priorTo, true); } catch (Throwable $e) { $qb = ['by_month'=>[], 'error'=>$e->getMessage()]; }
-		}
+		// Served from the nightly cache (wide window covers any rolling prior year).
+		$shop = cf_revenue($db);
+		$qb   = cf_income($db);
 
 		$mult = 1 + ($growthPct / 100.0);
 		foreach ($rows as &$m) {
@@ -331,8 +321,8 @@
 
 		// "Both": if no recurring items entered, fall back to a QuickBooks estimate.
 		$qbEstimate = null;
-		if ($recurMo <= 0 && function_exists('qb_monthly_expense_estimate') && qb_is_connected()) {
-			$est = qb_monthly_expense_estimate(3);
+		if ($recurMo <= 0) {
+			$est = cf_expense($db);
 			if (empty($est['error']) && $est['monthly'] > 0) { $qbEstimate = $est['monthly']; $recurMo = $est['monthly']; }
 		}
 
@@ -393,6 +383,114 @@
 			'start_debt'   => $debtBalance,
 			'growth_pct'   => $growthPct,
 		];
+	}
+
+	// ── QuickBooks / Shopify nightly cache ────────────────────────────────────
+	// The Cash Flow page reads these from a local table (fast). A nightly cron
+	// (and a manual "Refresh now") calls cashflow_sync() to repopulate them. Each
+	// wrapper serves cache by default, fetches live when the cache is empty or
+	// $fresh, and falls back to stale cache if a live fetch errors.
+
+	function cf_cache_ensure($db) {
+		$db->exec("CREATE TABLE IF NOT EXISTS data_cache (
+			ckey VARCHAR(64) PRIMARY KEY, cval LONGTEXT, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		) ENGINE=InnoDB");
+	}
+	function cf_cache_set($db, $k, $v) {
+		try { cf_cache_ensure($db);
+			$db->prepare("INSERT INTO data_cache (ckey,cval,updated_at) VALUES (?,?,NOW()) ON DUPLICATE KEY UPDATE cval=VALUES(cval), updated_at=NOW()")
+			   ->execute([$k, json_encode($v)]);
+		} catch (Throwable $e) {}
+	}
+	function cf_cache_get($db, $k, $default = null) {
+		try { cf_cache_ensure($db);
+			$s = $db->prepare("SELECT cval FROM data_cache WHERE ckey = ?"); $s->execute([$k]);
+			$r = $s->fetch();
+			if ($r && $r['cval'] !== null) { $d = json_decode($r['cval'], true); return $d === null ? $default : $d; }
+		} catch (Throwable $e) {}
+		return $default;
+	}
+	function cf_synced_at($db) { return cf_cache_get($db, '__synced_at', null); }
+
+	function cf_company($db, $fresh = false) {
+		if (!$fresh) { $c = cf_cache_get($db, 'qb_company', null); if ($c !== null) return $c; }
+		if (!qb_is_connected()) return (string)cf_cache_get($db, 'qb_company', '');
+		$r = qb_query("SELECT * FROM CompanyInfo");
+		if (!empty($r['error'])) return (string)cf_cache_get($db, 'qb_company', '');
+		$name = $r['CompanyInfo'][0]['CompanyName'] ?? '';
+		cf_cache_set($db, 'qb_company', $name);
+		return $name;
+	}
+	function cf_accounts($db, $fresh = false) {
+		if (!$fresh) { $c = cf_cache_get($db, 'qb_accounts', null); if ($c !== null) return ['error' => null, 'accounts' => $c, 'cached' => true]; }
+		if (!qb_is_connected()) { $c = cf_cache_get($db, 'qb_accounts', null); return ['error' => $c === null ? 'QuickBooks is not connected.' : null, 'accounts' => $c ?? [], 'cached' => $c !== null]; }
+		$r = qb_query("SELECT * FROM Account WHERE Active = true");
+		if (!empty($r['error'])) { $c = cf_cache_get($db, 'qb_accounts', null); return ['error' => $c !== null ? null : $r['error'], 'accounts' => $c ?? [], 'cached' => $c !== null]; }
+		$a = $r['Account'] ?? []; cf_cache_set($db, 'qb_accounts', $a);
+		return ['error' => null, 'accounts' => $a, 'cached' => false];
+	}
+	function cf_bills($db, $fresh = false) {
+		if (!$fresh) { $c = cf_cache_get($db, 'qb_bills', null); if ($c !== null) return ['error' => null, 'bills' => $c, 'cached' => true]; }
+		if (!qb_is_connected()) { $c = cf_cache_get($db, 'qb_bills', null); return ['error' => $c === null ? 'QuickBooks is not connected.' : null, 'bills' => $c ?? [], 'cached' => $c !== null]; }
+		$r = qb_query("SELECT * FROM Bill WHERE Balance > '0' ORDERBY DueDate ASC MAXRESULTS 200");
+		if (!empty($r['error'])) { $c = cf_cache_get($db, 'qb_bills', null); return ['error' => $c !== null ? null : $r['error'], 'bills' => $c ?? [], 'cached' => $c !== null]; }
+		$b = $r['Bill'] ?? []; cf_cache_set($db, 'qb_bills', $b);
+		return ['error' => null, 'bills' => $b, 'cached' => false];
+	}
+	function cf_income($db, $fresh = false) {
+		if (!$fresh) { $c = cf_cache_get($db, 'qb_income', null); if ($c !== null) return ['error' => null, 'by_month' => $c]; }
+		if (!function_exists('qb_monthly_income') || !qb_is_connected()) { $c = cf_cache_get($db, 'qb_income', null); return ['error' => $c === null ? 'not connected' : null, 'by_month' => $c ?? []]; }
+		$r = qb_monthly_income(date('Y-m-01', strtotime('-25 month')), date('Y-m-d'), true);
+		if (!empty($r['error'])) { $c = cf_cache_get($db, 'qb_income', null); return ['error' => $c !== null ? null : $r['error'], 'by_month' => $c ?? []]; }
+		cf_cache_set($db, 'qb_income', $r['by_month'] ?? []);
+		return ['error' => null, 'by_month' => $r['by_month'] ?? []];
+	}
+	function cf_expense($db, $fresh = false) {
+		if (!$fresh) { $c = cf_cache_get($db, 'qb_expense', null); if ($c !== null) return ['error' => null, 'monthly' => (float)$c]; }
+		if (!function_exists('qb_monthly_expense_estimate') || !qb_is_connected()) { $c = cf_cache_get($db, 'qb_expense', null); return ['error' => $c === null ? 'not connected' : null, 'monthly' => (float)($c ?? 0)]; }
+		$r = qb_monthly_expense_estimate(3);
+		if (!empty($r['error'])) { $c = cf_cache_get($db, 'qb_expense', null); return ['error' => $c !== null ? null : $r['error'], 'monthly' => (float)($c ?? 0)]; }
+		cf_cache_set($db, 'qb_expense', $r['monthly'] ?? 0);
+		return ['error' => null, 'monthly' => (float)($r['monthly'] ?? 0)];
+	}
+	function cf_revenue($db, $fresh = false) {
+		if (!$fresh) { $c = cf_cache_get($db, 'shop_revenue', null); if ($c !== null) return ['error' => null, 'by_month' => $c]; }
+		if (!function_exists('shopify_revenue_in_range') || !shopify_is_configured()) { $c = cf_cache_get($db, 'shop_revenue', null); return ['error' => $c === null ? 'not connected' : null, 'by_month' => $c ?? []]; }
+		try { $r = shopify_revenue_in_range(date('Y-m-01', strtotime('-25 month')), date('Y-m-d')); }
+		catch (Throwable $e) { $c = cf_cache_get($db, 'shop_revenue', null); return ['error' => $c !== null ? null : $e->getMessage(), 'by_month' => $c ?? []]; }
+		if (!empty($r['error'])) { $c = cf_cache_get($db, 'shop_revenue', null); return ['error' => $c !== null ? null : $r['error'], 'by_month' => $c ?? []]; }
+		cf_cache_set($db, 'shop_revenue', $r['by_month'] ?? []);
+		return ['error' => null, 'by_month' => $r['by_month'] ?? []];
+	}
+	function cf_ar($db, $fresh = false) {
+		if (!$fresh) { $c = cf_cache_get($db, 'shop_ar', null); if ($c !== null) return $c; }
+		if (!function_exists('shopify_open_receivables') || !shopify_is_configured()) { $c = cf_cache_get($db, 'shop_ar', null); return $c ?? ['error' => 'Shopify is not connected.', 'items' => [], 'total' => 0]; }
+		try { $r = shopify_open_receivables(); }
+		catch (Throwable $e) { $c = cf_cache_get($db, 'shop_ar', null); return $c ?? ['error' => $e->getMessage(), 'items' => [], 'total' => 0]; }
+		if (!empty($r['error'])) { $c = cf_cache_get($db, 'shop_ar', null); return $c ?? ['error' => $r['error'], 'items' => [], 'total' => 0]; }
+		$v = ['error' => null, 'items' => $r['items'] ?? [], 'total' => $r['total'] ?? 0];
+		cf_cache_set($db, 'shop_ar', $v);
+		return $v;
+	}
+
+	/** Refresh every cached dataset (QuickBooks + Shopify) the Cash Flow page uses. */
+	function cashflow_sync($db) {
+		$log = [];
+		$steps = [
+			'QuickBooks company'   => fn() => cf_company($db, true),
+			'QuickBooks accounts'  => fn() => cf_accounts($db, true),
+			'QuickBooks bills'     => fn() => cf_bills($db, true),
+			'QuickBooks income'    => fn() => cf_income($db, true),
+			'QuickBooks expenses'  => fn() => cf_expense($db, true),
+			'Shopify receivables'  => fn() => cf_ar($db, true),
+			'Shopify revenue'      => fn() => cf_revenue($db, true),
+		];
+		foreach ($steps as $name => $fn) {
+			try { $r = $fn(); $err = is_array($r) ? ($r['error'] ?? null) : null; $log[] = ($err ? '⚠ ' : '✓ ') . $name . ($err ? ' — ' . $err : ''); }
+			catch (Throwable $e) { $log[] = '⚠ ' . $name . ' — ' . $e->getMessage(); }
+		}
+		cf_cache_set($db, '__synced_at', date('Y-m-d H:i:s'));
+		return $log;
 	}
 
 	/** Shopify Capital loan repayment as a % of sales (cash out). Default 25%. */
