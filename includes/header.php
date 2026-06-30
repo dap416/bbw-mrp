@@ -118,6 +118,15 @@
         </li>
         <?php } ?>
 
+        <?php if (has_access('build') || has_access('research')) { ?>
+        <li class="pc-item">
+          <a href="/tradeshows.php" class="pc-link">
+            <span class="pc-micon"><i class="ti ti-tent"></i></span>
+            <span class="pc-mtext">Tradeshow Planner</span>
+          </a>
+        </li>
+        <?php } ?>
+
         <?php if (has_access('build')) { ?>
         <li class="pc-item">
           <a href="/build.php" class="pc-link">

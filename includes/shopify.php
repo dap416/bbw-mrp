@@ -880,6 +880,96 @@
 		return ['error' => null, 'locations' => $locs, 'data' => $data];
 	}
 
+	/**
+	 * Tradeshow / event POS locations (name => numeric Shopify location id).
+	 * These are real Shopify locations, so sales attribute to a show exactly.
+	 * Overridable via the `tradeshow_locations` setting (JSON array of {name,id}).
+	 */
+	function tradeshow_locations() {
+		$default = [
+			['name' => 'Squadfest',               'id' => '106768269591'],
+			['name' => 'Game Fair (MN)',          'id' => '87163011351'],
+			['name' => 'Waterfowl Expo OshKosh',  'id' => '87163109655'],
+			['name' => 'ISE Sacramento',          'id' => '111770501399'],
+		];
+		try {
+			$db = db_connect();
+			if ($db) { $v = setting_get($db, 'tradeshow_locations'); if ($v) { $j = json_decode($v, true); if (is_array($j) && $j) return $j; } }
+		} catch (Throwable $e) {}
+		return $default;
+	}
+
+	/**
+	 * Exact units sold at one show (Shopify location) in a date range, by SKU and
+	 * by day. Filters orders by location_id (works without read_locations),
+	 * excludes cancelled, explodes bundles. Returns
+	 * ['error'=>..., 'by_sku'=>[sku=>units desc], 'titles'=>[sku=>title],
+	 *  'by_date'=>[YYYY-MM-DD=>units], 'total_units'=>, 'revenue'=>, 'orders'=>].
+	 */
+	function shopify_show_sales($locationId, $since, $until) {
+		$query = '
+		query($cursor: String, $q: String!) {
+		  orders(first: 100, after: $cursor, query: $q, sortKey: CREATED_AT) {
+		    pageInfo { hasNextPage endCursor }
+		    edges { node {
+		      createdAt cancelledAt
+		      currentSubtotalPriceSet { shopMoney { amount } }
+		      lineItems(first: 50) { edges { node { quantity sku title variant { id } } } }
+		    } }
+		  }
+		}';
+		$q = "location_id:$locationId created_at:>=$since created_at:<=$until";
+		$bySku = []; $titles = []; $byDate = []; $totalUnits = 0; $revenue = 0.0;
+		$cursor = null; $pages = 0; $orders = 0;
+		$bundles = shopify_bundle_map();
+
+		do {
+			$res = shopify_graphql($query, ['cursor' => $cursor, 'q' => $q]);
+			if (!empty($res['error'])) return ['error' => $res['error'], 'by_sku' => [], 'by_date' => []];
+			$o = $res['data']['orders'] ?? null;
+			if ($o === null) return ['error' => 'Malformed Shopify orders response.', 'by_sku' => [], 'by_date' => []];
+
+			foreach ($o['edges'] as $oe) {
+				$n = $oe['node'];
+				if (!empty($n['cancelledAt'])) continue;
+				$orders++;
+				$date = substr((string)($n['createdAt'] ?? ''), 0, 10);
+				$revenue += (float)($n['currentSubtotalPriceSet']['shopMoney']['amount'] ?? 0);
+
+				foreach ($n['lineItems']['edges'] as $le) {
+					$li  = $le['node'];
+					$sku = trim((string)($li['sku'] ?? ''));
+					$qty = (int)($li['quantity'] ?? 0);
+					if ($qty <= 0) continue;
+					$vid = $li['variant']['id'] ?? '';
+					if ($sku === '' && $vid && isset($bundles[$vid])) {
+						foreach ($bundles[$vid] as $c) {
+							$add = $qty * (int)$c['qty'];
+							$bySku[$c['sku']] = ($bySku[$c['sku']] ?? 0) + $add;
+							$byDate[$date]    = ($byDate[$date] ?? 0) + $add;
+							$totalUnits      += $add;
+						}
+						continue;
+					}
+					if ($sku === '') continue;
+					$bySku[$sku]  = ($bySku[$sku] ?? 0) + $qty;
+					$byDate[$date]= ($byDate[$date] ?? 0) + $qty;
+					$totalUnits  += $qty;
+					if (!isset($titles[$sku])) $titles[$sku] = trim((string)($li['title'] ?? ''));
+				}
+			}
+
+			$cursor  = $o['pageInfo']['endCursor']  ?? null;
+			$hasNext = $o['pageInfo']['hasNextPage'] ?? false;
+			$pages++;
+		} while ($hasNext && $pages < 40);
+
+		arsort($bySku);
+		ksort($byDate);
+		return ['error' => null, 'by_sku' => $bySku, 'titles' => $titles, 'by_date' => $byDate,
+		        'total_units' => $totalUnits, 'revenue' => $revenue, 'orders' => $orders];
+	}
+
 	/** The customer whose orders use Amazon (CDA) packaging cards. Configurable. */
 	function shopify_amazon_customer() {
 		static $name = null;
