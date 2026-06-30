@@ -42,7 +42,7 @@ $lyStart = date('Y-m-d', strtotime('-1 year', strtotime($today)));
 $lyEnd   = date('Y-m-d', strtotime('-1 year', $ts));
 
 // ── Demand split by fulfilling warehouse ──
-$sales = shopify_sales_by_location($lyStart, $lyEnd);
+$sales = shopify_cache_remember($db, 'rec_sales_'.$lyStart.'_'.$lyEnd, inventory_cache_ttl($db), fn() => shopify_sales_by_location($lyStart, $lyEnd))['data'];
 if (!empty($sales['error'])) { echo json_encode(['error' => 'Shopify sales lookup failed: ' . $sales['error']]); exit; }
 $retailBySku = $isOregon ? ($sales['by_sku_oregon'] ?? []) : ($sales['by_sku_rest'] ?? []);
 
@@ -50,13 +50,13 @@ $retailBySku = $isOregon ? ($sales['by_sku_oregon'] ?? []) : ($sales['by_sku_res
 // Arkansas (everything-not-Oregon) demand; excluded from the Oregon view.
 $draftBySku = []; $draftErr = null; $draftOrders = 0;
 if (!$isOregon) {
-	$drafts = shopify_open_draft_demand(10);
+	$drafts = shopify_cache_remember($db, 'rec_drafts', inventory_cache_ttl($db), fn() => shopify_open_draft_demand(10))['data'];
 	if (empty($drafts['error'])) { $draftBySku = $drafts['by_sku'] ?? []; $draftOrders = $drafts['orders'] ?? 0; }
 	else { $draftErr = $drafts['error']; }
 }
 
-// FP stock per location (Oregon vs rest).
-$fpLoc    = shopify_fp_by_location();
+// FP stock per location (Oregon vs rest) — cached for a few hours.
+$fpLoc    = shopify_cache_remember($db, 'rec_fp', inventory_cache_ttl($db), fn() => shopify_fp_by_location())['data'];
 $fpBySku  = $fpLoc['skus'] ?? [];
 
 // ── Products with a BOM = animators we build ──

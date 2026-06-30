@@ -1019,6 +1019,43 @@
 		        'total_units' => $totalUnits, 'revenue' => $revenue, 'orders' => $orders];
 	}
 
+	/**
+	 * Time-based cache: return the cached value if it was refreshed within
+	 * $ttlSeconds, otherwise fetch live via $fn, cache it, and return it. On a
+	 * live error, serves the last good (stale) value if one exists. Pass
+	 * $ttlSeconds = 0 to force a live pull (manual Refresh). Stores in data_cache.
+	 * Returns ['data'=>..., 'cached'=>bool, 'updated_at'=>str|null, 'stale'=>bool].
+	 */
+	function shopify_cache_remember($db, $key, $ttlSeconds, callable $fn) {
+		$cachedVal = null; $cachedAt = null;
+		try {
+			$db->exec("CREATE TABLE IF NOT EXISTS data_cache (ckey VARCHAR(64) PRIMARY KEY, cval LONGTEXT, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB");
+			$s = $db->prepare("SELECT cval, updated_at FROM data_cache WHERE ckey = ?"); $s->execute([$key]);
+			$row = $s->fetch();
+			if ($row && $row['cval'] !== null) { $cachedVal = json_decode($row['cval'], true); $cachedAt = $row['updated_at']; }
+		} catch (Throwable $e) {}
+
+		if ($ttlSeconds > 0 && $cachedVal !== null && $cachedAt && (time() - strtotime($cachedAt)) < $ttlSeconds) {
+			return ['data' => $cachedVal, 'cached' => true, 'updated_at' => $cachedAt, 'stale' => false];
+		}
+
+		$live = $fn();
+		$err  = is_array($live) ? ($live['error'] ?? null) : null;
+		if ($err) {
+			if ($cachedVal !== null) return ['data' => $cachedVal, 'cached' => true, 'updated_at' => $cachedAt, 'stale' => true];
+			return ['data' => $live, 'cached' => false, 'updated_at' => null, 'stale' => false];
+		}
+		try { $db->prepare("INSERT INTO data_cache (ckey,cval,updated_at) VALUES (?,?,NOW()) ON DUPLICATE KEY UPDATE cval=VALUES(cval), updated_at=NOW()")->execute([$key, json_encode($live)]); } catch (Throwable $e) {}
+		return ['data' => $live, 'cached' => false, 'updated_at' => date('Y-m-d H:i:s'), 'stale' => false];
+	}
+
+	/** How long (seconds) live inventory may be reused before re-pulling. Default 3h. */
+	function inventory_cache_ttl($db) {
+		try { $h = (float)setting_get($db, 'inventory_cache_hours', 3); if ($h > 0) return (int)round($h * 3600); }
+		catch (Throwable $e) {}
+		return 3 * 3600;
+	}
+
 	/** The customer whose orders use Amazon (CDA) packaging cards. Configurable. */
 	function shopify_amazon_customer() {
 		static $name = null;

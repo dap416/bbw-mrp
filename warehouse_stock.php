@@ -105,15 +105,21 @@ function wsFilter() {
 $(document).on('input', '#wsSearch', wsFilter);
 $(document).on('change', '#wsCat', wsFilter);
 
-function wsLoad() {
+function wsStamp(d) {
+	if (!d.updated_at) return '';
+	var t = new Date(d.updated_at.replace(' ', 'T'));
+	var when = isNaN(t) ? d.updated_at : t.toLocaleString();
+	return (d.cached ? 'As of ' + when + (d.stale ? ' (Shopify unreachable — showing last good)' : ' (cached)') : 'Updated ' + when + ' (live)');
+}
+
+function wsLoad(fresh) {
 	var $btn = $('#wsRefresh').prop('disabled', true);
-	$('#wsUpdated').text('Refreshing…');
-	$('#wsBody').html('<div class="text-muted py-5 text-center"><i class="ti ti-loader"></i> Loading live inventory from Shopify…</div>');
-	$.ajax({ url: '/ajax/shopify_inventory.php', method: 'POST', dataType: 'json', timeout: 120000 })
+	$('#wsUpdated').text(fresh ? 'Refreshing from Shopify…' : 'Loading…');
+	if (fresh) $('#wsBody').html('<div class="text-muted py-5 text-center"><i class="ti ti-loader"></i> Pulling live inventory from Shopify…</div>');
+	$.ajax({ url: '/ajax/shopify_inventory.php', method: 'POST', dataType: 'json', timeout: 120000, data: { fresh: fresh ? 1 : 0 } })
 		.done(function(d) {
 			wsRender(d);
-			var now = new Date();
-			$('#wsUpdated').text('Updated ' + now.toLocaleTimeString());
+			$('#wsUpdated').text(wsStamp(d));
 		})
 		.fail(function(xhr, status) {
 			$('#wsBody').html('<div class="alert alert-danger">' + (status === 'timeout' ? 'Timed out loading from Shopify — try Refresh.' : 'Request failed (' + (xhr.status||'?') + ').') + '</div>');
@@ -122,8 +128,8 @@ function wsLoad() {
 		.always(function() { $btn.prop('disabled', false); });
 }
 
-$(function() { wsLoad(); });
-$('#wsRefresh').on('click', wsLoad);
+$(function() { wsLoad(false); });              // open = use cache if pulled in the last few hours
+$('#wsRefresh').on('click', function(){ wsLoad(true); }); // Refresh = force a live pull
 </script>
 
 <?php require_once(__DIR__."/includes/footer.php"); ?>
