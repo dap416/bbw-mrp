@@ -94,6 +94,25 @@
 	</div></div></div>
 </div>
 
+<!-- AI ASSISTANT -->
+<div class="card mb-3" style="border-left:4px solid #d97757;">
+<div class="card-body py-2">
+	<div class="d-flex justify-content-between align-items-center">
+		<h6 class="fw-bold mb-0">🤖 Cash Flow Assistant <span class="text-muted fw-normal" style="font-size:0.72rem;">— talk to your plan; it proposes changes you approve</span></h6>
+		<button class="btn btn-sm btn-light-primary" id="cfChatToggle">Open</button>
+	</div>
+	<div id="cfChatPanel" class="mt-2 hidden">
+		<div id="cfChatMsgs" style="max-height:340px;overflow-y:auto;font-size:0.86rem;"></div>
+		<div id="cfChatActions" class="hidden border rounded p-2 my-2" style="background:#fff8f3;"></div>
+		<div class="d-flex gap-2 mt-2">
+			<input type="text" id="cfChatInput" class="form-control form-control-sm" placeholder="e.g. June's card payments are already made and my reported balances reflect them" />
+			<button class="btn btn-sm btn-primary" id="cfChatSend">Send</button>
+		</div>
+		<div class="text-muted" style="font-size:0.7rem;">It reads your balances, months, events, receivables &amp; settings. Nothing changes until you click <strong>Apply</strong>.</div>
+	</div>
+</div>
+</div>
+
 <?php if ($balDue > 0): ?>
 <div class="alert alert-warning d-flex justify-content-between align-items-center flex-wrap gap-2 py-2">
 	<div>⚠ <strong><?php echo $balDue; ?> account balance<?php echo $balDue === 1 ? '' : 's'; ?></strong> need the weekly update (older than <?php echo $updDays; ?> days). Keeping balances current keeps the whole forecast accurate.</div>
@@ -497,6 +516,30 @@
 
 	// ── Planning settings (loan %, cash buffer, monthly tax) ──
 	$('#loanSaveBtn').on('click', function(){ var $btn=$(this).prop('disabled',true); $.post('/ajax/cashflow/save_settings.php', { shopify_loan_pct:$('#loanPct').val(), cash_buffer:$('#cashBuffer').val(), tax_monthly:$('#taxMonthly').val() }, function(resp){ if($.trim(resp)==='ok') location.reload(); else { $('#loanMsg').addClass('text-danger').text(resp); $btn.prop('disabled',false); } }).fail(function(x){ $('#loanMsg').addClass('text-danger').text('Failed'); $btn.prop('disabled',false); }); });
+
+	// ── AI Cash Flow Assistant ──
+	var cfMsgs = [];
+	$('#cfChatToggle').on('click', function(){ var p=$('#cfChatPanel'); p.toggleClass('hidden'); $(this).text(p.hasClass('hidden')?'Open':'Close'); if(!p.hasClass('hidden')) $('#cfChatInput').focus(); });
+	function cfEsc(s){ return $('<div>').text(s==null?'':String(s)).html(); }
+	function cfRender(){ var h=''; cfMsgs.forEach(function(m){ var who=m.role==='user'?'You':'Assistant'; var col=m.role==='user'?'#eef2f7':'#fff8f3'; h+='<div class="mb-2 p-2 rounded" style="background:'+col+';"><div class="fw-semibold small text-muted">'+who+'</div><div>'+cfEsc(m.content).replace(/\n/g,'<br>')+'</div></div>'; }); var $m=$('#cfChatMsgs').html(h); if($m[0]) $m.scrollTop($m[0].scrollHeight); }
+	function cfSend(){ var t=($('#cfChatInput').val()||'').trim(); if(!t) return; $('#cfChatInput').val(''); cfMsgs.push({role:'user',content:t}); cfRender(); $('#cfChatActions').addClass('hidden').html(''); window._cfActions=null; var $b=$('#cfChatSend').prop('disabled',true).text('…'); $.ajax({url:'/ajax/cashflow/chat.php',method:'POST',dataType:'json',timeout:120000,data:{messages:JSON.stringify(cfMsgs)}}).done(function(d){ if(!d||d.error){ cfMsgs.push({role:'assistant',content:'⚠ '+((d&&d.error)||'failed')}); cfRender(); return; } cfMsgs.push({role:'assistant',content:d.reply||'(no reply)'}); cfRender(); if(d.actions&&d.actions.length) cfShowActions(d.actions); }).fail(function(x,s){ cfMsgs.push({role:'assistant',content:'⚠ '+(s==='timeout'?'timed out — try again':'request failed')}); cfRender(); }).always(function(){ $b.prop('disabled',false).text('Send'); }); }
+	$('#cfChatSend').on('click', cfSend);
+	$('#cfChatInput').on('keypress', function(e){ if(e.which===13) cfSend(); });
+	function cfActionText(a){ var w=a.why?(' — '+a.why):''; switch(a.type){
+		case 'mark_cards_paid': return 'Mark card payments DONE for '+a.ym+' (skip the avalanche there)'+w;
+		case 'unmark_cards_paid': return 'Un-mark card payments for '+a.ym+w;
+		case 'set_month_actual': return 'Set '+a.ym+' actual '+(a.field==='income'?'income':'projection')+' = '+(a.value==null?'(clear)':'$'+Number(a.value).toLocaleString())+w;
+		case 'update_balance': return 'Update “'+a.label+'” balance to $'+Number(a.balance).toLocaleString()+(a.as_of?(' as of '+a.as_of):'')+(a.apr!=null?(', APR '+a.apr+'%'):'')+(a.min!=null?(', min $'+a.min):'')+w;
+		case 'add_event': return 'Add cash '+(a.etype==='in'?'IN':'OUT')+' “'+a.label+'” $'+Number(a.amount).toLocaleString()+' to '+a.ym+' wk'+(a.week||1)+w;
+		case 'delete_event': return 'Delete cash event #'+a.id+w;
+		case 'set_setting': return 'Set '+a.key+' = '+a.value+w;
+		case 'set_receivable_date': return 'Set receivable '+a.order+' expected '+(a.date||'(cleared)')+w;
+		case 'add_recurring_expense': return 'Add recurring expense “'+a.label+'” $'+Number(a.amount).toLocaleString()+'/mo'+w;
+		default: return JSON.stringify(a);
+	}}
+	function cfShowActions(actions){ window._cfActions=actions; var h='<div class="fw-semibold small mb-1">⚠ Proposed changes — review and approve:</div>'; actions.forEach(function(a){ h+='<div class="small mb-1">• '+cfEsc(cfActionText(a))+'</div>'; }); h+='<div class="d-flex gap-2 mt-2"><button class="btn btn-sm btn-success" id="cfApply">Apply changes</button><button class="btn btn-sm btn-secondary" id="cfCancelAct">Cancel</button><span id="cfApplyMsg" class="small ms-1"></span></div>'; $('#cfChatActions').html(h).removeClass('hidden'); }
+	$(document).on('click','#cfApply',function(){ var $b=$(this).prop('disabled',true).text('Applying…'); $.ajax({url:'/ajax/cashflow/apply.php',method:'POST',dataType:'json',data:{actions:JSON.stringify(window._cfActions||[])}}).done(function(d){ if(d&&d.ok){ location.reload(); } else { $('#cfApplyMsg').addClass('text-danger').text((d&&d.error)||'failed'); $b.prop('disabled',false).text('Apply changes'); } }).fail(function(){ $('#cfApplyMsg').addClass('text-danger').text('Apply failed'); $b.prop('disabled',false).text('Apply changes'); }); });
+	$(document).on('click','#cfCancelAct',function(){ $('#cfChatActions').addClass('hidden').html(''); window._cfActions=null; });
 </script>
 
 <?php require_once(__DIR__."/includes/footer.php"); ?>

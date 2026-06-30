@@ -564,6 +564,13 @@
 		return 0.0;
 	}
 
+	/** Months (YYYY-MM) whose card payments are already made — skip the avalanche there. */
+	function cardpay_done_months($db) {
+		try { $v = setting_get($db, 'cardpay_done_months'); if ($v) { $j = json_decode($v, true); if (is_array($j)) return $j; } }
+		catch (Throwable $e) {}
+		return [];
+	}
+
 	/**
 	 * Raw-material POs always go on credit cards — recommend which card for each.
 	 * Assigns each upcoming order (from the reorder list) to the LOWEST-APR card
@@ -720,11 +727,12 @@
 			return $bb <=> $aa ?: $cards[$b]['bal'] <=> $cards[$a]['bal'];
 		});
 
-		$reorder = cashflow_reorder_suggestions($db);
-		$cash    = (float)$data['eff_cash'];
-		$reserve = 0.0;                 // tax reserve, accrues monthly, paid at quarter end
+		$reorder  = cashflow_reorder_suggestions($db);
+		$cardDone = cardpay_done_months($db);
+		$cash     = (float)$data['eff_cash'];
+		$reserve  = 0.0;                // tax reserve, accrues monthly, paid at quarter end
 		$firstFutureDone = false;       // PO advice shows on the current month, not the prior
-		$blocks  = [];
+		$blocks   = [];
 
 		// Receivables the user scheduled into a specific month → that month's cash in.
 		$arByYm = [];
@@ -777,18 +785,23 @@
 			if (in_array($mon, [3, 6, 9, 12], true) && $reserve > 0) { $taxPayment = $reserve; $reserve = 0.0; }
 
 			// ── Debt avalanche: minimums on all, extra (above buffer) to highest APR ──
+			// If the month's card payments are already made (and reflected in the
+			// reported balances), skip it entirely so we don't recommend paying twice.
+			$cardsDone = in_array($ym, $cardDone, true);
 			$pay = array_fill(0, count($cards), 0.0);
 			$minTotal = 0.0;
-			foreach ($cards as $k => $c) { $m = min($c['min'], $c['bal']); $pay[$k] = $m; $minTotal += $m; }
-			$extraPool = max(0.0, $cashBeforeCards - $buffer - $minTotal);
 			$targetIdx = null;
-			foreach ($order as $k) {
-				if ($extraPool <= 0) break;
-				$remaining = $cards[$k]['bal'] - $pay[$k];
-				if ($remaining <= 0) continue;
-				$add = min($extraPool, $remaining);
-				$pay[$k] += $add; $extraPool -= $add;
-				if ($targetIdx === null) $targetIdx = $k;
+			if (!$cardsDone) {
+				foreach ($cards as $k => $c) { $m = min($c['min'], $c['bal']); $pay[$k] = $m; $minTotal += $m; }
+				$extraPool = max(0.0, $cashBeforeCards - $buffer - $minTotal);
+				foreach ($order as $k) {
+					if ($extraPool <= 0) break;
+					$remaining = $cards[$k]['bal'] - $pay[$k];
+					if ($remaining <= 0) continue;
+					$add = min($extraPool, $remaining);
+					$pay[$k] += $add; $extraPool -= $add;
+					if ($targetIdx === null) $targetIdx = $k;
+				}
 			}
 			$cardPayments = []; $cardTotal = 0.0;
 			foreach ($cards as $k => &$c) {
@@ -813,6 +826,7 @@
 				$t = $cards[$targetIdx];
 				$advice[] = ['kind' => 'good', 'text' => 'Focus debt paydown on ' . $t['label'] . ($t['apr'] !== null ? ' (' . rtrim(rtrim(number_format($t['apr'], 2), '0'), '.') . '% APR)' : '') . ' — pay $' . number_format($pay[$targetIdx], 0) . '; minimums on the rest.'];
 			}
+			if ($cardsDone) $advice[] = ['kind' => 'good', 'text' => 'Card payments already made this month — your reported balances reflect them, so no further payment is recommended.'];
 			foreach ($cardPayments as $cp) if ($cp['paid_off']) $advice[] = ['kind' => 'good', 'text' => '🎉 ' . $cp['label'] . ' paid off this month.'];
 			if ($taxPayment > 0)      $advice[] = ['kind' => 'info', 'text' => 'Quarterly taxes ~$' . number_format($taxPayment, 0) . ' due — covered by the tax reserve you set aside.'];
 			if (!$firstFutureDone) {
