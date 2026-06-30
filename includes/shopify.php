@@ -757,6 +757,129 @@
 		return ['error' => null, 'skus' => $bySku, 'oregon_location' => $oregonId];
 	}
 
+	/**
+	 * Categorize a finished product for the warehouse-stock display, or return
+	 * NULL to exclude it (apparel, gift cards). Uses Shopify productType, with
+	 * sensible fallbacks for products that have no type.
+	 */
+	function shopify_fp_category($title, $productType) {
+		// Exclude apparel + gift cards entirely (not relevant to FP building).
+		if (preg_match('/\b(tee|t-?shirt|shirt|hoodie|sweatshirt|crewneck|hat|cap|beanie|apparel|gift\s*card)\b/i', $title)) return null;
+		$pt = trim((string)$productType);
+		if ($pt !== '') return $pt;
+		// No product type — derive from the title.
+		if (stripos($title, 'wings')   !== false) return 'Replacement Wings';
+		if (stripos($title, 'bundle')  !== false) return 'Bundles';
+		if (stripos($title, 'animator')!== false) return 'Animators (Other)';
+		return 'Other';
+	}
+
+	/**
+	 * Live Shopify finished-product inventory grouped by LOCATION then CATEGORY.
+	 * Requires the read_locations scope. Apparel/gift cards excluded; bundle
+	 * variants (no SKU) skipped. Returns:
+	 *   ['error'=>..., 'locations'=>[ ['id','name','total'] ... ordered ],
+	 *    'data'=>[ locId => [ ['category','subtotal','items'=>[{sku,title,qty}]] ... ] ]]
+	 */
+	function shopify_inventory_by_location() {
+		$query = '
+		query($cursor: String) {
+		  products(first: 20, after: $cursor, query: "status:active") {
+		    pageInfo { hasNextPage endCursor }
+		    edges { node {
+		      title productType
+		      variants(first: 50) { edges { node {
+		        sku title
+		        inventoryItem { inventoryLevels(first: 20) { edges { node {
+		          location { id name } quantities(names: ["available"]) { quantity }
+		        } } } }
+		      } } }
+		    } }
+		  }
+		}';
+
+		$locName = [];          // locId => name
+		$raw     = [];          // locId => category => [items]
+		$cursor  = null; $pages = 0;
+
+		do {
+			$res = shopify_graphql($query, ['cursor' => $cursor]);
+			if (!empty($res['error'])) return ['error' => $res['error'], 'locations' => [], 'data' => []];
+			$pr = $res['data']['products'] ?? null;
+			if ($pr === null) return ['error' => 'Malformed Shopify response.', 'locations' => [], 'data' => []];
+
+			foreach ($pr['edges'] as $pe) {
+				$p   = $pe['node'];
+				$cat = shopify_fp_category($p['title'] ?? '', $p['productType'] ?? '');
+				if ($cat === null) continue;                      // apparel / gift card
+
+				foreach ($p['variants']['edges'] as $ve) {
+					$v   = $ve['node'];
+					$sku = trim((string)($v['sku'] ?? ''));
+					if ($sku === '') continue;                    // skip bundle/untracked variants
+					$title = $p['title'] ?? '';
+					$vt = trim((string)($v['title'] ?? ''));
+					if ($vt !== '' && strcasecmp($vt, 'Default Title') !== 0) $title .= ' — ' . $vt;
+
+					foreach (($v['inventoryItem']['inventoryLevels']['edges'] ?? []) as $le) {
+						$lvl  = $le['node'];
+						$lid  = $lvl['location']['id']   ?? '';
+						$lnm  = $lvl['location']['name'] ?? '';
+						if ($lid === '') continue;
+						$qty  = 0;
+						foreach (($lvl['quantities'] ?? []) as $qn) $qty = (int)($qn['quantity'] ?? 0);
+						$locName[$lid] = $lnm;
+						$raw[$lid][$cat][] = ['sku' => $sku, 'title' => $title, 'qty' => $qty];
+					}
+				}
+			}
+
+			$cursor  = $pr['pageInfo']['endCursor']  ?? null;
+			$hasNext = $pr['pageInfo']['hasNextPage'] ?? false;
+			$pages++;
+		} while ($hasNext && $pages < 40);
+
+		// Order categories: animators first, then accessories/parts/wings, etc.
+		$catRank = function($c) {
+			$order = ['Animators for Avian X', 'Animators for Lucky Duck', 'Animators for Mojo',
+			          'Animators (Other)', 'Replacement Wings', 'Replacement Parts',
+			          'Animator Accessories', 'Bundles', 'Other'];
+			foreach ($order as $i => $o) if (stripos($c, $o) === 0) return $i;
+			return 50;
+		};
+
+		$data = [];
+		foreach ($raw as $lid => $cats) {
+			uksort($cats, fn($a, $b) => $catRank($a) <=> $catRank($b) ?: strcmp($a, $b));
+			$blocks = [];
+			foreach ($cats as $cat => $items) {
+				usort($items, fn($a, $b) => strcmp($a['sku'], $b['sku']));
+				$subtotal = array_sum(array_map(fn($i) => $i['qty'], $items));
+				$blocks[] = ['category' => $cat, 'subtotal' => $subtotal, 'items' => $items];
+			}
+			$data[$lid] = $blocks;
+		}
+
+		// Order locations: Oregon Warehouse, Arkansas Warehouse, then others A→Z.
+		$locs = [];
+		foreach ($locName as $lid => $nm) {
+			$total = 0;
+			foreach (($data[$lid] ?? []) as $b) $total += $b['subtotal'];
+			$locs[] = ['id' => $lid, 'name' => $nm, 'total' => $total];
+		}
+		usort($locs, function($a, $b) {
+			$rank = function($n) {
+				if (stripos($n, 'oregon')   !== false) return 0;
+				if (stripos($n, 'arkansas') !== false) return 1;
+				return 2;
+			};
+			$ra = $rank($a['name']); $rb = $rank($b['name']);
+			return $ra <=> $rb ?: strcmp($a['name'], $b['name']);
+		});
+
+		return ['error' => null, 'locations' => $locs, 'data' => $data];
+	}
+
 	/** The customer whose orders use Amazon (CDA) packaging cards. Configurable. */
 	function shopify_amazon_customer() {
 		static $name = null;
