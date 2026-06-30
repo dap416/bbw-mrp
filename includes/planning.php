@@ -162,16 +162,26 @@
 		$priorSales   = [];   // season key => [sku => units]
 		$priorAmazon  = [];   // season key => [sku => units sold to the Amazon/CDA customer]
 		$priorChannel = [];   // season key => [channel => units]
+		$priorOregon  = [];   // season key => [sku => units FULFILLED from the Oregon Warehouse]
 		$shopErr = null;
+		$ttl = $shopReady ? inventory_cache_ttl($db) : 0;
 		foreach ($seasons as $s) {
-			if (!$shopReady) { $priorSales[$s['key']] = []; $priorAmazon[$s['key']] = []; $priorChannel[$s['key']] = []; continue; }
+			if (!$shopReady) { $priorSales[$s['key']] = []; $priorAmazon[$s['key']] = []; $priorChannel[$s['key']] = []; $priorOregon[$s['key']] = []; continue; }
 			$ps = date('Y-m-d', strtotime('-1 year', strtotime($s['start'])));
 			$pe = date('Y-m-d', strtotime('-1 year', strtotime($s['end'])));
 			$r  = shopify_sales_in_range($ps, $pe);
 			if (!empty($r['error'])) { $shopErr = $r['error']; $priorSales[$s['key']] = []; $priorAmazon[$s['key']] = []; $priorChannel[$s['key']] = []; }
 			else { $priorSales[$s['key']] = $r['by_sku'] ?? []; $priorAmazon[$s['key']] = $r['by_sku_amazon'] ?? []; $priorChannel[$s['key']] = $r['by_channel'] ?? []; }
+			// Oregon vs rest split by fulfillment location (cached — heavy order scan).
+			$loc = shopify_cache_remember($db, 'season_loc_'.$ps.'_'.$pe, $ttl, fn() => shopify_sales_by_location($ps, $pe))['data'];
+			$priorOregon[$s['key']] = (is_array($loc) && empty($loc['error'])) ? ($loc['by_sku_oregon'] ?? []) : [];
 			$seasons[array_search($s, $seasons, true)]['prior_window'] = "$ps to $pe";
 		}
+
+		// Current finished-product inventory split by location (Oregon vs rest).
+		$fpLoc = $shopReady
+			? (shopify_cache_remember($db, 'season_fp_loc', $ttl, fn() => shopify_fp_by_location())['data']['skus'] ?? [])
+			: [];
 
 		// ── Products + BOM (animators = products with a BOM) ──────────────────
 		$hasSku = column_exists($db, 'products', 'shopify_sku');
@@ -202,16 +212,20 @@
 			if (empty($bom)) continue; // only products with raw materials
 			$sku = $hasSku ? ($p['shopify_sku'] ?? '') : '';
 			if ($sku !== '') $animatorSkus[$sku] = true;
-			$perSeason = []; $perSeasonAmazon = [];
+			$perSeason = []; $perSeasonAmazon = []; $perSeasonOregon = [];
 			foreach ($seasons as $s) {
 				$perSeason[$s['key']]       = ($sku !== '') ? (int)($priorSales[$s['key']][$sku] ?? 0) : 0;
 				$perSeasonAmazon[$s['key']] = ($sku !== '') ? (int)($priorAmazon[$s['key']][$sku] ?? 0) : 0;
+				$perSeasonOregon[$s['key']] = ($sku !== '') ? (int)($priorOregon[$s['key']][$sku] ?? 0) : 0;
 			}
+			$fpO = ($sku !== '' && isset($fpLoc[$sku])) ? (int)$fpLoc[$sku]['oregon'] : null;
 			$animators[] = [
 				'product'   => $p['name'],
 				'sku'       => $sku,
 				'in_stock'  => ($sku !== '' && isset($shopSkus[$sku])) ? (int)$shopSkus[$sku]['qty'] : null,
-				'prior_year_sales'  => $perSeason,        // total units (all channels)
+				'in_stock_oregon'   => $fpO,              // finished units currently AT the Oregon Warehouse (null = unknown)
+				'prior_year_sales'  => $perSeason,        // total units (all channels / all locations)
+				'prior_year_oregon' => $perSeasonOregon,  // subset FULFILLED from the Oregon Warehouse
 				'prior_year_amazon' => $perSeasonAmazon,  // subset sold to the Amazon/CDA customer → use CDA card; rest use CD card
 				'bom' => array_map(fn($b) => ['part' => $b['partno'], 'qty_per_unit' => (int)$b['qty']], $bom),
 			];
@@ -252,15 +266,17 @@
 			if (!isset($shopSkus[$sku])) continue;             // unknown / discontinued
 			$stock = (int)$shopSkus[$sku]['qty'];
 			if ($stock >= 9999) continue;                      // print-on-demand
-			$perSeason = [];
+			$perSeason = []; $perSeasonOregon = [];
 			$any = 0;
-			foreach ($seasons as $s) { $v = (int)($priorSales[$s['key']][$sku] ?? 0); $perSeason[$s['key']] = $v; $any += $v; }
+			foreach ($seasons as $s) { $v = (int)($priorSales[$s['key']][$sku] ?? 0); $perSeason[$s['key']] = $v; $any += $v; $perSeasonOregon[$s['key']] = (int)($priorOregon[$s['key']][$sku] ?? 0); }
 			if ($any <= 0) continue;
 			$finishedGoods[] = [
 				'sku'       => $sku,
 				'product'   => $shopSkus[$sku]['product_title'] . ' — ' . $shopSkus[$sku]['variant_title'],
 				'in_stock'  => $stock,
-				'prior_year_sales' => $perSeason,
+				'in_stock_oregon'   => isset($fpLoc[$sku]) ? (int)$fpLoc[$sku]['oregon'] : null,
+				'prior_year_sales'  => $perSeason,
+				'prior_year_oregon' => $perSeasonOregon,
 			];
 		}
 		// Sort finished goods by total prior-year demand desc
@@ -281,16 +297,23 @@
 			}
 		}
 
+		$oregonAnyUnits = 0; foreach ($priorOregon as $m) $oregonAnyUnits += array_sum($m);
+		$oregonStatus = !$shopReady ? 'unavailable (Shopify not connected)'
+			: (shopify_oregon_location_id() === '' ? 'Oregon Warehouse location not found in Shopify — set the oregon_location_id setting'
+			: ($oregonAnyUnits > 0 ? 'loaded' : 'loaded, but no prior-year units were fulfilled from Oregon in these windows'));
+
 		return [
 			'meta' => [
 				'today'             => $today,
 				'baseline'          => 'prior-year same window, no growth applied',
 				'shopify_connected' => $shopReady,
 				'shopify_error'     => $shopErr,
+				'oregon_split_status' => $oregonStatus,
 				'note'              => 'Only animator products have raw materials (BOMs) in the MRP; everything else is ordered as finished goods. moq = round up to a multiple. lead_time_days = order-to-delivery. on_order = already-placed raw POs not yet received.',
 				'parts_coverage'    => 'raw_materials lists EVERY part in MRP inventory with on_hand, on_order, base_stock_level, moq, lead_time_days, unit_cost. animator_component=true marks a direct BOM component of an animator. Packaging cards (CD-* and Amazon CDA-*), plates, rods and packaging are all included even when they are not BOM components — their demand tracks the animator they package (matchable by part-number brand code, e.g. LDA→CD-LD/CDA-LD; AXLA→CD-AX-L/CDA-AX-L; AXRA→CD-AX-R/CDA-AX-R; KMA→CD-KM/CDA-KM). NOTE: on_order is a total quantity, not a list of POs with ETAs.',
 				'packaging_card_rule' => 'Each animator uses ONE packaging card per unit built. Units sold to the Amazon customer (' . shopify_amazon_customer() . ') OR on any order tagged "' . shopify_amazon_tag() . '" in Shopify use the Amazon CDA-<brand> card; ALL other units use the regular CD-<brand> card. Per animator: prior_year_amazon = units needing a CDA card; (prior_year_sales − prior_year_amazon) = units needing a CD card. So CDA-<brand> demand = that animator\'s prior_year_amazon; CD-<brand> demand = prior_year_sales − prior_year_amazon. Match the CD/CDA card to the animator by brand code in the part number.',
 				'sales_coverage'    => 'prior_year_sales counts EVERY Shopify order in the window (line-item quantities) EXCEPT cancelled orders. This INCLUDES: online/web, point-of-sale (POS/tradeshows), completed/paid draft orders, and Collective/wholesale. Native Shopify bundles are exploded into their component SKUs. It EXCLUDES: open/un-completed draft orders (no sale yet) and anything not recorded in Shopify (e.g. an off-platform Amazon or wholesale PO). sales_by_channel below shows the actual channel mix so you can confirm coverage. Seasons are quarter-granular (jul_sep, oct_dec, jan_mar) — a sub-quarter date range maps to whole quarters.',
+				'location_split'    => 'You CAN answer Oregon-vs-Arkansas questions. For each animator and finished good: prior_year_oregon = the subset of prior_year_sales that was FULFILLED from the Oregon Warehouse Shopify location (the rest — Arkansas + POS/tradeshows + online shipped elsewhere — is prior_year_sales − prior_year_oregon). in_stock_oregon = finished units currently sitting AT the Oregon Warehouse (null = the SKU was not found in Shopify location inventory). Use these for "how much do I need in Oregon" / "what to ship to Oregon" questions: Oregon demand for a SKU = prior_year_oregon for the season(s) the date spans; units short at Oregon = max(0, Oregon demand − in_stock_oregon). To express that shortfall as RAW MATERIALS to ship/build, multiply the short units by the animator\'s bom qty_per_unit (and one packaging card per unit). NOTE: prior_year_oregon is fulfillment-location based, not the customer\'s shipping state; it is the best available proxy for "Oregon orders". oregon_split_status reports if this data loaded.',
 			],
 			'sales_by_channel'  => $priorChannel,
 			'seasons'        => $seasons,

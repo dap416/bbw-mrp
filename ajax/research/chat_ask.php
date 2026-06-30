@@ -69,6 +69,7 @@ Key rules:
 - Non-animators (cases, wings) are ORDERED as finished items: order = max(0, demand − in_stock).
 - If you read an attached PO/file, EXTRACT the key details (parts/SKUs, quantities, dates, totals) into your answer so they're captured for the rest of the conversation — later follow-ups may not include the file again.
 - Channel coverage: meta.sales_coverage states exactly what is and isn't included in prior_year_sales, and sales_by_channel gives the per-season unit mix by channel. Use these to answer 'is this all channels?' questions confidently.
+- Location / Oregon: meta.location_split explains the Oregon-vs-Arkansas data. Each animator & finished good has prior_year_oregon (units fulfilled from the Oregon Warehouse) and in_stock_oregon (units now at Oregon). For 'what do I need in / ship to Oregon' questions, use prior_year_oregon as Oregon demand (NOT the all-locations total), subtract in_stock_oregon, and convert any animator shortfall to raw materials via the bom. Check meta.oregon_split_status first; only caveat if it is not 'loaded'.
 - Packaging cards: follow meta.packaging_card_rule. Each animator unit needs one card; units sold to the Amazon customer (in prior_year_amazon) use the CDA-<brand> card, all other units use the CD-<brand> card. So CDA-<brand> need = animator.prior_year_amazon; CD-<brand> need = prior_year_sales − prior_year_amazon. Compare each card's need to its on_hand in raw_materials, round to MOQ, respect lead time.
 - Be concrete and numeric; short Markdown. If data is missing, say so.";
 
