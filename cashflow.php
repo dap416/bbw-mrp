@@ -278,7 +278,7 @@
 					<td><?php echo $n; ?></td>
 					<td class="fw-semibold"><?php echo htmlspecialchars($c['label']); ?> <?php echo $c['is_target'] ? '<span class="badge bg-primary" style="font-size:0.58rem;">FOCUS</span>' : ''; ?><?php echo $c['paid_off'] ? ' <span class="badge bg-success" style="font-size:0.58rem;">PAID OFF</span>' : ''; ?></td>
 					<td class="text-end"><?php echo $c['apr'] !== null ? rtrim(rtrim(number_format($c['apr'],2),'0'),'.').'%' : '—'; ?></td>
-					<td class="text-end text-muted"><?php echo money0($c['balance']); ?><?php echo isset($c['available']) && $c['available'] !== null ? '<br><span style="font-size:0.66rem;">'.money0($c['available']).' open</span>' : ''; ?></td>
+					<td class="text-end text-muted"><?php echo money0($c['balance']); ?><?php echo isset($c['available']) && $c['available'] !== null ? '<br><span style="font-size:0.66rem;">'.money0($c['available']).' Avail</span>' : ''; ?></td>
 					<td class="text-end fw-bold"><?php echo money($c['amount']); ?></td>
 				</tr>
 			<?php endforeach; ?>
@@ -399,7 +399,7 @@
 					echo $c['apr'] !== null ? ' <span class="text-muted" style="font-size:0.66rem;">'.rtrim(rtrim(number_format($c['apr'],2),'0'),'.').'%</span>' : '';
 					echo $c['is_target'] ? ' <span class="badge bg-primary" style="font-size:0.54rem;vertical-align:middle;">FOCUS</span>' : '';
 					echo $c['paid_off'] ? ' <span class="badge bg-success" style="font-size:0.54rem;vertical-align:middle;">PAID OFF</span>' : '';
-				?><br><span class="text-muted" style="font-size:0.66rem;">Bal <?php echo money0($c['balance']); ?><?php echo isset($c['available']) && $c['available'] !== null ? ' · '.money0($c['available']).' open' : ''; ?></span></span>
+				?><br><span class="text-muted" style="font-size:0.66rem;">Bal <?php echo money0($c['balance']); ?><?php echo isset($c['available']) && $c['available'] !== null ? ' · '.money0($c['available']).' Avail' : ''; ?></span></span>
 				<span class="text-end">
 					<?php if ($c['amount'] > 0): ?><span class="fw-semibold" style="color:#6f42c1;"><?php echo money0($c['amount']); ?></span><?php else: ?><span class="text-muted" style="font-size:0.66rem;">no pay</span><?php endif; ?>
 				</span>
