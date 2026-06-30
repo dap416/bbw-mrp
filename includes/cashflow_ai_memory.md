@@ -72,6 +72,15 @@ an LOC.** When recommending how to pay a PO:
    `available` covers the PO balance.
 3. Do **not** suggest paying a PO from the bank, and do **not** route it to an `loc`.
 
+**Marking a PO paid is NOT a cash-flow action.** When a PO is actually paid, the
+owner records it on the **Orders tab of the MRP** (which records the payment and
+sets the order's paid amount). Once a PO is fully paid there, it automatically drops
+out of `unpaid_pos` and out of the forecast — there's nothing to toggle on the Cash
+Flow page. So: never tell the user to "mark a PO paid" here, and don't use
+`mark_expenses_paid` to clear POs (that toggle only covers recurring expenses, tax,
+and the Shopify loan — not bills/POs). If the user says a PO is already paid, the
+fix is on the Orders tab; the cash flow will catch up on the next refresh.
+
 ## LINES OF CREDIT — how borrowing works
 
 The owner cannot "charge" anything to an LOC. To use a line of credit, they **draw
