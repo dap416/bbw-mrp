@@ -34,4 +34,6 @@
 	$db->prepare("UPDATE `orders` SET `paidamt` = ? WHERE `id` = ?")
 	   ->execute([round($paid + $amt, 2), $record]);
 
+	briefing_touch($db);   // a payment is a notable event → refresh dashboard welcome
+
 	echo 'ok';

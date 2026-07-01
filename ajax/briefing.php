@@ -27,13 +27,23 @@
 	$db->exec("CREATE TABLE IF NOT EXISTS data_cache (ckey VARCHAR(64) PRIMARY KEY, cval LONGTEXT, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB");
 	$cacheKey = 'briefing_' . $uid . '_' . $partOfDay;
 	$force = !empty($_GET['refresh']);
+	// The welcome message defaults to a WEEKLY update, but regenerates early
+	// whenever an important event (task done / payment / delivery) bumps the
+	// global 'briefing_dirty' marker via briefing_touch().
+	$dirtyAt = null;
+	try { $s = $db->prepare("SELECT updated_at FROM data_cache WHERE ckey = 'briefing_dirty'"); $s->execute(); $dr = $s->fetch(); if ($dr) $dirtyAt = strtotime($dr['updated_at']); } catch (Throwable $e) {}
 	if (!$force) {
 		try {
 			$s = $db->prepare("SELECT cval, updated_at FROM data_cache WHERE ckey = ?"); $s->execute([$cacheKey]);
 			$row = $s->fetch();
-			if ($row && (time() - strtotime($row['updated_at'])) < 7200) {
-				echo json_encode(['ok' => true, 'html' => $row['cval'], 'cached' => true, 'as_of' => $row['updated_at']]);
-				exit;
+			if ($row) {
+				$cacheTs = strtotime($row['updated_at']);
+				$fresh   = (time() - $cacheTs) < 604800;                // weekly refresh
+				$clean   = ($dirtyAt === null || $cacheTs >= $dirtyAt);  // no notable event since last build
+				if ($fresh && $clean) {
+					echo json_encode(['ok' => true, 'html' => $row['cval'], 'cached' => true, 'as_of' => $row['updated_at']]);
+					exit;
+				}
 			}
 		} catch (Throwable $e) {}
 	}
@@ -52,6 +62,23 @@
 		}
 		$ctx['open_tasks'] = $tasks;
 	} catch (Throwable $e) { $ctx['open_tasks'] = []; }
+
+	// Recent wins to acknowledge (last 7 days): tasks completed, payments made, deliveries received.
+	$recentEvents = [];
+	try {
+		foreach ($db->query("SELECT title, completed_at FROM tasks WHERE completed = 1 AND completed_at > DATE_SUB(NOW(), INTERVAL 7 DAY) ORDER BY completed_at DESC LIMIT 15") as $t)
+			$recentEvents[] = ['kind' => 'task_completed', 'what' => $t['title'], 'when' => $t['completed_at']];
+	} catch (Throwable $e) {}
+	try {
+		foreach ($db->query("SELECT p.amount, p.date, o.orderref, pt.partno FROM payments p JOIN orders o ON o.id = p.ordid LEFT JOIN parts pt ON pt.id = o.partid WHERE p.date > DATE_SUB(NOW(), INTERVAL 7 DAY) ORDER BY p.date DESC LIMIT 15") as $r)
+			$recentEvents[] = ['kind' => 'payment_made', 'amount' => round((float)$r['amount']), 'order' => $r['orderref'], 'part' => $r['partno'], 'when' => $r['date']];
+	} catch (Throwable $e) {}
+	try {
+		foreach ($db->query("SELECT t.qty, t.date, t.postref, p.partno, p.`desc` FROM trans t JOIN parts p ON p.id = t.partid WHERE t.type = 'POST' AND t.date > DATE_SUB(NOW(), INTERVAL 7 DAY) ORDER BY t.date DESC LIMIT 15") as $r)
+			$recentEvents[] = ['kind' => 'delivery_received', 'part' => $r['partno'], 'desc' => $r['desc'], 'qty' => (int)$r['qty'], 'ref' => $r['postref'], 'when' => $r['date']];
+	} catch (Throwable $e) {}
+	$ctx['recent_events'] = $recentEvents;
+	$ctx['has_recent_events'] = !empty($recentEvents);
 
 	// Parts needing attention (out of stock / below BSL)
 	try {
@@ -107,14 +134,15 @@
 
 	// ── Ask the AI ────────────────────────────────────────────────────────────
 	$system =
-"You write a short, friendly daily briefing for " . ($name !== '' ? $name : 'the owner') . " of Blue Bird Waterfowl (a small waterfowl motion-decoy manufacturer). You are shown a JSON snapshot of what's on their plate.
+"You write the WEEKLY welcome message for " . ($name !== '' ? $name : 'the owner') . " of Blue Bird Waterfowl (a small waterfowl motion-decoy manufacturer), shown on their dashboard. You are given a JSON snapshot of what's on their plate.
 
 Write it like you're speaking to them:
-- Open with 'Good " . $partOfDay . "' (optionally their first name). One short warm sentence.
-- Then a **Do now** section: only genuinely time-sensitive items — overdue/today tasks, cash-flow payments due this month (name the card + amount, note the FOCUS/highest-APR card), and parts that are OUT or must be ordered given lead times.
-- Then a **Coming up** section: tasks due in the next several days, reorders to prepare for, payments to plan.
+- Open with 'Good " . $partOfDay . "' (optionally their first name). One short warm sentence framing the week.
+- If has_recent_events is true, add a brief **Nice work** line FIRST that celebrates what just got done — recent_events lists tasks they checked off, payments they made, and deliveries that arrived (name them with amounts/parts). This is the whole point of updating the message on those events, so make it feel acknowledged. If has_recent_events is false, skip this and just give the normal weekly update.
+- Then **This week — do now**: genuinely time-sensitive items — overdue/today tasks, cash-flow payments due this month (name the card + amount, note the FOCUS/highest-APR card), and parts that are OUT or must be ordered given lead times.
+- Then **Coming up**: tasks due later this week, reorders to prepare for, payments to plan.
 - If a section has nothing, say something reassuring instead of inventing work.
-- Be concrete with numbers and names. Keep the WHOLE thing tight — a glanceable brief, not an essay. Use short Markdown (a heading is optional; bullets are good). Never output JSON or code fences.
+- Be concrete with numbers and names. Keep the WHOLE thing tight — a glanceable weekly brief, not an essay. Use short Markdown (a heading is optional; bullets are good). Never output JSON or code fences.
 - POs are always paid on a real credit card (never cash/LOC) — reflect that if you mention paying POs.";
 
 	$res = anthropic_chat($system . "\n\nSnapshot (JSON):\n" . json_encode($ctx, JSON_UNESCAPED_SLASHES), [['role' => 'user', 'content' => 'Write my briefing.']], 900);

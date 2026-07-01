@@ -336,7 +336,7 @@ details.dash-section[open] > summary .ti-chevron-right { transform:rotate(90deg)
 <div class="card mb-3" style="border-left:4px solid #4680ff;">
 	<div class="card-body py-3">
 		<div class="d-flex justify-content-between align-items-center">
-			<span class="section-title mb-0"><i class="ti ti-sparkles me-1"></i>Your Briefing</span>
+			<span class="section-title mb-0"><i class="ti ti-sparkles me-1"></i>Your Weekly Briefing</span>
 			<button class="btn btn-sm btn-link text-muted p-0 ms-2" id="briefing-refresh" title="Refresh briefing"><i class="ti ti-refresh"></i></button>
 		</div>
 		<div id="briefing-body" class="mt-2" style="font-size:0.9rem;">

@@ -2,9 +2,9 @@
 
 	require_once(__DIR__."/includes/fns.php");
 
-	// Already logged in — go to index
+	// Already logged in — go to the dashboard
 	if (isset($_SESSION['user_id'])) {
-		header('Location: /index.php');
+		header('Location: /home.php');
 		exit;
 	}
 
@@ -39,7 +39,7 @@
 				'access_orders_receive' => (int)($user['access_orders_receive'] ?? 0),
 			];
 
-			header('Location: /index.php');
+			header('Location: /home.php');
 			exit;
 
 		} else {

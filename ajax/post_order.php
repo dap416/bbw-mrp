@@ -60,4 +60,6 @@
 		adjust_qty($orderPart, 'post', $recamt);
 	}
 
+	briefing_touch($db);   // a delivery is a notable event → refresh dashboard welcome
+
 	echo 'ok';

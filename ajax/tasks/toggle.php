@@ -14,4 +14,6 @@
 	if ($done) $db->prepare("UPDATE tasks SET completed = 1, completed_at = NOW(), updated_at = NOW() WHERE id = ?")->execute([$id]);
 	else       $db->prepare("UPDATE tasks SET completed = 0, completed_at = NULL, updated_at = NOW() WHERE id = ?")->execute([$id]);
 
+	if ($done) briefing_touch($db);   // refresh the dashboard welcome on completion
+
 	echo json_encode(['ok' => true]);

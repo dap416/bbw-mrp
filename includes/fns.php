@@ -230,6 +230,22 @@
 		) ENGINE=InnoDB");
 	}
 
+	/**
+	 * Mark the dashboard AI briefing as stale so it regenerates on the next
+	 * dashboard load. Call this on important events (task completed, payment
+	 * made, delivery received) so the welcome message reflects them instead of
+	 * waiting for the weekly refresh.
+	 */
+	function briefing_touch($db = null) {
+		try {
+			if ($db === null) $db = db_connect();
+			$db->exec("CREATE TABLE IF NOT EXISTS data_cache (ckey VARCHAR(64) PRIMARY KEY, cval LONGTEXT, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB");
+			$db->prepare("INSERT INTO data_cache (ckey, cval, updated_at) VALUES ('briefing_dirty', ?, NOW())
+			              ON DUPLICATE KEY UPDATE cval = VALUES(cval), updated_at = NOW()")
+			   ->execute([date('Y-m-d H:i:s')]);
+		} catch (Throwable $e) {}
+	}
+
 	// ── LEGACY QTY HELPER (still used by some callers) ────────────────────────
 
 	function adjust_qty($partId,$type,$qty) {
