@@ -209,6 +209,27 @@
 		) ENGINE=InnoDB");
 	}
 
+	/**
+	 * Simple business task list (Microsoft To-Do style): a title, optional due
+	 * date, and a completed flag. Shared by tasks.php, the ajax endpoints, and
+	 * the dashboard morning briefing.
+	 */
+	function tasks_ensure_table($db) {
+		$db->exec("CREATE TABLE IF NOT EXISTS tasks (
+			id           INT AUTO_INCREMENT PRIMARY KEY,
+			title        VARCHAR(255) NOT NULL,
+			notes        TEXT NULL,
+			due_date     DATE NULL,
+			completed    TINYINT NOT NULL DEFAULT 0,
+			completed_at DATETIME NULL,
+			created_by   INT NULL,
+			created_by_name VARCHAR(190) NULL,
+			created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			INDEX (completed), INDEX (due_date)
+		) ENGINE=InnoDB");
+	}
+
 	// ── LEGACY QTY HELPER (still used by some callers) ────────────────────────
 
 	function adjust_qty($partId,$type,$qty) {

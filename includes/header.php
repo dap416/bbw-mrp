@@ -163,9 +163,14 @@
         </li>
         <?php } ?>
 
-        <?php if ($navAdmin || has_access('research')) { ?>
         <li class="pc-item pc-caption"><label>Business</label></li>
-        <?php } ?>
+
+        <li class="pc-item">
+          <a href="/tasks.php" class="pc-link">
+            <span class="pc-micon"><i class="ti ti-checklist"></i></span>
+            <span class="pc-mtext">Task List</span>
+          </a>
+        </li>
 
         <?php if ($navAdmin) { ?>
         <li class="pc-item">
