@@ -167,7 +167,7 @@
 
         <li class="pc-item">
           <a href="/tasks.php" class="pc-link">
-            <span class="pc-micon"><i class="ti ti-checklist"></i></span>
+            <span class="pc-micon"><i class="ti ti-checkbox"></i></span>
             <span class="pc-mtext">Task List</span>
           </a>
         </li>

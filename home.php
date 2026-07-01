@@ -315,13 +315,48 @@
 .aging-fill      { height:100%; border-radius:3px; }
 .big-num         { font-size:2rem; font-weight:700; line-height:1; }
 .big-label       { font-size:0.7rem; text-transform:uppercase; letter-spacing:.05em; color:#6c757d; margin-top:2px; }
+details.dash-section { margin-bottom:1rem; }
+details.dash-section > summary { list-style:none; cursor:pointer; padding:12px 16px; background:#fff; border:1px solid #e9ecef; border-radius:10px;
+	display:flex; align-items:center; justify-content:space-between; box-shadow:0 1px 2px rgba(0,0,0,.03); }
+details.dash-section > summary::-webkit-details-marker { display:none; }
+details.dash-section > summary:hover { background:#f8f9fa; }
+details.dash-section[open] > summary { border-bottom-left-radius:0; border-bottom-right-radius:0; margin-bottom:-1px; }
+details.dash-section > summary .sum-title { font-size:0.72rem; text-transform:uppercase; letter-spacing:.06em; font-weight:700; color:#6c757d; }
+details.dash-section > summary .ti-chevron-right { transition:transform .15s; color:#adb5bd; }
+details.dash-section[open] > summary .ti-chevron-right { transform:rotate(90deg); }
 </style>
 
 <div>
-<div class="d-flex align-items-center justify-content-between mb-4">
+<div class="d-flex align-items-center justify-content-between mb-3">
 	<h2 class="fw-bold mb-0">Dashboard</h2>
 	<div class="text-muted small"><?php echo date('l, F j, Y'); ?></div>
 </div>
+
+<!-- ── AI BRIEFING ──────────────────────────────────────────────────────── -->
+<div class="card mb-3" style="border-left:4px solid #4680ff;">
+	<div class="card-body py-3">
+		<div class="d-flex justify-content-between align-items-center">
+			<span class="section-title mb-0"><i class="ti ti-sparkles me-1"></i>Your Briefing</span>
+			<button class="btn btn-sm btn-link text-muted p-0 ms-2" id="briefing-refresh" title="Refresh briefing"><i class="ti ti-refresh"></i></button>
+		</div>
+		<div id="briefing-body" class="mt-2" style="font-size:0.9rem;">
+			<div class="text-muted small"><span class="spinner-border spinner-border-sm me-1"></span>Putting together your briefing…</div>
+		</div>
+	</div>
+</div>
+
+<?php if (in_array($_SESSION['user_role'] ?? '', ['admin','master'], true)): ?>
+<!-- ── CASH FLOW: PAYMENTS TO MAKE (this month) ─────────────────────────── -->
+<div class="card mb-3" style="border-top:3px solid #6f42c1;">
+	<div class="card-body">
+		<div class="panel-header">
+			<span class="panel-title"><i class="ti ti-cash me-1"></i>Cash Flow — Payments to Make This Month</span>
+			<a href="/cashflow.php" class="small text-muted">Open Cash Flow →</a>
+		</div>
+		<div id="dash-payments"><div class="text-muted small"><span class="spinner-border spinner-border-sm me-1"></span>Loading payments…</div></div>
+	</div>
+</div>
+<?php endif; ?>
 
 <!-- ── KPI STRIP ─────────────────────────────────────────────────────────── -->
 <div class="row g-3 mb-4">
@@ -560,11 +595,10 @@
 
 </div><!-- end row A -->
 
-<!-- ── RECENT ACTIVITY ──────────────────────────────────────────────────── -->
-<div class="row g-3 mb-4">
-<div class="col-12">
-<div class="card"><div class="card-body">
-	<div class="section-title">Recent Activity</div>
+<!-- ── RECENT ACTIVITY (collapsible) ────────────────────────────────────── -->
+<details class="dash-section">
+<summary><span class="sum-title"><i class="ti ti-history me-1"></i>Recent Activity</span><i class="ti ti-chevron-right"></i></summary>
+<div class="card" style="border-radius:0 0 10px 10px;"><div class="card-body">
 	<table class="table dash-table">
 		<thead><tr><th>Date</th><th>Type</th><th>Part</th><th>Description</th><th class="text-center">Qty</th><th>Reason / Ref</th><th>User</th></tr></thead>
 		<tbody>
@@ -586,15 +620,14 @@
 		</tbody>
 	</table>
 </div></div>
-</div>
-</div>
+</details>
 
 <!-- ══════════════════════════════════════════════════════════════════════════
      SECTION B — OUTSTANDING PAYMENTS
      ══════════════════════════════════════════════════════════════════════ -->
-<div class="row g-3 mb-3">
-<div class="col-12">
-<div class="card" style="border-top:3px solid <?php echo $unpaidAmt>0?'#dc2626':'#2ca87f'; ?>">
+<details class="dash-section">
+<summary><span class="sum-title"><i class="ti ti-receipt-off me-1"></i>Outstanding Payments Owed<?php echo $unpaidCnt>0?' — '.$unpaidCnt.' · $'.number_format($unpaidAmt,0):' — all paid'; ?></span><i class="ti ti-chevron-right"></i></summary>
+<div class="card" style="border-radius:0 0 10px 10px;border-top:3px solid <?php echo $unpaidAmt>0?'#dc2626':'#2ca87f'; ?>">
 <div class="card-body">
 
 	<div class="panel-header mb-3">
@@ -688,15 +721,14 @@
 
 </div>
 </div>
-</div>
-</div><!-- end row B -->
+</details><!-- end Outstanding Payments -->
 
 <!-- ══════════════════════════════════════════════════════════════════════════
      SECTION C — OVERSTOCKED / IDLE INVENTORY
      ══════════════════════════════════════════════════════════════════════ -->
-<div class="row g-3 mb-4">
-<div class="col-12">
-<div class="card" style="border-top:3px solid <?php echo $idleCount>0?'#dc2626':($excessCount>0?'#e58a00':'#2ca87f'); ?>">
+<details class="dash-section">
+<summary><span class="sum-title"><i class="ti ti-box-seam me-1"></i>Overstocked &amp; Idle Inventory<?php echo ($idleCount+$excessCount)>0?' — '.($idleCount+$excessCount).' · $'.number_format($idleTotal+$excessTotal,0):' — all healthy'; ?></span><i class="ti ti-chevron-right"></i></summary>
+<div class="card" style="border-radius:0 0 10px 10px;border-top:3px solid <?php echo $idleCount>0?'#dc2626':($excessCount>0?'#e58a00':'#2ca87f'); ?>">
 <div class="card-body">
 
 	<div class="panel-header mb-3">
@@ -769,8 +801,7 @@
 
 </div>
 </div>
-</div>
-</div><!-- end row C -->
+</details><!-- end Overstocked / Idle -->
 
 <!-- ── CHARTS ROW 1 ─────────────────────────────────────────────────────── -->
 <div class="row g-3 mb-4">
@@ -952,6 +983,27 @@ $(document).on('blur change', '.eta-input', function(e) {
 		$cell.closest('tr').find('.eta-badge').html(badge);
 	});
 });
+
+// ── AI BRIEFING ─────────────────────────────────────────────────────────────
+function loadBriefing(force) {
+	var $b = $('#briefing-body');
+	if (force) $b.html('<div class="text-muted small"><span class="spinner-border spinner-border-sm me-1"></span>Refreshing…</div>');
+	$.getJSON('/ajax/briefing.php' + (force ? '?refresh=1' : ''), function(res) {
+		if (res && res.html) $b.html(res.html);
+		else $b.html('<div class="text-muted small">Briefing unavailable' + (res && res.error ? ': ' + res.error : '') + '.</div>');
+	}).fail(function() { $b.html('<div class="text-muted small">Could not load the briefing.</div>'); });
+}
+$('#briefing-refresh').on('click', function() { loadBriefing(true); });
+loadBriefing(false);
+
+// ── CASH FLOW PAYMENTS WIDGET (admin) ───────────────────────────────────────
+if (document.getElementById('dash-payments')) {
+	$.getJSON('/ajax/dash_payments.php', function(res) {
+		var $p = $('#dash-payments');
+		if (res && res.html) $p.html(res.html);
+		else $p.html('<div class="text-muted small">Payments unavailable' + (res && res.error ? ': ' + res.error : '') + '.</div>');
+	}).fail(function() { $('#dash-payments').html('<div class="text-muted small">Could not load payments.</div>'); });
+}
 </script>
 
 <?php require_once(__DIR__."/includes/footer.php"); ?>
