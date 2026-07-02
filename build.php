@@ -132,6 +132,8 @@
 .picklist-empty    { text-align:center; padding:40px 20px; color:#6c757d; }
 .picklist-empty i  { font-size:2.5rem; display:block; margin-bottom:10px; opacity:.4; }
 .qty-input         { width:70px; text-align:center; }
+.duedate-input     { width:150px; }
+.duedate-input.is-overdue { border-color:#e64545; color:#e64545; font-weight:600; }
 .remaining-badge   { font-size:0.72rem; font-weight:600; padding:2px 8px; border-radius:20px; background:#fff3cd; color:#856404; }
 
 .wh-tab { font-size:0.8rem; font-weight:600; padding:5px 16px; border-radius:20px; border:1px solid #dee2e6; background:#fff; color:#6c757d; cursor:pointer; text-decoration:none; transition:all .15s; }
@@ -241,7 +243,8 @@
 			<th>Product</th>
 			<?php if (count($warehouses) > 1): ?><th>Warehouse</th><?php endif; ?>
 			<th>Order Date</th>
-			<th class="text-center">Ordered</th>
+			<th style="width:170px;">Build By</th>
+				<th class="text-center">Ordered</th>
 			<th class="text-center">Completed</th>
 			<th class="text-center">Remaining</th>
 			<th style="width:220px;">Add to Pick List</th>
@@ -257,6 +260,11 @@
 			<td class="text-muted small"><?php echo htmlspecialchars($order['wh_name'] ?? '—'); ?></td>
 			<?php endif; ?>
 			<td class="text-muted"><?php echo date('m/d/y', strtotime($order['orddate'])); ?></td>
+				<?php
+					$due = !empty($order['duedate']) && $order['duedate'] !== '0000-00-00' ? $order['duedate'] : '';
+					$overdue = $due && $due < date('Y-m-d');
+				?>
+				<td><input type="date" class="form-control form-control-sm duedate-input<?php echo $overdue ? ' is-overdue' : ''; ?>" min="<?php echo date('Y-m-d'); ?>" value="<?php echo htmlspecialchars($due); ?>" data-orderid="<?php echo $order['id']; ?>" title="Set the date this build needs to be completed by" /></td>
 			<td class="text-center text-muted"><?php echo number_format($order['qty']); ?></td>
 			<td class="text-center text-muted"><?php echo number_format($order['buildqty']); ?></td>
 			<td class="text-center"><span class="remaining-badge"><?php echo number_format($remaining); ?></span></td>
@@ -553,6 +561,26 @@ $(document).on('click', '#recAddBtn', function() {
 			else { $('#recAddMsg').addClass('text-danger').text('Error: ' + res); $btn.prop('disabled', false).html('<i class="ti ti-plus me-1"></i>Add as packaging orders'); }
 		}
 	).fail(function(xhr){ $('#recAddMsg').addClass('text-danger').text('Failed: ' + (xhr.responseText || xhr.status)); $btn.prop('disabled', false).html('<i class="ti ti-plus me-1"></i>Add as packaging orders'); });
+});
+
+// ── Set "Build By" due date on a packaging order ──
+$(document).on('change', '.duedate-input', function() {
+	var $inp    = $(this);
+	var orderId = $inp.data('orderid');
+	var date    = $inp.val();
+
+	// Reflect overdue state immediately.
+	var today = new Date().toISOString().slice(0, 10);
+	$inp.toggleClass('is-overdue', !!date && date < today);
+
+	$inp.prop('disabled', true);
+	$.post('/ajax/build/set_duedate.php', { orderid: orderId, date: date }, function(res) {
+		if (res !== 'ok') { alert('Could not save the Build By date: ' + res); }
+	}).fail(function(xhr) {
+		alert('Could not save the Build By date: ' + (xhr.responseText || xhr.status));
+	}).always(function() {
+		$inp.prop('disabled', false);
+	});
 });
 
 $('.add-pick-btn').on('click', function() {
