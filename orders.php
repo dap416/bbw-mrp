@@ -11,6 +11,15 @@
 
 	$dbLink = $mysqli = db_connect();
 
+	// Standard users get a stripped-down, finance-free view of orders; only
+	// admins/masters see order values, payments and the archive controls.
+	$showFinancials = in_array($_SESSION['user_role'] ?? '', ['admin','master'], true);
+	$orderCols      = $showFinancials ? 7 : 6;
+
+	// Expected Arrival date (visible to everyone, incl. standard users). Self-heal
+	// the column so it works even before setup_order_expected.php is run.
+	try { $dbLink->exec("ALTER TABLE `orders` ADD COLUMN `expected_date` DATE NULL"); } catch (Throwable $e) {}
+
 	$parts      = $dbLink->query("SELECT * FROM `parts` ORDER BY `partno` ASC");
 	$warehouses = get_warehouses($dbLink);
 
@@ -107,7 +116,10 @@
 						<th class="text-muted fw-semibold" style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.04em;">Order Ref</th>
 						<th class="text-muted fw-semibold" style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.04em;">QTY / Rec</th>
 						<th class="text-muted fw-semibold" style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.04em;">Order Date</th>
+						<th class="text-muted fw-semibold" style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.04em;">Expected Arrival</th>
+						<?php if ($showFinancials): ?>
 						<th class="text-muted fw-semibold" style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.04em;">Value / Paid</th>
+						<?php endif; ?>
 						<th class="text-muted fw-semibold" style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.04em;">Actions</th>
 					</tr>
 				</thead>
@@ -137,7 +149,7 @@
 				: $dbLink->query("SELECT * FROM `orders` WHERE `postdate` = '0000-00-00 00:00:00' AND `recqty` < `qty` ORDER BY `orderdate` ASC");
 
 			if ($openOrders->rowCount() === 0) {
-				echo '<tr><td colspan="6" class="text-muted py-4 text-center">There are no open orders at this time. Click <a href="#" id="emptyAddOrder" class="link">Add Order</a> to add an order that has been placed.</td></tr>';
+				echo '<tr><td colspan="'.$orderCols.'" class="text-muted py-4 text-center">There are no open orders at this time. Click <a href="#" id="emptyAddOrder" class="link">Add Order</a> to add an order that has been placed.</td></tr>';
 			}
 
 			while($order = $openOrders->fetch()) {
@@ -152,6 +164,10 @@
 				$orderVal = $order['ordval'];
 				$paidVal = $order['paidamt'];
 				$orderRef = $order['orderref'];
+				$expectedRaw   = $order['expected_date'] ?? '';
+				$hasExpected   = $expectedRaw && $expectedRaw !== '0000-00-00';
+				$expectedLabel = $hasExpected ? date('m/d/y', strtotime($expectedRaw)) : 'TBD';
+				$expectedInput = $hasExpected ? date('Y-m-d', strtotime($expectedRaw)) : '';
 
 				// Archive eligibility: paid in full AND something received.
 				$paidInFull   = ((float)$paidVal + 0.005) >= (float)$orderVal && (float)$orderVal > 0;
@@ -165,7 +181,10 @@
 					<td id="<?php echo $orderId; ?>summaryRef"><?php echo htmlspecialchars($orderRef); ?></td>
 					<td id="<?php echo $orderId; ?>summaryQty"><?php echo "$orderQty / $recQty"; ?></td>
 					<td><?php echo $orderDate; ?></td>
+					<td id="<?php echo $orderId; ?>summaryExpected"><?php echo $hasExpected ? $expectedLabel : '<span class="text-muted">TBD</span>'; ?></td>
+					<?php if ($showFinancials): ?>
 					<td id="<?php echo $orderId; ?>summaryVal"><?php echo "$orderVal / $paidVal"; ?></td>
+					<?php endif; ?>
 					<td>
 						<input type="button" action="manOrdButton" record="<?php echo $orderId; ?>" value="MANAGE" class="btn btn-sm btn-light-primary" />
 					</td>
@@ -173,7 +192,7 @@
 
 				<!-- MANAGE ORDER AREA -->
 				<tr>
-				<td colspan="6" class="p-0" style="border-top: none;">
+				<td colspan="<?php echo $orderCols; ?>" class="p-0" style="border-top: none;">
 				<div id="<?php echo $orderId; ?>manArea" class="manage-area hidden">
 					<div class="row g-4">
 
@@ -207,6 +226,15 @@
 									<button action="editDate" record="<?php echo $orderId; ?>" class="btn btn-primary btn-sm">Submit</button>
 								</div>
 								<div class="text-muted" style="font-size:0.72rem;">Can be backdated; cannot be set in the future.</div>
+								</div>
+
+								<div class="mb-3">
+									<label class="form-label fw-semibold small text-muted">Expected Arrival</label>
+									<div class="d-flex gap-2 align-items-center flex-wrap">
+										<input type="date" id="<?php echo $orderId; ?>editExpected" class="form-control form-control-sm" style="width:170px" value="<?php echo $expectedInput; ?>" />
+										<button action="editExpected" record="<?php echo $orderId; ?>" class="btn btn-primary btn-sm">Submit</button>
+									</div>
+									<div class="text-muted" style="font-size:0.72rem;">When this order is due to arrive. Shown to all staff; leave blank for &ldquo;TBD&rdquo;. Clear the field and submit to reset it.</div>
 							</div>
 
 							<div class="mb-3">
@@ -222,6 +250,7 @@
 								<div class="text-muted" style="font-size:0.72rem;">Wrong part? Re-point the order. The old part's order entry is marked corrected, a new order entry is added on the right part, and any received stock is moved.</div>
 							</div>
 
+							<?php if ($showFinancials): ?>
 							<div class="mb-3">
 								<label class="form-label fw-semibold small text-muted">Post Payment</label>
 								<div class="d-flex gap-2">
@@ -234,6 +263,7 @@
 									<button action="payFull" record="<?php echo $orderId; ?>" class="btn btn-success btn-sm">Pay in Full</button>
 								</div>
 							</div>
+							<?php endif; ?>
 
 							<?php endif; ?>
 
@@ -256,7 +286,7 @@
 
 							<?php endif; ?>
 
-							<?php if ($hasArchive && $canEditOrders):
+							<?php if ($hasArchive && $canEditOrders && $showFinancials):
 								$archDiff = (int)$recQty - (int)$orderQty;
 								$archNote = $archDiff === 0 ? '' : ($archDiff > 0 ? 'OVERAGE of '.$archDiff : 'SHORTAGE of '.(-$archDiff));
 							?>
@@ -297,7 +327,8 @@
 									</div>
 								</div>
 
-								<!-- PAYMENTS -->
+								<?php if ($showFinancials): ?>
+									<!-- PAYMENTS -->
 								<div class="col-12">
 									<div class="fw-semibold small text-muted mb-1">Payments</div>
 									<div class="small" id="<?php echo $orderId; ?>paymentsList">
@@ -309,7 +340,9 @@
 									</div>
 								</div>
 
-								<!-- SHIPMENTS RECEIVED -->
+								<?php endif; ?>
+
+									<!-- SHIPMENTS RECEIVED -->
 								<div class="col-12">
 									<div class="fw-semibold small text-muted mb-1">Shipments Received</div>
 									<div class="small" id="<?php echo $orderId; ?>shipmentsList">
@@ -569,6 +602,16 @@
 			$.post('/ajax/edit_order_date.php', { record: record, orderdate: newdate }, function(response) {
 				if (response === 'ok') { location.reload(); }
 				else { alert('Could not change date: ' + response); }
+			});
+		});
+
+		// EDIT EXPECTED ARRIVAL (blank clears back to TBD)
+		$("[action=editExpected]").click(function() {
+			var record  = $(this).attr('record');
+			var newdate = $("#"+record+"editExpected").val();
+			$.post('/ajax/edit_order_expected.php', { record: record, expected: newdate }, function(response) {
+				if (response === 'ok') { location.reload(); }
+				else { alert('Could not set expected arrival: ' + response); }
 			});
 		});
 
