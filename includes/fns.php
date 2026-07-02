@@ -70,6 +70,38 @@
 		return false;
 	}
 
+	/**
+	 * Sidebar menu items that a master can show/hide per user (the "Menu View").
+	 * key => label. Keys are stable identifiers used in header.php gates and in
+	 * the users.php editor — do not rename without updating both.
+	 */
+	function menu_items() {
+		return [
+			'dashboard'          => 'Dashboard',
+			'orders'             => 'Orders',
+			'inventory'          => 'Inventory',
+			'warehouse_stock'    => 'Warehouse Stock',
+			'tradeshows'         => 'Tradeshow Planner',
+			'build'              => 'Packaging',
+			'products'           => 'Products',
+			'physical_inventory' => 'Physical Inventory',
+			'manufacturers'      => 'Manufacturers',
+			'tasks'              => 'Task List',
+			'cashflow'           => 'Cash Flow',
+			'research'           => 'Research',
+		];
+	}
+
+	/**
+	 * Should this sidebar item appear for the current user? Menu View is a
+	 * display preference layered on top of the permission gates — hiding an
+	 * item never grants or revokes actual page access. Default: visible.
+	 */
+	function menu_visible($key) {
+		$hidden = $_SESSION['user_menu_hidden'] ?? [];
+		return !in_array($key, (array)$hidden, true);
+	}
+
 	/** Block an AJAX mutation the user isn't allowed to perform. */
 	function require_can($cond, $msg = 'You do not have permission to perform this action.') {
 		if (!$cond) { http_response_code(403); echo $msg; exit; }
@@ -289,4 +321,4 @@
 
 
 
-?>
+?>

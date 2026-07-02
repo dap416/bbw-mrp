@@ -68,12 +68,14 @@
     <div class="navbar-content">
       <ul class="pc-navbar">
 
+        <?php if (menu_visible('dashboard')) { ?>
         <li class="pc-item">
           <a href="/home.php" class="pc-link">
             <span class="pc-micon"><i class="ti ti-layout-dashboard"></i></span>
             <span class="pc-mtext">Dashboard</span>
           </a>
         </li>
+        <?php } ?>
 
         <?php
           $navReq   = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH);
@@ -84,7 +86,7 @@
         <li class="pc-item pc-caption"><label>MRP</label></li>
         <?php } ?>
 
-        <?php if (has_access('orders')) { ?>
+        <?php if (has_access('orders') && menu_visible('orders')) { ?>
         <li class="pc-item pc-hasmenu">
           <a href="#!" class="pc-link">
             <span class="pc-micon"><i class="ti ti-shopping-cart"></i></span>
@@ -100,7 +102,7 @@
         </li>
         <?php } ?>
 
-        <?php if (has_access('inventory')) { ?>
+        <?php if (has_access('inventory') && menu_visible('inventory')) { ?>
         <li class="pc-item">
           <a href="/index.php" class="pc-link">
             <span class="pc-micon"><i class="ti ti-package"></i></span>
@@ -109,7 +111,7 @@
         </li>
         <?php } ?>
 
-        <?php if (has_access('inventory') || has_access('build')) { ?>
+        <?php if ((has_access('inventory') || has_access('build')) && menu_visible('warehouse_stock')) { ?>
         <li class="pc-item">
           <a href="/warehouse_stock.php" class="pc-link">
             <span class="pc-micon"><i class="ti ti-building-warehouse"></i></span>
@@ -118,7 +120,7 @@
         </li>
         <?php } ?>
 
-        <?php if (has_access('build') || has_access('research')) { ?>
+        <?php if ((has_access('build') || has_access('research')) && menu_visible('tradeshows')) { ?>
         <li class="pc-item">
           <a href="/tradeshows.php" class="pc-link">
             <span class="pc-micon"><i class="ti ti-tent"></i></span>
@@ -127,7 +129,7 @@
         </li>
         <?php } ?>
 
-        <?php if (has_access('build')) { ?>
+        <?php if (has_access('build') && menu_visible('build')) { ?>
         <li class="pc-item">
           <a href="/build.php" class="pc-link">
             <span class="pc-micon"><i class="ti ti-box"></i></span>
@@ -136,7 +138,7 @@
         </li>
         <?php } ?>
 
-        <?php if (has_access('products')) { ?>
+        <?php if (has_access('products') && menu_visible('products')) { ?>
         <li class="pc-item">
           <a href="/products.php" class="pc-link">
             <span class="pc-micon"><i class="ti ti-tag"></i></span>
@@ -145,7 +147,7 @@
         </li>
         <?php } ?>
 
-        <?php if (has_access('build')) { ?>
+        <?php if (has_access('build') && menu_visible('physical_inventory')) { ?>
         <li class="pc-item">
           <a href="/physical_inventory.php" class="pc-link">
             <span class="pc-micon"><i class="ti ti-clipboard-list"></i></span>
@@ -154,7 +156,7 @@
         </li>
         <?php } ?>
 
-        <?php if (has_access('manufacturers')) { ?>
+        <?php if (has_access('manufacturers') && menu_visible('manufacturers')) { ?>
         <li class="pc-item">
           <a href="/manufacturers.php" class="pc-link">
             <span class="pc-micon"><i class="ti ti-building-factory"></i></span>
@@ -165,14 +167,16 @@
 
         <li class="pc-item pc-caption"><label>Business</label></li>
 
+        <?php if (menu_visible('tasks')) { ?>
         <li class="pc-item">
           <a href="/tasks.php" class="pc-link">
             <span class="pc-micon"><i class="ti ti-checkbox"></i></span>
             <span class="pc-mtext">Task List</span>
           </a>
         </li>
+        <?php } ?>
 
-        <?php if ($navAdmin) { ?>
+        <?php if ($navAdmin && menu_visible('cashflow')) { ?>
         <li class="pc-item">
           <a href="/cashflow.php" class="pc-link">
             <span class="pc-micon"><i class="ti ti-cash"></i></span>
@@ -181,7 +185,7 @@
         </li>
         <?php } ?>
 
-        <?php if (has_access('research')) { ?>
+        <?php if (has_access('research') && menu_visible('research')) { ?>
         <li class="pc-item">
           <a href="/research.php" class="pc-link">
             <span class="pc-micon"><i class="ti ti-flask"></i></span>

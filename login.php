@@ -38,6 +38,7 @@
 				'access_orders_create'  => (int)($user['access_orders_create']  ?? 0),
 				'access_orders_receive' => (int)($user['access_orders_receive'] ?? 0),
 			];
+			$_SESSION['user_menu_hidden'] = json_decode($user['menu_hidden'] ?? '[]', true) ?: [];
 
 			header('Location: /home.php');
 			exit;

@@ -79,6 +79,7 @@
 
 	while ($user = $users->fetch()) {
 		$uid      = $user['id'];
+		$userHidden = json_decode($user['menu_hidden'] ?? '[]', true) ?: [];
 		$uname    = htmlspecialchars($user['name']);
 		$uuser    = htmlspecialchars($user['username']);
 		$urole    = $user['role'];
@@ -198,6 +199,32 @@
 					</div>
 				</div>
 
+			</div>
+
+			<hr class="my-4" />
+
+			<h6 class="fw-bold mb-2">Menu View</h6>
+			<div class="text-muted small mb-3" style="max-width:640px;">
+				Choose which sidebar menu items <strong><?php echo $uname; ?></strong> sees when signed in.
+				Unchecking hides an item from their menu — it does <strong>not</strong> change the page
+				permissions set above. Changes take effect the next time <?php echo $uname; ?> signs in.
+			</div>
+
+			<div class="row g-2" style="max-width:640px;">
+				<?php foreach (menu_items() as $mkey => $mlabel): $mHidden = in_array($mkey, $userHidden, true); ?>
+				<div class="col-6 col-md-4">
+					<div class="form-check">
+						<input class="form-check-input menu-view-check" type="checkbox"
+							id="<?php echo $uid.'menu_'.$mkey; ?>" data-key="<?php echo $mkey; ?>"
+							<?php echo $mHidden ? '' : 'checked'; ?> />
+						<label class="form-check-label small" for="<?php echo $uid.'menu_'.$mkey; ?>"><?php echo htmlspecialchars($mlabel); ?></label>
+					</div>
+				</div>
+				<?php endforeach; ?>
+			</div>
+			<div class="mt-2">
+				<button action="saveMenu" record="<?php echo $uid; ?>" class="btn btn-primary btn-sm">Save Menu View</button>
+				<span id="<?php echo $uid; ?>menuMsg" class="small ms-2"></span>
 			</div>
 
 			<div class="mt-4">
@@ -362,7 +389,34 @@
 		}, 'json');
 	});
 
-	// CHANGE PASSWORD
+	// SAVE MENU VIEW
+		$("[action=saveMenu]").click(function() {
+			var $btn   = $(this);
+			var record = $btn.attr('record');
+			var hidden = [];
+			$("#"+record+"userManArea input.menu-view-check").each(function() {
+				if (!$(this).is(':checked')) hidden.push($(this).data('key'));
+			});
+
+			$btn.prop('disabled', true);
+			$("#"+record+"menuMsg").removeClass('text-danger text-success').text('Saving…');
+			$.post('/ajax/users/save_menu.php', { record: record, hidden: JSON.stringify(hidden) }, function(resp) {
+				$btn.prop('disabled', false);
+				if (!resp || !resp.ok) {
+					$("#"+record+"menuMsg").removeClass('text-success').addClass('text-danger').text((resp && resp.error) ? resp.error : 'Save failed.');
+					return;
+				}
+				var msg = resp.self
+					? 'Saved — applied to your menu immediately.'
+					: 'Saved. ' + (resp.name || 'This user') + ' will see the change next time they sign in.';
+				$("#"+record+"menuMsg").removeClass('text-danger').addClass('text-success').text(msg);
+			}, 'json').fail(function(xhr) {
+				$btn.prop('disabled', false);
+				$("#"+record+"menuMsg").removeClass('text-success').addClass('text-danger').text('Failed: ' + (xhr.responseText || xhr.status));
+			});
+		});
+
+		// CHANGE PASSWORD
 	$("[action=changePassword]").click(function() {
 		var $btn    = $(this);
 		var record  = $btn.attr('record');
