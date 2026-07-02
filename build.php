@@ -7,6 +7,8 @@
 	}
 
 	$db = db_connect();
+	// Self-heal the "Build By" due-date column (works without running setup_build_duedate.php).
+	try { $db->exec("ALTER TABLE `intransit` ADD COLUMN `duedate` DATE DEFAULT NULL"); } catch (Throwable $e) {}
 	$warehouses = get_warehouses($db);
 
 	// Default warehouse: Arkansas

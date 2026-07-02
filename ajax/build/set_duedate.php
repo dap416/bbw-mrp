@@ -13,6 +13,9 @@ $date    = trim($_POST['date'] ?? '');
 
 if (!$orderId) { echo 'error: missing order'; exit; }
 
+// Self-heal the column so this works even if setup_build_duedate.php was never run.
+try { $db->exec("ALTER TABLE `intransit` ADD COLUMN `duedate` DATE DEFAULT NULL"); } catch (Throwable $e) {}
+
 $due = null;
 if ($date !== '') {
 	$d = DateTime::createFromFormat('Y-m-d', $date);
