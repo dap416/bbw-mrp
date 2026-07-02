@@ -58,7 +58,7 @@ try {
 	} else { $fpError = 'Shopify is not connected — assuming 0 finished product on hand.'; }
 } catch (Throwable $e) { $fpError = 'Could not read finished-product stock — assuming 0 on hand.'; }
 
-$rows = []; $unmapped = [];
+$rows = []; $unmapped = []; $replAcc = [];
 foreach ($want as $sku => $units) {
 	$pr = $prodBySku[strtolower($sku)] ?? null;
 	if (!$pr || empty($bomProds[(int)$pr['id']])) { $unmapped[] = ['sku' => $sku, 'units' => (int)$units]; continue; }
@@ -72,11 +72,19 @@ foreach ($want as $sku => $units) {
 	// Buildable now = min over the BOM of floor(raw on-hand / per-unit need),
 	// using the chosen warehouse's raw stock (mirrors fp_build_plan / build.php).
 	$buildable = null; $limitPart = null;
-	foreach ($db->query("SELECT b.qty AS need, b.partid, p.partno, p.qoh FROM build b JOIN parts p ON p.id = b.partid WHERE b.prodid = $pid") as $bl) {
+	foreach ($db->query("SELECT b.qty AS need, b.partid, p.partno, p.`desc`, p.qoh FROM build b JOIN parts p ON p.id = b.partid WHERE b.prodid = $pid") as $bl) {
 		$need   = max(1, (int)$bl['need']);
 		$onhandRaw = $whId ? (int)wh_get_qty($db, (int)$bl['partid'], $whId) : (int)$bl['qoh'];
 		$can    = intdiv(max(0, $onhandRaw), $need);
 		if ($buildable === null || $can < $buildable) { $buildable = $can; $limitPart = $bl['partno']; }
+
+		// Collect camshaft (CS*) & plate (PL*) components as replacement spares to bring.
+		$pn = strtoupper((string)$bl['partno']);
+		if (strpos($pn, 'CS') === 0 || strpos($pn, 'PL') === 0) {
+			$rid = (int)$bl['partid'];
+			if (!isset($replAcc[$rid])) $replAcc[$rid] = ['partno' => $bl['partno'], 'desc' => $bl['desc'], 'onhand' => $onhandRaw, 'demand' => 0];
+			$replAcc[$rid]['demand'] += $demand;
+		}
 	}
 	$buildable = $buildable === null ? 0 : $buildable;
 
@@ -94,5 +102,22 @@ foreach ($want as $sku => $units) {
 	];
 }
 
+// Replacement parts (camshafts + plates) to bring as spares: 5 each for slow FP
+// sellers, scaling to 15 for high sellers (clamped), by aggregated FP demand.
+$replacements = [];
+foreach ($replAcc as $r) {
+	$spares = (int)round($r['demand'] / 5);
+	if ($spares < 5)  $spares = 5;
+	if ($spares > 15) $spares = 15;
+	$replacements[] = [
+		'partno'  => $r['partno'],
+		'desc'    => $r['desc'],
+		'spares'  => $spares,
+		'on_hand' => (int)$r['onhand'],
+		'short'   => max(0, $spares - (int)$r['onhand']),
+	];
+}
+usort($replacements, fn($a, $b) => strcmp((string)$a['partno'], (string)$b['partno']));
+
 usort($rows, fn($a, $b) => $b['build'] <=> $a['build']);
-echo json_encode(['ok' => true, 'rows' => $rows, 'unmapped' => $unmapped, 'fp_note' => $fpError]);
+echo json_encode(['ok' => true, 'rows' => $rows, 'replacements' => $replacements, 'unmapped' => $unmapped, 'fp_note' => $fpError]);

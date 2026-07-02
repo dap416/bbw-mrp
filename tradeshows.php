@@ -225,6 +225,17 @@ function tsRenderPrep(d, names) {
 			'</tr>';
 	});
 	html += '</tbody></table></div>';
+	if (d.replacements && d.replacements.length) {
+		html += '<div class="mt-3"><div class="fw-bold small mb-1">Replacement parts to bring (spares)</div>';
+		html += '<div class="text-muted small mb-2">Camshafts and plates for on-site swaps - 5 each for slow FP sellers, up to 15 for high sellers. Pull from raw stock; order more on the Orders page if short.</div>';
+		html += '<div class="table-responsive"><table class="table table-sm align-middle" style="font-size:0.88rem;"><thead><tr><th>Part</th><th>Description</th><th class="text-center">Bring (spares)</th><th class="text-center">On hand</th></tr></thead><tbody>';
+		d.replacements.forEach(function(rp) {
+			var oh = rp.short > 0 ? '<span class="text-danger fw-semibold">' + tsNum(rp.on_hand) + '</span>' : '<span class="text-success">' + tsNum(rp.on_hand) + '</span>';
+			html += '<tr><td class="fw-semibold">' + $('<div>').text(rp.partno).html() + '</td><td class="text-muted">' + $('<div>').text(rp.desc||'').html() + '</td>' +
+				'<td class="text-center fw-bold">' + tsNum(rp.spares) + '</td><td class="text-center">' + oh + '</td></tr>';
+		});
+		html += '</tbody></table></div></div>';
+	}
 	if (d.unmapped && d.unmapped.length) {
 		var un = d.unmapped.map(function(u){ return $('<div>').text(u.sku).html() + ' (' + tsNum(u.units) + ')'; }).join(', ');
 		html += '<div class="text-muted small mt-1"><i class="ti ti-info-circle"></i> Not auto-built (no product/BOM match): ' + un + '</div>';
