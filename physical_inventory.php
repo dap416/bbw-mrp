@@ -174,7 +174,7 @@
 					</thead>
 					<tbody>
 					<?php foreach ($grouped[$categoryName] as $part): ?>
-					<tr data-part="<?php echo $part['id']; ?>" data-qoh="<?php echo (int)$part['wh_qty']; ?>">
+					<tr id="part-row-<?php echo $part['id']; ?>" data-part="<?php echo $part['id']; ?>" data-qoh="<?php echo (int)$part['wh_qty']; ?>">
 						<td class="font-monospace"><?php echo htmlspecialchars($part['partno']); ?></td>
 						<td><?php echo htmlspecialchars($part['desc']); ?></td>
 						<td class="text-end">
@@ -225,7 +225,7 @@
 					</thead>
 					<tbody>
 					<?php foreach ($grouped['Other'] as $part): ?>
-					<tr data-part="<?php echo $part['id']; ?>" data-qoh="<?php echo (int)$part['wh_qty']; ?>">
+					<tr id="part-row-<?php echo $part['id']; ?>" data-part="<?php echo $part['id']; ?>" data-qoh="<?php echo (int)$part['wh_qty']; ?>">
 						<td class="font-monospace"><?php echo htmlspecialchars($part['partno']); ?></td>
 						<td><?php echo htmlspecialchars($part['desc']); ?></td>
 						<td class="text-end">
@@ -293,6 +293,24 @@ function toggleCat(slug) {
 	$body.toggle(!open);
 	$arrow.toggleClass('ti-chevron-right', open).toggleClass('ti-chevron-down', !open);
 }
+
+// Deep-link: /physical_inventory.php?part=<id> → open that part's category, scroll to it,
+// highlight it, and focus its count box (used by dashboard "count inventory" assignments).
+$(function() {
+	var m = (location.search || '').match(/[?&]part=(\d+)/);
+	if (!m) return;
+	var $row = $('#part-row-' + m[1]);
+	if (!$row.length) return;
+	var $body = $row.closest('.cat-body');
+	if ($body.length && !$body.is(':visible')) {
+		var slug = ($body.attr('id') || '').replace(/^cat-/, '');
+		if (slug) toggleCat(slug);
+	}
+	$row.css('transition', 'background-color .4s').css('background-color', '#fff3cd');
+	setTimeout(function() { $row.css('background-color', ''); }, 3000);
+	if ($row.offset()) $('html, body').animate({ scrollTop: Math.max(0, $row.offset().top - 130) }, 350);
+	$row.find('.count-input').trigger('focus');
+});
 
 // Blur handler — compute variance
 $(document).on('blur', '.count-input', function() {

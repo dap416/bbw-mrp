@@ -454,3 +454,75 @@
 			return $cache[$key] = true;
 		} catch (Throwable $e) { return $cache[$key] = false; }
 	}
+
+
+	/**
+	 * Live "what to build & pack" prep for one or more named tradeshows.
+	 * For the given show names, sums last year's per-SKU units sold at those
+	 * shows (each show is a Shopify POS location), then cross-references current
+	 * finished-product stock + buildability from fp_build_plan(). Cached Shopify
+	 * calls keep it cheap on repeat loads.
+	 *
+	 * @param array  $showNames  show names as stored on the task (match tradeshow_locations names)
+	 * @param string $refDate    reference date (task due date, else today) — anchors the prior-year window
+	 * @return array ['error'=>null|str,'shows'=>[names],'window'=>[since,until],'rows'=>[...]]
+	 */
+	function fp_show_prep($db, array $showNames, $refDate = null) {
+		if (!shopify_is_configured()) return ['error' => 'Shopify is not connected.', 'shows' => $showNames, 'window' => [], 'rows' => []];
+		$refTs = $refDate ? strtotime($refDate) : time();
+		if (!$refTs) $refTs = time();
+
+		// Prior-year window centered on the reference date (±90d captures the show,
+		// which only sells while it is running).
+		$since = date('Y-m-d', strtotime('-1 year -90 days', $refTs));
+		$until = date('Y-m-d', strtotime('-1 year +90 days', $refTs));
+
+		$wanted = [];
+		foreach ($showNames as $n) { $k = strtolower(trim((string)$n)); if ($k !== '') $wanted[$k] = true; }
+		if (empty($wanted)) return ['error' => null, 'shows' => [], 'window' => [$since, $until], 'rows' => []];
+		$ttl = inventory_cache_ttl($db);
+
+		$bySku = []; $titles = []; $matched = []; $err = null;
+		foreach (tradeshow_locations() as $loc) {
+			$key = strtolower(trim((string)($loc['name'] ?? '')));
+			if (!isset($wanted[$key])) continue;
+			$matched[] = $loc['name'];
+			$ids = isset($loc['ids']) ? $loc['ids'] : (isset($loc['id']) ? [$loc['id']] : []);
+			foreach ($ids as $id) {
+				$r = shopify_cache_remember($db, "showsales_{$id}_{$since}_{$until}", $ttl, fn() => shopify_show_sales($id, $since, $until))['data'];
+				if (!empty($r['error'])) { $err = $r['error']; continue; }
+				foreach (($r['by_sku'] ?? []) as $sku => $u) $bySku[$sku] = ($bySku[$sku] ?? 0) + (int)$u;
+				foreach (($r['titles'] ?? []) as $sku => $t) if (empty($titles[$sku])) $titles[$sku] = $t;
+			}
+		}
+
+		// Current finished-product stock + buildability, indexed by SKU.
+		$planBySku = [];
+		try {
+			$plan = fp_build_plan($db, date('Y-m-d', $refTs));
+			if (empty($plan['error'])) foreach ($plan['rows'] as $pr) { if (!empty($pr['sku'])) $planBySku[$pr['sku']] = $pr; }
+		} catch (Throwable $e) {}
+
+		$rows = [];
+		foreach ($bySku as $sku => $soldLy) {
+			if ($soldLy <= 0) continue;
+			$pr        = $planBySku[$sku] ?? null;
+			$onHand    = $pr ? (int)$pr['fp_stock'] : null;    // null = unknown (SKU not in build plan)
+			$buildPack = $onHand === null ? (int)$soldLy : max(0, (int)$soldLy - $onHand);
+			$canNow    = $pr ? (int)$pr['buildable'] : null;
+			$shortRaw  = ($canNow === null) ? null : max(0, $buildPack - $canNow);
+			$rows[] = [
+				'product'        => $pr['product'] ?? ($titles[$sku] ?? $sku),
+				'sku'            => $sku,
+				'sold_last_year' => (int)$soldLy,
+				'on_hand'        => $onHand,
+				'build_pack'     => $buildPack,
+				'can_build_now'  => $canNow,
+				'short_raw'      => $shortRaw,
+				'limit_part'     => $pr['limit_part'] ?? null,
+			];
+		}
+		usort($rows, fn($a, $b) => $b['build_pack'] <=> $a['build_pack']);
+
+		return ['error' => $err, 'shows' => $matched ?: $showNames, 'window' => [$since, $until], 'rows' => $rows];
+	}

@@ -256,10 +256,27 @@
 			completed_at DATETIME NULL,
 			created_by   INT NULL,
 			created_by_name VARCHAR(190) NULL,
+			assigned_to      INT NULL,
+			assigned_to_name VARCHAR(190) NULL,
+			task_type    VARCHAR(24) NOT NULL DEFAULT 'general',
+			task_meta    TEXT NULL,
 			created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			INDEX (completed), INDEX (due_date)
+			INDEX (completed), INDEX (due_date), INDEX (assigned_to)
 		) ENGINE=InnoDB");
+		// Self-heal new columns on existing installs (idempotent).
+		foreach ([
+			"ALTER TABLE tasks ADD COLUMN assigned_to INT NULL",
+			"ALTER TABLE tasks ADD COLUMN assigned_to_name VARCHAR(190) NULL",
+			"ALTER TABLE tasks ADD COLUMN task_type VARCHAR(24) NOT NULL DEFAULT 'general'",
+			"ALTER TABLE tasks ADD COLUMN task_meta TEXT NULL",
+		] as $sql) { try { $db->exec($sql); } catch (Throwable $e) {} }
+	}
+
+	/** Active users, for assignment dropdowns. */
+	function active_users_list($db) {
+		try { return $db->query("SELECT id, name, username FROM users WHERE active = 1 ORDER BY name ASC")->fetchAll(); }
+		catch (Throwable $e) { return []; }
 	}
 
 	/**

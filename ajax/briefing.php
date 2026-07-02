@@ -55,13 +55,45 @@
 	try {
 		tasks_ensure_table($db);
 		$tasks = [];
-		foreach ($db->query("SELECT title, due_date FROM tasks WHERE completed = 0 ORDER BY (due_date IS NULL), due_date ASC LIMIT 40") as $t) {
+		foreach ($db->query("SELECT title, due_date FROM tasks WHERE completed = 0" . ($isAdmin ? "" : " AND assigned_to = " . (int)$uid) . " ORDER BY (due_date IS NULL), due_date ASC LIMIT 40") as $t) {
 			$due  = ($t['due_date'] && $t['due_date'] !== '0000-00-00') ? $t['due_date'] : null;
 			$days = $due ? (int)floor((strtotime($due) - strtotime(date('Y-m-d'))) / 86400) : null;
 			$tasks[] = ['title' => $t['title'], 'due' => $due, 'days_until_due' => $days];
 		}
 		$ctx['open_tasks'] = $tasks;
 	} catch (Throwable $e) { $ctx['open_tasks'] = []; }
+
+	// Structured tasks assigned to THIS user → live stats woven into the message.
+	try {
+		$assignments = [];
+		$as = $db->prepare("SELECT id, title, due_date, task_type, task_meta FROM tasks WHERE completed = 0 AND assigned_to = ? AND task_type IN ('tradeshow','inv_count') ORDER BY (due_date IS NULL), due_date ASC LIMIT 10");
+		$as->execute([$uid]);
+		foreach ($as->fetchAll() as $t) {
+			$meta = json_decode($t['task_meta'] ?? '', true) ?: [];
+			$due  = ($t['due_date'] && $t['due_date'] !== '0000-00-00') ? $t['due_date'] : null;
+			if ($t['task_type'] === 'tradeshow' && !empty($meta['shows'])) {
+				require_once(__DIR__."/../includes/planning.php");
+				$prep = fp_show_prep($db, $meta['shows'], $due);
+				$assignments[] = [
+					'type' => 'tradeshow_build_pack', 'task' => $t['title'], 'due' => $due,
+					'shows' => $prep['shows'] ?? $meta['shows'], 'error' => $prep['error'] ?? null,
+					'products' => $prep['rows'] ?? [],
+					'action_link' => ['label' => 'Open Packaging', 'url' => '/build.php'],
+				];
+			} elseif ($t['task_type'] === 'inv_count' && !empty($meta['part_id'])) {
+				$pq = $db->prepare("SELECT partno, `desc`, qoh FROM parts WHERE id = ?");
+				$pq->execute([(int)$meta['part_id']]);
+				if ($p = $pq->fetch()) {
+					$assignments[] = [
+						'type' => 'inventory_count', 'task' => $t['title'], 'due' => $due,
+						'part' => $p['partno'], 'description' => $p['desc'], 'current_qoh' => (int)$p['qoh'],
+						'count_link' => ['label' => 'Enter count for ' . $p['partno'], 'url' => '/physical_inventory.php?part=' . (int)$meta['part_id']],
+					];
+				}
+			}
+		}
+		if ($assignments) $ctx['my_assignments'] = $assignments;
+	} catch (Throwable $e) {}
 
 	// Recent wins to acknowledge (last 7 days): tasks completed, payments made, deliveries received.
 	$recentEvents = [];
@@ -167,6 +199,7 @@ Write it like you're speaking to them:
 - If has_recent_events is true, add a brief **Nice work** line FIRST that celebrates what just got done — recent_events lists tasks they checked off, payments they made, and deliveries that arrived (name them with amounts/parts). This is the whole point of updating the message on those events, so make it feel acknowledged. If has_recent_events is false, skip this and just give the normal weekly update.
 - Then **This week — do now**: genuinely time-sensitive items — overdue/today tasks, cash-flow payments due this month (name the card + amount, note the FOCUS/highest-APR card), and parts that are OUT or must be ordered given lead times.
 - Include a **Builds to make** note whenever fp_build_recommendations is non-empty: these are finished animator products at risk of running out on Shopify over the next fp_build_window_days days. For each, say how many units to BUILD (build_units) so it doesn't run out, and how many you can build right now (can_build_now); if short_need_raw > 0, flag that you must order the raw material (limited_by_part) to build the rest. Treat any product with shopify_stock <= 0 (already oversold) as urgent and put it under 'do now'. Never let a product run out — that's the whole point of this section.
+- If my_assignments is present, add a **Your assignments** section written directly to this person — these are tasks assigned specifically to them. For each tradeshow_build_pack item, name the show(s), then list each product as 'Product — sold N last year · M on hand · build/pack K' (sold_last_year / on_hand / build_pack); if short_raw > 0, note they must first order the limiting raw material (limit_part) before they can build the rest; then include the action_link as a Markdown link exactly like [Open Packaging](/build.php). For each inventory_count item, tell them to count that part (give part, description and current_qoh) and include count_link as a Markdown link using its url verbatim. Use the EXACT numbers and URLs provided — never invent, round, or alter them. Treat assignments as time-sensitive if their due date is near.
 - Then **Coming up**: tasks due later this week, reorders to prepare for, payments to plan.
 - If a section has nothing, say something reassuring instead of inventing work.
 - Be concrete with numbers and names. Keep the WHOLE thing tight — a glanceable weekly brief, not an essay. Use short Markdown (a heading is optional; bullets are good). Never output JSON or code fences.
@@ -196,17 +229,28 @@ Write it like you're speaking to them:
 			if (preg_match('/^#{1,6}\s*(.+)$/', $t, $m)) {
 				if ($inList) { $out .= '</ul>'; $inList = false; }
 				$htxt = preg_replace('/\*\*(.+?)\*\*/', '<strong>$1</strong>', htmlspecialchars($m[1], ENT_QUOTES));
-				$out .= '<div class="fw-bold mt-2 mb-1" style="font-size:0.85rem;">' . $htxt . '</div>';
+				$out .= '<div class="fw-bold mt-2 mb-1" style="font-size:0.85rem;">' . briefing_linkify($htxt) . '</div>';
 			} elseif (preg_match('/^[-*]\s+(.+)$/', $t, $m)) {
 				if (!$inList) { $out .= '<ul class="mb-1 ps-3">'; $inList = true; }
 				$item = htmlspecialchars($m[1], ENT_QUOTES);
 				$item = preg_replace('/\*\*(.+?)\*\*/', '<strong>$1</strong>', $item);
-				$out .= '<li>' . $item . '</li>';
+				$out .= '<li>' . briefing_linkify($item) . '</li>';
 			} else {
 				if ($inList) { $out .= '</ul>'; $inList = false; }
-				$out .= '<div class="mb-1">' . $esc . '</div>';
+				$out .= '<div class="mb-1">' . briefing_linkify($esc) . '</div>';
 			}
 		}
 		if ($inList) $out .= '</ul>';
 		return $out;
 	}
+
+
+	/** Convert [text](url) → <a> for the briefing. Input is already HTML-escaped;
+	 *  only site-relative (/…) or http(s) URLs are allowed. */
+	function briefing_linkify($s) {
+		return preg_replace_callback('/\[([^\]]+)\]\(([^)\s]+)\)/', function ($m) {
+			$url = html_entity_decode($m[2], ENT_QUOTES);
+			if (!preg_match('#^(/(?!/)|https?://)#i', $url)) return $m[0];
+			return '<a href="' . $m[2] . '" style="text-decoration:underline;">' . $m[1] . '</a>';
+		}, $s);
+	}
