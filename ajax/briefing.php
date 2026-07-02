@@ -100,6 +100,32 @@
 		$ctx['raw_material_reorder'] = $reorder;
 	} catch (Throwable $e) {}
 
+	// Finished-product (animator) BUILD recommendations so Shopify inventory never runs out.
+	if (has_access('build') || $isAdmin) {
+		require_once(__DIR__."/../includes/planning.php");
+		try {
+			$plan = fp_build_plan($db, date('Y-m-d', strtotime('+45 days')), 0);
+			if (empty($plan['error'])) {
+				$fpRecs = [];
+				foreach ($plan['rows'] as $r) {
+					if ($r['recommend'] <= 0) continue;
+					$fpRecs[] = [
+						'product'             => $r['product'],
+						'sku'                 => $r['sku'],
+						'shopify_stock'       => $r['fp_stock'],       // negative = already oversold (urgent)
+						'demand_next_45d'     => $r['demand'],
+						'build_units'         => $r['recommend'],      // units to build to cover demand
+						'can_build_now'       => $r['buildable'],      // from raw materials on hand
+						'short_need_raw'      => $r['short'],          // can't build now → order raw materials
+						'limited_by_part'     => $r['limit_part'],
+					];
+				}
+				$ctx['fp_build_recommendations'] = array_slice($fpRecs, 0, 12);
+				$ctx['fp_build_window_days'] = $plan['meta']['window_days'] ?? 45;
+			}
+		} catch (Throwable $e) {}
+	}
+
 	// Cash-flow: this month's payments to make (admins only)
 	if ($isAdmin) {
 		try {
@@ -140,6 +166,7 @@ Write it like you're speaking to them:
 - Open with 'Good " . $partOfDay . "' (optionally their first name). One short warm sentence framing the week.
 - If has_recent_events is true, add a brief **Nice work** line FIRST that celebrates what just got done — recent_events lists tasks they checked off, payments they made, and deliveries that arrived (name them with amounts/parts). This is the whole point of updating the message on those events, so make it feel acknowledged. If has_recent_events is false, skip this and just give the normal weekly update.
 - Then **This week — do now**: genuinely time-sensitive items — overdue/today tasks, cash-flow payments due this month (name the card + amount, note the FOCUS/highest-APR card), and parts that are OUT or must be ordered given lead times.
+- Include a **Builds to make** note whenever fp_build_recommendations is non-empty: these are finished animator products at risk of running out on Shopify over the next fp_build_window_days days. For each, say how many units to BUILD (build_units) so it doesn't run out, and how many you can build right now (can_build_now); if short_need_raw > 0, flag that you must order the raw material (limited_by_part) to build the rest. Treat any product with shopify_stock <= 0 (already oversold) as urgent and put it under 'do now'. Never let a product run out — that's the whole point of this section.
 - Then **Coming up**: tasks due later this week, reorders to prepare for, payments to plan.
 - If a section has nothing, say something reassuring instead of inventing work.
 - Be concrete with numbers and names. Keep the WHOLE thing tight — a glanceable weekly brief, not an essay. Use short Markdown (a heading is optional; bullets are good). Never output JSON or code fences.

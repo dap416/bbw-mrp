@@ -324,6 +324,126 @@
 		];
 	}
 
+	/**
+	 * Finished-product (animator) BUILD recommendations so Shopify inventory
+	 * never runs out. Demand = prior-year same-window retail (+ open wholesale
+	 * drafts for the non-Oregon view); covered = Shopify FP stock + in-pipeline
+	 * builds. recommend = max(0, demand - covered). Shared by ajax/build/recommend.php
+	 * and the dashboard briefing. $whId = 0 → all warehouses (not Oregon-specific).
+	 */
+	function fp_build_plan($db, $until, $whId = 0) {
+		if (!shopify_is_configured()) return ['error' => 'Shopify is not connected.', 'meta' => [], 'rows' => []];
+		$today = date('Y-m-d');
+		$ts    = strtotime($until);
+		if (!$ts) return ['error' => 'Bad target date.', 'meta' => [], 'rows' => []];
+		$until = date('Y-m-d', $ts);
+		$windowDays = max(1, (int)round(($ts - strtotime($today)) / 86400));
+
+		$whRow    = $whId ? $db->query("SELECT name FROM warehouses WHERE id = " . (int)$whId)->fetch() : null;
+		$whName   = $whRow['name'] ?? '';
+		$isOregon = stripos($whName, 'oregon') !== false;
+
+		$lyStart = date('Y-m-d', strtotime('-1 year', strtotime($today)));
+		$lyEnd   = date('Y-m-d', strtotime('-1 year', $ts));
+
+		$sales = shopify_cache_remember($db, 'rec_sales_'.$lyStart.'_'.$lyEnd, inventory_cache_ttl($db), fn() => shopify_sales_by_location($lyStart, $lyEnd))['data'];
+		if (!empty($sales['error'])) return ['error' => $sales['error'], 'meta' => [], 'rows' => []];
+		$retailBySku = $isOregon ? ($sales['by_sku_oregon'] ?? []) : ($sales['by_sku_rest'] ?? []);
+
+		$draftBySku = []; $draftErr = null; $draftOrders = 0;
+		if (!$isOregon) {
+			$drafts = shopify_cache_remember($db, 'rec_drafts', inventory_cache_ttl($db), fn() => shopify_open_draft_demand(10))['data'];
+			if (empty($drafts['error'])) { $draftBySku = $drafts['by_sku'] ?? []; $draftOrders = $drafts['orders'] ?? 0; }
+			else { $draftErr = $drafts['error']; }
+		}
+
+		$fpLoc   = shopify_cache_remember($db, 'rec_fp', inventory_cache_ttl($db), fn() => shopify_fp_by_location())['data'];
+		$fpBySku = $fpLoc['skus'] ?? [];
+
+		$hasSku   = column_exists($db, 'products', 'shopify_sku');
+		$cols     = "id, name" . ($hasSku ? ", shopify_sku" : "");
+		$products = $db->query("SELECT $cols FROM products ORDER BY name ASC")->fetchAll();
+
+		$bomByProd = [];
+		foreach ($db->query("SELECT b.prodid, b.qty, p.id AS partid, p.partno, p.qoh
+		                     FROM build b JOIN parts p ON p.id = b.partid") as $bl) {
+			$bomByProd[$bl['prodid']][] = $bl;
+		}
+
+		$pipelineByProd = [];
+		$pipeWh = $whId ? " AND warehouse_id = " . (int)$whId : "";
+		foreach ($db->query("SELECT prodid, SUM(qty) AS v FROM intransit
+		                     WHERE recdate = '0000-00-00 00:00:00' $pipeWh GROUP BY prodid") as $r) {
+			$pipelineByProd[$r['prodid']] = max(0, (int)$r['v']);
+		}
+
+		$rows = [];
+		foreach ($products as $p) {
+			$bom = $bomByProd[$p['id']] ?? [];
+			if (empty($bom)) continue;                        // only animators (have raw-material BOM)
+			$sku = $hasSku ? trim((string)($p['shopify_sku'] ?? '')) : '';
+
+			$retail   = $sku !== '' ? (int)($retailBySku[$sku] ?? 0) : 0;
+			$draft    = $sku !== '' ? (int)($draftBySku[$sku]  ?? 0) : 0;
+			$demand   = $retail + $draft;
+
+			$fp       = ($sku !== '' && isset($fpBySku[$sku])) ? $fpBySku[$sku] : ['oregon' => 0, 'rest' => 0];
+			$fpStock  = (int)($isOregon ? $fp['oregon'] : $fp['rest']);   // may be negative (oversold)
+			$pipeline = (int)($pipelineByProd[$p['id']] ?? 0);
+			$covered  = $fpStock + $pipeline;
+
+			$recommend = max(0, $demand - $covered);
+
+			$buildable = null; $limitPart = null;
+			foreach ($bom as $b) {
+				$need = (int)$b['qty']; if ($need <= 0) continue;
+				$onhand = $whId ? (int)wh_get_qty($db, (int)$b['partid'], $whId) : (int)$b['qoh'];
+				$can    = intdiv(max(0, $onhand), $need);
+				if ($buildable === null || $can < $buildable) { $buildable = $can; $limitPart = $b['partno']; }
+			}
+			$buildable = $buildable === null ? 0 : $buildable;
+
+			if ($demand <= 0 && $recommend <= 0) continue;
+
+			$rows[] = [
+				'prodid'     => (int)$p['id'],
+				'product'    => $p['name'],
+				'sku'        => $sku,
+				'retail'     => $retail,
+				'draft'      => $draft,
+				'demand'     => $demand,
+				'fp_stock'   => $fpStock,
+				'pipeline'   => $pipeline,
+				'recommend'  => $recommend,
+				'buildable'  => $buildable,
+				'limit_part' => $limitPart,
+				'short'      => max(0, $recommend - $buildable),
+			];
+		}
+		usort($rows, fn($a, $b) => $b['recommend'] <=> $a['recommend']);
+
+		return [
+			'error' => null,
+			'meta'  => [
+				'today'        => $today,
+				'until'        => $until,
+				'window_days'  => $windowDays,
+				'prior_window' => "$lyStart to $lyEnd",
+				'warehouse'    => $whName ?: 'All',
+				'is_oregon'    => $isOregon,
+				'scope'        => (empty($sales['oregon_location'])
+					? '⚠ The Shopify app is missing the "read_locations" permission, so it cannot split by warehouse yet — add that scope (Dev Dashboard → Versions), reinstall, and Save on Integrations. '
+					: '') . ($isOregon
+					? 'Oregon Warehouse: only orders fulfilled from Oregon.'
+					: ($whName ? $whName . ': everything NOT fulfilled from Oregon (incl. POS/tradeshows + open wholesale drafts).' : 'All warehouses.')),
+				'draft_orders' => $draftOrders,
+				'draft_error'  => $draftErr,
+				'oregon_location' => $sales['oregon_location'] ?? '',
+			],
+			'rows'  => $rows,
+		];
+	}
+
 	/** True if $table has $col. Cached per request. */
 	function column_exists($db, $table, $col) {
 		static $cache = [];
