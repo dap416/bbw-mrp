@@ -8,6 +8,8 @@
 	$canCreateOrders = can_do('orders.create');
 	$canReceiveOrders = can_do('orders.receive');
 	$canEditOrders   = can_edit('orders');
+	$canManageOrders = can_manage_orders();          // full order editing = master admin only
+	$canNote         = $canEditOrders || $canReceiveOrders; // leave notes = anyone who can act on orders
 
 	$dbLink = $mysqli = db_connect();
 
@@ -173,7 +175,7 @@
 				// Archive eligibility: paid in full AND something received.
 				$paidInFull   = ((float)$paidVal + 0.005) >= (float)$orderVal && (float)$orderVal > 0;
 				$received     = (int)$recQty > 0;
-				$canArchive   = $hasArchive && $canEditOrders && $paidInFull && $received;
+				$canArchive   = $hasArchive && $canManageOrders && $paidInFull && $received;
 
 				?>
 
@@ -200,7 +202,7 @@
 						<!-- LEFT COLUMN: Actions -->
 						<div class="col-md-5">
 
-							<?php if ($canEditOrders): ?>
+							<?php if ($canNote): ?>
 							<div class="mb-3">
 								<label class="form-label fw-semibold small text-muted">Add Note</label>
 								<div class="d-flex gap-2">
@@ -209,6 +211,9 @@
 								</div>
 							</div>
 
+							<?php endif; ?>
+
+							<?php if ($canManageOrders): ?>
 							<div class="mb-3">
 								<label class="form-label fw-semibold small text-muted">Edit On Order QTY / Order #</label>
 								<div class="d-flex gap-2 align-items-center flex-wrap">
@@ -287,7 +292,7 @@
 
 							<?php endif; ?>
 
-							<?php if ($hasArchive && $canEditOrders && $showFinancials):
+							<?php if ($hasArchive && $canManageOrders && $showFinancials):
 								$archDiff = (int)$recQty - (int)$orderQty;
 								$archNote = $archDiff === 0 ? '' : ($archDiff > 0 ? 'OVERAGE of '.$archDiff : 'SHORTAGE of '.(-$archDiff));
 							?>
@@ -305,7 +310,7 @@
 
 							<div class="d-flex gap-2 mt-4">
 								<button action="closeManArea" record="<?php echo $orderId; ?>" class="btn btn-secondary btn-sm">Close</button>
-								<?php if ($canEditOrders): ?>
+								<?php if ($canManageOrders): ?>
 								<button action="deleteOrder" record="<?php echo $orderId; ?>" class="btn btn-danger btn-sm">Delete Order</button>
 								<?php endif; ?>
 							</div>

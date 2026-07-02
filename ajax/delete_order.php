@@ -2,7 +2,7 @@
 
 	require_once(__DIR__."/../includes/fns.php");
 	require_login();
-	require_can(can_edit('orders'), 'You do not have permission to delete orders.');
+	require_can(can_manage_orders(), 'Only master admins can delete orders.');
 
 	$dbLink = db_connect();
 

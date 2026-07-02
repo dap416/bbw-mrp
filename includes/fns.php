@@ -58,6 +58,15 @@
 	}
 
 	/** Specific action gate (e.g. 'orders.create', 'orders.receive'). */
+	/**
+	 * Full order editing (edit qty/ref/date, change product, payments,
+	 * archive, delete) is restricted to master admins. Others with order
+	 * access can still receive shipments and leave notes.
+	 */
+	function can_manage_orders() {
+		return ($_SESSION['user_role'] ?? '') === 'master';
+	}
+
 	function can_do($action) {
 		$role = $_SESSION['user_role'] ?? '';
 		if ($role === 'admin' || $role === 'master') return true;

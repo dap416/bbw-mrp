@@ -2,7 +2,7 @@
 
 	require_once(__DIR__."/../includes/fns.php");
 	require_login();
-	require_can(can_edit('orders'), 'You do not have permission to edit orders.');
+	require_can(can_manage_orders(), 'Only master admins can edit orders. You can still receive shipments and add notes.');
 
 	$db     = db_connect();
 	$record = (int)$_POST['record'];
