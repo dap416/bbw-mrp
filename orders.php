@@ -16,9 +16,10 @@
 	$showFinancials = in_array($_SESSION['user_role'] ?? '', ['admin','master'], true);
 	$orderCols      = $showFinancials ? 7 : 6;
 
-	// Expected Arrival date (visible to everyone, incl. standard users). Self-heal
-	// the column so it works even before setup_order_expected.php is run.
-	try { $dbLink->exec("ALTER TABLE `orders` ADD COLUMN `expected_date` DATE NULL"); } catch (Throwable $e) {}
+	// Expected Arrival date (visible to everyone, incl. standard users). Uses the
+	// shared `orders.eta` column so it stays in sync with the dashboard's ETA.
+	// Self-heal the column in case it's ever missing.
+	try { $dbLink->exec("ALTER TABLE `orders` ADD COLUMN `eta` DATE NULL"); } catch (Throwable $e) {}
 
 	$parts      = $dbLink->query("SELECT * FROM `parts` ORDER BY `partno` ASC");
 	$warehouses = get_warehouses($dbLink);
@@ -164,7 +165,7 @@
 				$orderVal = $order['ordval'];
 				$paidVal = $order['paidamt'];
 				$orderRef = $order['orderref'];
-				$expectedRaw   = $order['expected_date'] ?? '';
+				$expectedRaw   = $order['eta'] ?? '';
 				$hasExpected   = $expectedRaw && $expectedRaw !== '0000-00-00';
 				$expectedLabel = $hasExpected ? date('m/d/y', strtotime($expectedRaw)) : 'TBD';
 				$expectedInput = $hasExpected ? date('Y-m-d', strtotime($expectedRaw)) : '';

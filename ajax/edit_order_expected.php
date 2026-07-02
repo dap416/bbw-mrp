@@ -10,10 +10,11 @@
 	$dateIn = trim($_POST['expected'] ?? '');
 	if ($record <= 0) { echo 'error'; exit; }
 
-	// Ensure the column exists even if setup_order_expected.php was never run.
-	try { $db->exec("ALTER TABLE `orders` ADD COLUMN `expected_date` DATE NULL"); } catch (Throwable $e) {}
+	// Writes the shared `orders.eta` column (same field the dashboard uses), so
+	// the Orders page and dashboard always agree. Self-heal in case it's missing.
+	try { $db->exec("ALTER TABLE `orders` ADD COLUMN `eta` DATE NULL"); } catch (Throwable $e) {}
 
-	// Empty input clears the expected date (back to "TBD").
+	// Empty input clears the date (back to "TBD").
 	$val = null;
 	if ($dateIn !== '') {
 		$ts = strtotime($dateIn);
@@ -25,7 +26,7 @@
 	if (!$order) { echo 'error'; exit; }
 
 	try {
-		$db->prepare("UPDATE `orders` SET `expected_date` = ? WHERE `id` = ?")->execute([$val, $record]);
+		$db->prepare("UPDATE `orders` SET `eta` = ? WHERE `id` = ?")->execute([$val, $record]);
 		echo 'ok';
 	} catch (Throwable $e) {
 		http_response_code(500);

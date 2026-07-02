@@ -147,6 +147,7 @@
 		SELECT o.id, o.orderref, o.orderdate, o.qty, o.recqty, o.ordval, o.paidamt,
 			(o.qty - o.recqty) AS remaining,
 			p.partno, p.`desc`, p.lead_time,
+			o.eta AS raw_eta,
 			COALESCE(o.eta, DATE_ADD(o.orderdate, INTERVAL p.lead_time DAY)) AS eta
 		FROM orders o
 		JOIN parts p ON p.id = o.partid
@@ -344,6 +345,91 @@ details.dash-section[open] > summary .ti-chevron-right { transform:rotate(90deg)
 		</div>
 	</div>
 </div>
+
+<?php
+	// ── STANDARD-USER DASHBOARD ───────────────────────────────────────────────
+	// Standard users (e.g. Rocky) get a focused, finance-free dashboard: their
+	// weekly briefing (above) plus when open orders are due to arrive. Everything
+	// below — KPIs, cash flow, recommendations, payments, idle stock, charts — is
+	// admin/master only. Render the simple view and stop before any of it.
+	if (!in_array($_SESSION['user_role'] ?? '', ['admin','master'], true)):
+?>
+	<div class="card mb-3" style="border-top:3px solid <?php echo $etaOverdue>0?'#dc2626':($etaSoon>0?'#e58a00':'#2ca87f'); ?>">
+	<div class="card-body">
+		<div class="panel-header">
+			<span class="panel-title"><i class="ti ti-truck me-1"></i>Open Orders — When They Arrive</span>
+			<?php if (count($openEtaOrders)>0): ?>
+			<span style="font-size:0.72rem;">
+				<?php if ($etaOverdue>0): ?><span class="badge bg-danger me-1"><?php echo $etaOverdue; ?> overdue</span><?php endif; ?>
+				<?php if ($etaSoon>0):    ?><span class="badge bg-warning text-dark me-1"><?php echo $etaSoon; ?> arriving soon</span><?php endif; ?>
+				<?php if ($etaOnTrack>0): ?><span class="badge bg-success me-1"><?php echo $etaOnTrack; ?> on track</span><?php endif; ?>
+			</span>
+			<?php else: ?>
+			<span style="background:#ecfdf5;color:#065f46;font-size:0.72rem;padding:3px 10px;border-radius:20px;font-weight:700;">No Open Orders</span>
+			<?php endif; ?>
+		</div>
+
+		<?php if (empty($openEtaOrders)): ?>
+		<div class="clear-state"><i class="ti ti-truck"></i>No open orders awaiting arrival right now.</div>
+		<?php else: ?>
+		<div class="scroll-table">
+		<table class="table dash-table">
+			<thead><tr>
+				<th>Ref</th><th>Part</th><th>Description</th>
+				<th class="text-center">Remaining</th><th>Ordered</th>
+				<th>Expected Arrival</th><th class="text-center">Status</th>
+			</tr></thead>
+			<tbody>
+			<?php foreach ($openEtaOrders as $eo):
+				$rawEta = $eo['raw_eta'] ?? '';
+				$hasEta = $rawEta && $rawEta !== '0000-00-00';
+				if ($hasEta) {
+					$etaTs   = strtotime($rawEta);
+					$daysOut = (int)(($etaTs - time()) / 86400);
+					if ($daysOut < 0)       $etaBadge = '<span class="badge bg-danger">Overdue '.abs($daysOut).'d</span>';
+					elseif ($daysOut <= 45) $etaBadge = '<span class="badge bg-success">In '.$daysOut.'d</span>';
+					elseif ($daysOut <= 60) $etaBadge = '<span class="badge bg-warning text-dark">In '.$daysOut.'d</span>';
+					else                    $etaBadge = '<span class="badge bg-danger">In '.$daysOut.'d</span>';
+					$etaText = date('m/d/y', $etaTs);
+				} else {
+					$etaBadge = '<span class="text-muted">—</span>';
+					$etaText  = '<span class="text-muted">TBD</span>';
+				}
+			?>
+			<tr>
+				<td class="text-muted fw-semibold"><?php echo htmlspecialchars($eo['orderref'] ?: '#'.$eo['id']); ?></td>
+				<td class="fw-semibold"><?php echo htmlspecialchars($eo['partno']); ?></td>
+				<td><?php echo htmlspecialchars($eo['desc']); ?></td>
+				<td class="text-center fw-semibold"><?php echo number_format($eo['remaining']); ?> / <?php echo number_format($eo['qty']); ?></td>
+				<td class="text-muted" style="white-space:nowrap;"><?php echo date('m/d/y', strtotime($eo['orderdate'])); ?></td>
+				<td style="white-space:nowrap;"><?php echo $etaText; ?></td>
+				<td class="text-center"><?php echo $etaBadge; ?></td>
+			</tr>
+			<?php endforeach; ?>
+			</tbody>
+		</table>
+		</div>
+		<?php endif; ?>
+	</div>
+	</div>
+
+</div><!-- end main (standard-user dashboard) -->
+
+<script>
+function loadBriefing(force) {
+	var $b = $('#briefing-body');
+	if (force) $b.html('<div class="text-muted small"><span class="spinner-border spinner-border-sm me-1"></span>Refreshing…</div>');
+	$.getJSON('/ajax/briefing.php' + (force ? '?refresh=1' : ''), function(res) {
+		if (res && res.html) $b.html(res.html);
+		else $b.html('<div class="text-muted small">Briefing unavailable' + (res && res.error ? ': ' + res.error : '') + '.</div>');
+	}).fail(function() { $b.html('<div class="text-muted small">Could not load the briefing.</div>'); });
+}
+$('#briefing-refresh').on('click', function() { loadBriefing(true); });
+loadBriefing(false);
+</script>
+
+<?php require_once(__DIR__."/includes/footer.php"); exit; ?>
+<?php endif; ?>
 
 <?php if (in_array($_SESSION['user_role'] ?? '', ['admin','master'], true)): ?>
 <!-- ── CASH FLOW: PAYMENTS TO MAKE (this month) ─────────────────────────── -->
