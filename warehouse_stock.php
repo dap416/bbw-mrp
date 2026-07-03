@@ -10,7 +10,7 @@
 
 <div class="mb-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
 	<div>
-		<h2 class="fw-bold mb-0">Warehouse Stock</h2>
+		<h2 class="fw-bold mb-0">Warehouse FP Stock</h2>
 		<div class="text-muted small">Live Shopify finished-product inventory by warehouse and category (apparel excluded). Refreshes each time you open this page.</div>
 	</div>
 	<div class="d-flex align-items-center gap-2">
@@ -46,6 +46,11 @@ function wsRender(d) {
 	var html = '';
 	// Filter bar.
 	html += '<div class="d-flex align-items-center gap-2 flex-wrap mb-3">' +
+		'<div class="btn-group btn-group-sm" role="group" aria-label="Location view">' +
+			'<button type="button" id="wsViewBoth" class="btn btn-outline-primary" onclick="wsSetView(\'both\')">Both</button>' +
+			'<button type="button" id="wsViewArk" class="btn btn-outline-primary" onclick="wsSetView(\'arkansas\')">Arkansas</button>' +
+			'<button type="button" id="wsViewOre" class="btn btn-outline-primary" onclick="wsSetView(\'oregon\')">Oregon</button>' +
+		'</div>' +
 		'<input type="text" id="wsSearch" class="form-control form-control-sm" style="max-width:280px;" placeholder="Search SKU or product…">' +
 		'<select id="wsCat" class="form-select form-select-sm" style="max-width:240px;"><option value="">All categories</option>';
 	catList.forEach(function(c){ html += '<option value="' + $('<div>').text(c).html() + '">' + $('<div>').text(c).html() + '</option>'; });
@@ -55,7 +60,7 @@ function wsRender(d) {
 	locs.forEach(function(loc) {
 		var blocks = data[loc.id] || [];
 		var totColor = loc.total < 0 ? '#e64545' : '#2ca01c';
-		html += '<div class="col-12 col-xl-6 ws-loc"><div class="card h-100" style="border-top:3px solid #4680ff;"><div class="card-body">';
+		html += '<div class="col-12 col-xl-6 ws-loc" data-locname="' + $('<div>').text((loc.name||'').toLowerCase()).html() + '"><div class="card h-100" style="border-top:3px solid #4680ff;"><div class="card-body">';
 		html += '<div class="d-flex justify-content-between align-items-center mb-2">' +
 			'<h5 class="fw-bold mb-0">' + $('<div>').text(loc.name).html() + '</h5>' +
 			'<span class="badge" style="background:' + totColor + ';">' + Number(loc.total).toLocaleString() + ' units</span></div>';
@@ -80,6 +85,17 @@ function wsRender(d) {
 	});
 	html += '</div>';
 	$('#wsBody').html(html);
+	wsSetView(wsView);
+}
+
+// Location view toggle: Both (side by side) / Arkansas / Oregon.
+var wsView = 'both';
+function wsSetView(v) {
+	wsView = v;
+	$('#wsViewBoth,#wsViewArk,#wsViewOre').removeClass('active');
+	$('#wsView' + (v === 'arkansas' ? 'Ark' : (v === 'oregon' ? 'Ore' : 'Both'))).addClass('active');
+	$('.ws-loc').toggleClass('col-xl-6', v === 'both'); // full width when a single location is chosen
+	wsFilter();
 }
 
 // Live filtering over the rendered blocks (search + category).
@@ -98,7 +114,10 @@ function wsFilter() {
 		$(this).toggle($(this).find('.ws-item:visible').length > 0);
 	});
 	$('.ws-loc').each(function() {
-		$(this).toggle($(this).find('.ws-item:visible').length > 0);
+		var isOregon = ($(this).attr('data-locname') || '').indexOf('oregon') !== -1;
+		// "Arkansas" view = everything that isn't Oregon (the app's Oregon-vs-rest split).
+		var locMatch = (wsView === 'both') || (wsView === 'oregon' ? isOregon : !isOregon);
+		$(this).toggle(locMatch && $(this).find('.ws-item:visible').length > 0);
 	});
 	$('#wsCount').text((q !== '' || cat !== '') ? (shown + ' match' + (shown === 1 ? '' : 'es')) : '');
 }

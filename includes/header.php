@@ -115,7 +115,7 @@
         <li class="pc-item">
           <a href="/warehouse_stock.php" class="pc-link">
             <span class="pc-micon"><i class="ti ti-building-warehouse"></i></span>
-            <span class="pc-mtext">Warehouse Stock</span>
+            <span class="pc-mtext">Warehouse FP Stock</span>
           </a>
         </li>
         <?php } ?>
