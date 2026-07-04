@@ -321,7 +321,7 @@ $(document).on('blur', '.count-input', function() {
 	var $cell   = $('#var-cell-' + partId);
 
 	if (val === '') {
-		$input.addClass('is-invalid');
+		$input.removeClass('is-invalid');
 		$cell.html('<span class="text-muted">—</span>');
 		delete variances[partId];
 		updateProgress();
@@ -395,30 +395,23 @@ function updateCatBadges() {
 }
 
 function confirmSubmit() {
-	// Check all inputs are filled
-	var $blank = $('.count-input').filter(function() { return $(this).val().trim() === ''; });
-	if ($blank.length > 0) {
-		$blank.addClass('is-invalid');
-		// Open the first category that has a blank
-		var $firstBlank = $blank.first();
-		var $catBody = $firstBlank.closest('.cat-body');
-		if ($catBody.length && !$catBody.is(':visible')) {
-			var slug = $catBody.attr('id').replace('cat-', '');
-			toggleCat(slug);
-		}
-		$firstBlank[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
-		alert($blank.length + ' part(s) still need a count. All parts must have a quantity entered (use 0 if none).');
+	// Partial counts are allowed — only require at least one part counted.
+	var counted = $('.count-input').filter(function() { return $(this).val().trim() !== ''; }).length;
+	if (counted === 0) {
+		alert('Enter a count for at least one part before submitting. You can count just one — uncounted parts are left unchanged.');
 		return;
 	}
+	var notCounted = totalParts - counted;
 
 	// Build variance detail
 	var keys = Object.keys(variances);
 	var varLines = keys.filter(function(k) { return variances[k].diff !== 0; });
-	var detail = '';
+	var detail = '<div class="mb-2 small text-muted">Counting <strong>' + counted + '</strong> of ' + totalParts + ' part(s).' +
+		(notCounted > 0 ? ' <strong>' + notCounted + '</strong> not counted — left unchanged.' : '') + '</div>';
 	if (varLines.length === 0) {
-		detail = '<div class="alert alert-success mb-0">All counted parts match current quantities — no adjustments needed.</div>';
+		detail += '<div class="alert alert-success mb-0">All counted parts match current quantities — no adjustments needed.</div>';
 	} else {
-		detail = '<p class="mb-1"><strong>' + varLines.length + ' part(s) will be adjusted:</strong></p>';
+		detail += '<p class="mb-1"><strong>' + varLines.length + ' counted part(s) will be adjusted:</strong></p>';
 		detail += '<ul class="mb-0 small">';
 		varLines.forEach(function(k) {
 			var v = variances[k];
@@ -436,10 +429,11 @@ $('#confirm-submit-btn').on('click', function() {
 	var $btn = $(this);
 	$btn.prop('disabled', true).text('Saving…');
 
-	// Build POST data — all inputs are guaranteed filled at this point
+	// Build POST data — only the parts that were actually counted are submitted
 	var data = { warehouse_id: $('[name="warehouse_id"]').val() };
 	$('.count-input').each(function() {
-		data['counts[' + $(this).data('part') + ']'] = $(this).val().trim();
+		var v = $(this).val().trim();
+			if (v !== '') data['counts[' + $(this).data('part') + ']'] = v;
 	});
 
 	$.post('/ajax/physical_inv_submit.php', data, function(resp) {
