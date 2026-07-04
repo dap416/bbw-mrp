@@ -260,6 +260,32 @@
 	 * date, and a completed flag. Shared by tasks.php, the ajax endpoints, and
 	 * the dashboard morning briefing.
 	 */
+	/** Audit log for edits to finished-product stock (intransit) orders. */
+	function intransit_edits_ensure($db) {
+		$db->exec("CREATE TABLE IF NOT EXISTS intransit_edits (
+			id INT AUTO_INCREMENT PRIMARY KEY,
+			intransit_id INT NOT NULL,
+			prodid INT NULL,
+			field VARCHAR(32) NOT NULL DEFAULT 'qty',
+			old_val VARCHAR(64) NULL,
+			new_val VARCHAR(64) NULL,
+			reason VARCHAR(500) NOT NULL,
+			user_id INT NULL,
+			user_name VARCHAR(190) NULL,
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			INDEX (intransit_id)
+		) ENGINE=InnoDB");
+	}
+
+	/** Record an audited, reason-required change to an FP stock order. Best-effort. */
+	function intransit_log_edit($db, $intransitId, $prodid, $field, $old, $new, $reason) {
+		try {
+			intransit_edits_ensure($db);
+			$db->prepare("INSERT INTO intransit_edits (intransit_id, prodid, field, old_val, new_val, reason, user_id, user_name) VALUES (?,?,?,?,?,?,?,?)")
+			   ->execute([(int)$intransitId, ($prodid !== null ? (int)$prodid : null), $field, (string)$old, (string)$new, $reason, ($_SESSION['user_id'] ?? null), ($_SESSION['user_name'] ?? '')]);
+		} catch (Throwable $e) { /* logging must never block the edit */ }
+	}
+
 	function tasks_ensure_table($db) {
 		$db->exec("CREATE TABLE IF NOT EXISTS tasks (
 			id           INT AUTO_INCREMENT PRIMARY KEY,

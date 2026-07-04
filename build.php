@@ -10,6 +10,7 @@
 	// Self-heal the "Build By" due-date column (works without running setup_build_duedate.php).
 	try { $db->exec("ALTER TABLE `intransit` ADD COLUMN `duedate` DATE DEFAULT NULL"); } catch (Throwable $e) {}
 	$warehouses = get_warehouses($db);
+	$canEditBuild = can_edit('build');
 
 	// Default warehouse: Arkansas
 	$defaultWH = 0;
@@ -267,7 +268,17 @@
 					$overdue = $due && $due < date('Y-m-d');
 				?>
 				<td><input type="date" class="form-control form-control-sm duedate-input<?php echo $overdue ? ' is-overdue' : ''; ?>" min="<?php echo date('Y-m-d'); ?>" value="<?php echo htmlspecialchars($due); ?>" data-orderid="<?php echo $order['id']; ?>" title="Set the date this build needs to be completed by" /></td>
-			<td class="text-center text-muted"><?php echo number_format($order['qty']); ?></td>
+			<td class="text-center text-muted">
+					<?php echo number_format($order['qty']); ?>
+					<?php if ($canEditBuild): ?>
+					<button class="btn btn-sm btn-link p-0 ms-1 edit-order-btn" style="vertical-align:baseline;"
+						data-orderid="<?php echo $order['id']; ?>"
+						data-qty="<?php echo (int)$order['qty']; ?>"
+						data-built="<?php echo (int)$order['buildqty']; ?>"
+						data-prodname="<?php echo htmlspecialchars($order['prodname'], ENT_QUOTES); ?>"
+						title="Edit ordered quantity (reason required)"><i class="ti ti-pencil"></i></button>
+					<?php endif; ?>
+				</td>
 			<td class="text-center text-muted"><?php echo number_format($order['buildqty']); ?></td>
 			<td class="text-center"><span class="remaining-badge"><?php echo number_format($remaining); ?></span></td>
 			<td>
@@ -582,6 +593,33 @@ $(document).on('change', '.duedate-input', function() {
 		alert('Could not save the Build By date: ' + (xhr.responseText || xhr.status));
 	}).always(function() {
 		$inp.prop('disabled', false);
+	});
+});
+
+// ── Edit an FP stock order's quantity (reason required, audit-logged) ──
+$(document).on('click', '.edit-order-btn', function() {
+	var $btn  = $(this);
+	var id    = $btn.data('orderid');
+	var cur   = parseInt($btn.data('qty')) || 0;
+	var built = parseInt($btn.data('built')) || 0;
+	var name  = $btn.data('prodname');
+
+	var q = prompt('New ordered quantity for "' + name + '" (currently ' + cur + (built > 0 ? '; ' + built + ' already built' : '') + '):', cur);
+	if (q === null) return;
+	q = parseInt(q);
+	if (!q || q < 1) { alert('Enter a valid quantity (at least 1).'); return; }
+	if (built > 0 && q < built) { alert('Cannot set below the ' + built + ' already built. Undo builds first.'); return; }
+	if (q === cur) return;
+
+	var reason = prompt('Reason for changing the order from ' + cur + ' to ' + q + ':');
+	if (reason === null) return;
+	reason = reason.trim();
+	if (!reason) { alert('A reason is required to change the order.'); return; }
+
+	$btn.prop('disabled', true);
+	$.post('/ajax/build/edit_order.php', { orderid: id, qty: q, reason: reason }, function(res) {
+		if (res === 'ok') { location.reload(); }
+		else { alert(res); $btn.prop('disabled', false); }
 	});
 });
 

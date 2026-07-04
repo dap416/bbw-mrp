@@ -175,7 +175,11 @@
 		var id   = $btn.data('id');
 		var qty  = $(".fp-qty-input[data-id='" + id + "']").val();
 		if (!qty || qty <= 0) return;
-		$.post('/ajax/orders/package_order_edit.php', { id: id, qty: qty }, function() {
+		var reason = prompt('Reason for changing this quantity to ' + qty + ':');
+			if (reason === null) return;
+			reason = reason.trim();
+			if (!reason) { alert('A reason is required to change the quantity.'); return; }
+			$.post('/ajax/orders/package_order_edit.php', { id: id, qty: qty, reason: reason }, function() {
 			var $notice = $('<span class="text-success ms-1 small">Saved</span>');
 			$btn.after($notice);
 			setTimeout(function() { $notice.fadeOut(400, function() { $(this).remove(); }); }, 2000);
@@ -202,7 +206,11 @@
 		var id   = $btn.data('id');
 		var qty  = $(".sent-qty-input[data-id='" + id + "']").val();
 		if (!qty || qty <= 0) return;
-		$.post('/ajax/orders/package_order_edit_sent.php', { id: id, qty: qty }, function(resp) {
+		var reason = prompt('Reason for changing this quantity to ' + qty + ':');
+			if (reason === null) return;
+			reason = reason.trim();
+			if (!reason) { alert('A reason is required to change the quantity.'); return; }
+			$.post('/ajax/orders/package_order_edit_sent.php', { id: id, qty: qty, reason: reason }, function(resp) {
 			if (resp === 'ok') {
 				var $notice = $('<span class="text-success ms-1 small">Saved</span>');
 				$btn.after($notice);
