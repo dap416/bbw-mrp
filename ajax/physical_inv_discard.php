@@ -2,7 +2,7 @@
 /** Discard a staged physical-count batch without changing inventory. */
 	require_once(__DIR__."/../includes/fns.php");
 	require_login();
-	require_can(can_edit('inventory'), 'You do not have permission to discard a physical count.');
+	require_can(is_master(), 'Only a master admin can discard a physical count.');
 
 	header('Content-Type: application/json');
 

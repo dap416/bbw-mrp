@@ -64,6 +64,11 @@
 	 * access can still receive shipments and leave notes.
 	 */
 	function can_manage_orders() {
+		return is_master();
+	}
+
+	/** True only for master admins (the top role). */
+	function is_master() {
 		return ($_SESSION['user_role'] ?? '') === 'master';
 	}
 

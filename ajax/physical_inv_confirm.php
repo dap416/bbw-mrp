@@ -5,7 +5,7 @@
  */
 	require_once(__DIR__."/../includes/fns.php");
 	require_login();
-	require_can(can_edit('inventory'), 'You do not have permission to confirm a physical count.');
+	require_can(is_master(), 'Only a master admin can confirm and apply a physical count.');
 
 	header('Content-Type: application/json');
 

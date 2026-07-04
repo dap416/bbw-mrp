@@ -32,6 +32,15 @@
 	$build12mo  = (int)$db->query("SELECT COALESCE(SUM(ABS(t.qty)),0) AS v FROM trans t JOIN parts p ON p.id=t.partid WHERE t.type='BUILD' AND t.date > DATE_SUB(NOW(), INTERVAL 12 MONTH) AND p.partno LIKE 'CS-%'")->fetch()['v'];
 	$openOrders = (int)$db->query("SELECT COUNT(*) AS v FROM orders WHERE qty > recqty")->fetch()['v'];
 
+	// Physical counts awaiting confirmation (master approves; shown to admins/masters).
+	$pendingCounts = [];
+	if (in_array($_SESSION['user_role'] ?? '', ['admin','master'], true)) {
+		try {
+			phys_inv_ensure_tables($db);
+			$pendingCounts = $db->query("SELECT id, warehouse_name, user_name, total_parts, variance_parts, created_at FROM phys_inv_batches WHERE status = 'pending' ORDER BY created_at DESC")->fetchAll();
+		} catch (Throwable $e) {}
+	}
+
 	// ── 1. ORDER RECOMMENDATIONS ──────────────────────────────────────────────
 	// ── BATCH PREFETCH for recommendation loops (avoids per-part N+1) ──
 	$ooUnposted = []; // on-order for orders not yet posted (postdate 0000-00-00)
@@ -429,6 +438,35 @@ loadBriefing(false);
 </script>
 
 <?php require_once(__DIR__."/includes/footer.php"); exit; ?>
+<?php endif; ?>
+
+<?php if (!empty($pendingCounts)): ?>
+<!-- ── PHYSICAL COUNTS AWAITING CONFIRMATION ─────────────────────────────── -->
+<div class="card mb-3" style="border-left:4px solid #e58a00;">
+	<div class="card-body py-3">
+		<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+			<span class="section-title mb-0"><i class="ti ti-clipboard-check me-1"></i>Physical Counts Awaiting Confirmation</span>
+			<span class="badge bg-warning text-dark"><?php echo count($pendingCounts); ?> pending</span>
+		</div>
+		<div class="table-responsive">
+		<table class="table dash-table mb-0">
+			<thead><tr><th>Warehouse</th><th>Submitted by</th><th class="text-center">Parts</th><th class="text-center">Variances</th><th>When</th><th></th></tr></thead>
+			<tbody>
+			<?php foreach ($pendingCounts as $pc): ?>
+			<tr>
+				<td class="fw-semibold"><?php echo htmlspecialchars($pc['warehouse_name'] ?: '—'); ?></td>
+				<td class="text-muted"><?php echo htmlspecialchars($pc['user_name'] ?: '—'); ?></td>
+				<td class="text-center"><?php echo (int)$pc['total_parts']; ?></td>
+				<td class="text-center"><?php echo (int)$pc['variance_parts'] > 0 ? '<span class="text-danger fw-semibold">'.(int)$pc['variance_parts'].'</span>' : '0'; ?></td>
+				<td class="text-muted" style="white-space:nowrap;"><?php echo date('m/d/y g:ia', strtotime($pc['created_at'])); ?></td>
+				<td class="text-end"><a href="/physical_inv_report.php?batch=<?php echo (int)$pc['id']; ?>" class="btn btn-sm btn-warning">Review &amp; Confirm →</a></td>
+			</tr>
+			<?php endforeach; ?>
+			</tbody>
+		</table>
+		</div>
+	</div>
+</div>
 <?php endif; ?>
 
 <?php if (in_array($_SESSION['user_role'] ?? '', ['admin','master'], true)): ?>

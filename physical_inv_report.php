@@ -16,7 +16,8 @@
 		$is->execute([$batchId]);
 		$items = $is->fetchAll();
 	}
-	$canEdit = can_edit('inventory');
+	$canEdit  = can_edit('inventory');
+	$isMaster = is_master();
 
 	require_once(__DIR__."/includes/header.php");
 ?>
@@ -76,13 +77,15 @@
 			Inventory has <strong>not</strong> changed yet. Review the counts below, then confirm to apply them.
 		</div>
 		<div class="d-flex gap-2">
-			<?php if ($canEdit): ?>
+			<?php if ($isMaster): ?>
 			<button class="btn btn-outline-secondary" id="discard-btn">Discard</button>
 			<button class="btn btn-success btn-lg" id="confirm-btn" data-batch="<?php echo (int)$batch['id']; ?>">
 				<i class="ti ti-database-import me-1"></i> Confirm and Change Inventory
 			</button>
+			<?php elseif ($canEdit): ?>
+			<span class="text-muted small">Only a master admin can confirm or discard this count.</span>
 			<?php else: ?>
-			<span class="text-muted small">You have view-only access — ask an inventory editor to confirm.</span>
+			<span class="text-muted small">You have view-only access — ask a master admin to confirm.</span>
 			<?php endif; ?>
 		</div>
 	</div>
@@ -168,12 +171,13 @@
 </div>
 
 <script>
+var BATCH_ID = <?php echo (int)($batch['id'] ?? 0); ?>;
 $('#confirm-btn').on('click', function(){ $('#applyModal').modal('show'); });
 
 $('#apply-yes').on('click', function(){
 	var $btn = $(this); $btn.prop('disabled', true).text('Applying…');
 	var batch = $('#confirm-btn').data('batch');
-	$.post('/ajax/physical_inv_confirm.php', { batch_id: batch }, function(resp){
+	$.post('/ajax/physical_inv_confirm.php', { batch_id: BATCH_ID }, function(resp){
 		if (resp.ok) { window.location = '/physical_inventory.php?applied=' + resp.adjusted; }
 		else { alert('Error: ' + (resp.error || 'Unknown error')); $btn.prop('disabled', false).text('Yes, change inventory'); }
 	}, 'json').fail(function(){ alert('Request failed. Please try again.'); $btn.prop('disabled', false).text('Yes, change inventory'); });
@@ -182,7 +186,7 @@ $('#apply-yes').on('click', function(){
 $('#discard-btn').on('click', function(){
 	if (!confirm('Discard this count without changing inventory?')) return;
 	var batch = $('#confirm-btn').data('batch');
-	$.post('/ajax/physical_inv_discard.php', { batch_id: batch }, function(resp){
+	$.post('/ajax/physical_inv_discard.php', { batch_id: BATCH_ID }, function(resp){
 		if (resp.ok) { window.location = '/physical_inventory.php'; }
 		else { alert('Error: ' + (resp.error || 'Unknown error')); }
 	}, 'json').fail(function(){ alert('Request failed. Please try again.'); });
