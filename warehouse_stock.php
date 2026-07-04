@@ -70,13 +70,25 @@ function wsRender(d) {
 			html += '<div class="mt-3 ws-cat" data-cat="' + $('<div>').text(b.category).html() + '"><div class="d-flex justify-content-between align-items-center" style="border-bottom:2px solid #e9ecef;padding-bottom:3px;">' +
 				'<span class="fw-semibold small text-uppercase" style="letter-spacing:.04em;color:#4680ff;">' + $('<div>').text(b.category).html() + '</span>' +
 				'<span class="text-muted small">' + Number(b.subtotal).toLocaleString() + '</span></div>';
-			html += '<table class="table table-sm mb-0" style="font-size:0.82rem;"><tbody>';
+			html += '<table class="table table-sm mb-0" style="font-size:0.82rem;">' +
+				'<thead><tr class="text-muted" style="font-size:0.68rem;text-transform:uppercase;letter-spacing:.03em;">' +
+				'<th style="width:90px;">SKU</th><th>Product</th>' +
+				'<th class="text-end" style="width:70px;">Avail</th>' +
+				'<th class="text-end" style="width:82px;">Committed</th>' +
+				'<th class="text-end" style="width:78px;">On Hand</th>' +
+				'<th class="text-end" style="width:78px;">Incoming</th></tr></thead><tbody>';
 			b.items.forEach(function(it) {
 				var key = (it.sku + ' ' + it.title).toLowerCase();
+				var committed = Number(it.committed || 0);
+				var onhand    = Number(it.on_hand != null ? it.on_hand : it.qty);
+				var incoming  = Number(it.incoming || 0);
 				html += '<tr class="ws-item" data-search="' + $('<div>').text(key).html() + '" data-cat="' + $('<div>').text(b.category).html() + '">' +
-					'<td style="width:90px;" class="fw-semibold">' + $('<div>').text(it.sku).html() + '</td>' +
+					'<td class="fw-semibold">' + $('<div>').text(it.sku).html() + '</td>' +
 					'<td class="text-muted">' + $('<div>').text(it.title).html() + '</td>' +
-					'<td class="text-end" style="width:70px;">' + wsQtyCell(it.qty) + '</td></tr>';
+					'<td class="text-end">' + wsQtyCell(it.qty) + '</td>' +
+					'<td class="text-end">' + (committed ? '<span style="color:#e58a00;font-weight:600;">' + committed.toLocaleString() + '</span>' : '<span class="text-muted">0</span>') + '</td>' +
+					'<td class="text-end fw-semibold">' + onhand.toLocaleString() + '</td>' +
+					'<td class="text-end text-muted">' + (incoming ? incoming.toLocaleString() : '-') + '</td></tr>';
 			});
 			html += '</tbody></table></div>';
 		});

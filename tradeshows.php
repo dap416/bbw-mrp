@@ -209,9 +209,9 @@ function tsRenderPrep(d, names) {
 	html += '<span class="fw-bold">Combined Build/Pack Order <span class="text-muted fw-normal small">- ' + $('<div>').text(names.join(', ')).html() + '</span></span>';
 	html += '<button id="tsCreateOrder" class="btn btn-sm btn-success"><i class="ti ti-check me-1"></i>Create packaging order(s)</button></div>';
 	if (d.fp_note) html += '<div class="small text-warning mb-1"><i class="ti ti-alert-triangle"></i> ' + $('<div>').text(d.fp_note).html() + '</div>';
-	html += '<div class="text-muted small mb-2"><b>Bring</b> = combined units these shows sold last year (min 10) - what to take to the shows. <b>FP on hand</b> = finished product you already have. <b>Build</b> = what is left to make (Bring - FP on hand). Only <b>Build</b> becomes a packaging order - edit any Build qty before creating. No inventory is deducted until you finalize on the Packaging page.</div>';
+	html += '<div class="text-muted small mb-2"><b>Bring</b> = combined units these shows sold last year (min 10) - what to take to the shows. <b>FP · AR</b> = finished product available in Arkansas (what the show ships from); <b>FP · OR</b> = available in Oregon if you need to transfer. <b>Build</b> = what is left to make after Arkansas stock (Bring - FP AR). Only <b>Build</b> becomes a packaging order - edit any Build qty before creating. No inventory is deducted until you finalize on the Packaging page.</div>';
 	html += '<div class="table-responsive"><table class="table table-sm align-middle" style="font-size:0.88rem;"><thead><tr>' +
-		'<th>Product</th><th class="text-center">Bring</th><th class="text-center">FP on hand</th><th class="text-center">Build</th><th class="text-center" style="width:130px;">Build qty</th></tr></thead><tbody>';
+		'<th>Product</th><th class="text-center">Bring</th><th class="text-center">FP · AR</th><th class="text-center">FP · OR</th><th class="text-center">Build</th><th class="text-center" style="width:130px;">Build qty</th></tr></thead><tbody>';
 	rows.forEach(function(r) {
 		var note = r.short > 0
 			? '<div class="text-danger" style="font-size:0.66rem;">buildable now ' + tsNum(r.buildable) + ' - short ' + tsNum(r.short) + ' (' + $('<div>').text(r.limit_part||'raw materials').html() + ')</div>'
@@ -219,7 +219,8 @@ function tsRenderPrep(d, names) {
 		html += '<tr>' +
 			'<td class="fw-semibold">' + $('<div>').text(r.product).html() + ' <span class="text-muted" style="font-size:0.72rem;">' + $('<div>').text(r.sku).html() + '</span></td>' +
 			'<td class="text-center fw-semibold">' + tsNum(r.demand) + '</td>' +
-			'<td class="text-center">' + tsNum(r.on_hand) + '</td>' +
+			'<td class="text-center">' + tsNum(r.fp_ar) + '</td>' +
+			'<td class="text-center text-muted" title="Available at Oregon if you need to transfer">' + tsNum(r.fp_or) + '</td>' +
 			'<td class="text-center fw-bold text-primary">' + tsNum(r.build) + '</td>' +
 			'<td class="text-center"><input type="number" min="0" class="form-control form-control-sm ts-ord-qty text-center" data-prodid="' + r.prodid + '" value="' + r.build + '">' + note + '</td>' +
 			'</tr>';

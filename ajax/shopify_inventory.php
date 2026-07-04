@@ -13,7 +13,7 @@ $db    = db_connect();
 $fresh = !empty($_POST['fresh']);              // manual Refresh forces a live pull
 $ttl   = $fresh ? 0 : inventory_cache_ttl($db); // otherwise reuse if pulled within a few hours
 
-$r   = shopify_cache_remember($db, 'inv_by_location', $ttl, fn() => shopify_inventory_by_location());
+$r   = shopify_cache_remember($db, 'inv_by_location_v2', $ttl, fn() => shopify_inventory_by_location());
 $out = $r['data'];
 $out['cached']     = $r['cached'];
 $out['updated_at'] = $r['updated_at'];

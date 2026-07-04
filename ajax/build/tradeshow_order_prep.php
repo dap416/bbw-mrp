@@ -5,9 +5,10 @@
  * posts them here. For each SKU that maps to a finished product with a bill of
  * materials we work out:
  *   demand = combined units those shows sold last year  (min 10)
- *   bring  = pull from finished product already on hand  = min(demand, fp_on_hand)
- *   build  = make the rest                               = demand - bring
- * so BRING + BUILD always equals DEMAND. Only BUILD becomes a packaging order.
+ *   fp_ar  = finished product available in Arkansas (the show's stock source)
+ *   fp_or  = finished product available in Oregon (transfer option, not auto-used)
+ *   build  = make the rest after Arkansas stock         = max(0, demand - fp_ar)
+ * Only BUILD becomes a packaging order.
  * "buildable" = how many of the build we can make now from raw stock in the
  * chosen warehouse. Orders are created via ajax/build/create_orders.php.
  *
@@ -53,7 +54,7 @@ try {
 	if (shopify_is_configured()) {
 		$fpLoc = shopify_cache_remember($db, 'rec_fp', inventory_cache_ttl($db), fn() => shopify_fp_by_location())['data'];
 		foreach (($fpLoc['skus'] ?? []) as $k => $v) {
-			$fpBySkuLc[strtolower(trim((string)$k))] = (int)($v['oregon'] ?? 0) + (int)($v['rest'] ?? 0);
+			$fpBySkuLc[strtolower(trim((string)$k))] = ['ar' => (int)($v['rest'] ?? 0), 'or' => (int)($v['oregon'] ?? 0)];
 		}
 	} else { $fpError = 'Shopify is not connected — assuming 0 finished product on hand.'; }
 } catch (Throwable $e) { $fpError = 'Could not read finished-product stock — assuming 0 on hand.'; }
@@ -65,9 +66,10 @@ foreach ($want as $sku => $units) {
 	$pid = (int)$pr['id'];
 
 	$demand  = max($DEMAND_MIN, (int)$units);               // combined sold last year, min 10
-	$onHand  = max(0, (int)($fpBySkuLc[strtolower($sku)] ?? 0));
-	$bring   = min($demand, $onHand);                       // pull from finished stock
-	$build   = $demand - $bring;                            // make the rest (bring + build = demand)
+	$fp      = $fpBySkuLc[strtolower($sku)] ?? ['ar' => 0, 'or' => 0];
+	$fpAr    = max(0, (int)$fp['ar']);                      // finished product available in Arkansas
+	$fpOr    = max(0, (int)$fp['or']);                      // finished product available in Oregon (backup)
+	$build   = max(0, $demand - $fpAr);                     // AR ships the show, so build the AR shortfall
 
 	// Buildable now = min over the BOM of floor(raw on-hand / per-unit need),
 	// using the chosen warehouse's raw stock (mirrors fp_build_plan / build.php).
@@ -93,8 +95,8 @@ foreach ($want as $sku => $units) {
 		'product'    => $pr['name'],
 		'sku'        => $sku,
 		'demand'     => $demand,
-		'on_hand'    => $onHand,
-		'bring'      => $bring,
+		'fp_ar'      => $fpAr,
+		'fp_or'      => $fpOr,
 		'build'      => $build,
 		'buildable'  => $buildable,
 		'short'      => max(0, $build - $buildable),

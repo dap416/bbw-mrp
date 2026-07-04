@@ -779,7 +779,7 @@
 		  productVariants(first: 50, after: $cursor) {
 		    pageInfo { hasNextPage endCursor }
 		    edges { node { sku inventoryItem { inventoryLevels(first: 20) {
-		      edges { node { location { id } quantities(names: ["available"]) { quantity } } }
+		      edges { node { location { id } quantities(names: ["available","committed","on_hand"]) { name quantity } } }
 		    } } } }
 		  }
 		}';
@@ -794,15 +794,16 @@
 				$v   = $ve['node'];
 				$sku = trim((string)($v['sku'] ?? ''));
 				if ($sku === '') continue;
-				$o = 0; $r = 0;
+				$oa=0;$oc=0;$oh=0;$ra=0;$rc=0;$rh=0;
 				foreach (($v['inventoryItem']['inventoryLevels']['edges'] ?? []) as $le) {
-					$lvl   = $le['node'];
-					$lid   = $lvl['location']['id'] ?? '';
-					$avail = 0;
-					foreach (($lvl['quantities'] ?? []) as $qn) $avail = (int)($qn['quantity'] ?? 0);
-					if ($oregonId !== '' && $lid === $oregonId) $o += $avail; else $r += $avail;
+					$lvl = $le['node'];
+					$lid = $lvl['location']['id'] ?? '';
+					$qm = ['available'=>0,'committed'=>0,'on_hand'=>0];
+					foreach (($lvl['quantities'] ?? []) as $qn) { $nm = $qn['name'] ?? ''; if (isset($qm[$nm])) $qm[$nm] = (int)($qn['quantity'] ?? 0); }
+					if ($oregonId !== '' && $lid === $oregonId) { $oa += $qm['available']; $oc += $qm['committed']; $oh += $qm['on_hand']; }
+					else { $ra += $qm['available']; $rc += $qm['committed']; $rh += $qm['on_hand']; }
 				}
-				$bySku[$sku] = ['oregon' => $o, 'rest' => $r];
+				$bySku[$sku] = ['oregon'=>$oa,'rest'=>$ra,'oregon_committed'=>$oc,'rest_committed'=>$rc,'oregon_on_hand'=>$oh,'rest_on_hand'=>$rh];
 			}
 
 			$cursor  = $pv['pageInfo']['endCursor']  ?? null;
@@ -847,7 +848,7 @@
 		      variants(first: 50) { edges { node {
 		        sku title
 		        inventoryItem { inventoryLevels(first: 20) { edges { node {
-		          location { id name } quantities(names: ["available"]) { quantity }
+		          location { id name } quantities(names: ["available","committed","on_hand","incoming"]) { name quantity }
 		        } } } }
 		      } } }
 		    } }
@@ -882,10 +883,10 @@
 						$lid  = $lvl['location']['id']   ?? '';
 						$lnm  = $lvl['location']['name'] ?? '';
 						if ($lid === '') continue;
-						$qty  = 0;
-						foreach (($lvl['quantities'] ?? []) as $qn) $qty = (int)($qn['quantity'] ?? 0);
+						$qm = ['available'=>0,'committed'=>0,'on_hand'=>0,'incoming'=>0];
+						foreach (($lvl['quantities'] ?? []) as $qn) { $nm = $qn['name'] ?? ''; if (isset($qm[$nm])) $qm[$nm] = (int)($qn['quantity'] ?? 0); }
 						$locName[$lid] = $lnm;
-						$raw[$lid][$cat][] = ['sku' => $sku, 'title' => $title, 'qty' => $qty];
+						$raw[$lid][$cat][] = ['sku' => $sku, 'title' => $title, 'qty' => $qm['available'], 'available' => $qm['available'], 'committed' => $qm['committed'], 'on_hand' => $qm['on_hand'], 'incoming' => $qm['incoming']];
 					}
 				}
 			}
