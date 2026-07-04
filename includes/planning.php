@@ -297,6 +297,10 @@
 			}
 		}
 
+		// ── Open Shopify wholesale / draft orders (customer POs) with line items ──
+		$wholesaleOrders = [];
+		if ($shopReady) { try { $wo = shopify_open_wholesale_orders(50); if (empty($wo['error'])) $wholesaleOrders = $wo['orders']; } catch (Throwable $e) {} }
+
 		$oregonAnyUnits = 0; foreach ($priorOregon as $m) $oregonAnyUnits += array_sum($m);
 		$oregonStatus = !$shopReady ? 'unavailable (Shopify not connected)'
 			: (shopify_oregon_location_id() === '' ? 'Oregon Warehouse location not found in Shopify — set the oregon_location_id setting'
@@ -308,6 +312,7 @@
 				'baseline'          => 'prior-year same window, no growth applied',
 				'shopify_connected' => $shopReady,
 				'shopify_error'     => $shopErr,
+				'wholesale_orders_note' => 'open_wholesale_orders lists your CURRENT open Shopify draft/wholesale orders (customer POs not yet completed), each with name (order number), customer, created date, status, total, unit count, and line items (sku, title, qty). Use these as concrete demand when the user asks about a specific order or PO: match by name or customer, treat the line items as units to fulfill, net each SKU against in_stock (animators/finished_goods), convert any animator shortfall to raw materials via its bom, and respect MOQ/lead times. This is OPEN drafts only - completed/closed orders are not listed.',
 				'oregon_split_status' => $oregonStatus,
 				'note'              => 'Only animator products have raw materials (BOMs) in the MRP; everything else is ordered as finished goods. moq = round up to a multiple. lead_time_days = order-to-delivery. on_order = already-placed raw POs not yet received.',
 				'parts_coverage'    => 'raw_materials lists EVERY part in MRP inventory with on_hand, on_order, base_stock_level, moq, lead_time_days, unit_cost. animator_component=true marks a direct BOM component of an animator. Packaging cards (CD-* and Amazon CDA-*), plates, rods and packaging are all included even when they are not BOM components — their demand tracks the animator they package (matchable by part-number brand code, e.g. LDA→CD-LD/CDA-LD; AXLA→CD-AX-L/CDA-AX-L; AXRA→CD-AX-R/CDA-AX-R; KMA→CD-KM/CDA-KM). NOTE: on_order is a total quantity, not a list of POs with ETAs.',
@@ -315,6 +320,7 @@
 				'sales_coverage'    => 'prior_year_sales counts EVERY Shopify order in the window (line-item quantities) EXCEPT cancelled orders. This INCLUDES: online/web, point-of-sale (POS/tradeshows), completed/paid draft orders, and Collective/wholesale. Native Shopify bundles are exploded into their component SKUs. It EXCLUDES: open/un-completed draft orders (no sale yet) and anything not recorded in Shopify (e.g. an off-platform Amazon or wholesale PO). sales_by_channel below shows the actual channel mix so you can confirm coverage. Seasons are quarter-granular (jul_sep, oct_dec, jan_mar) — a sub-quarter date range maps to whole quarters.',
 				'location_split'    => 'You CAN answer Oregon-vs-Arkansas questions. For each animator and finished good: prior_year_oregon = the subset of prior_year_sales that was FULFILLED from the Oregon Warehouse Shopify location (the rest — Arkansas + POS/tradeshows + online shipped elsewhere — is prior_year_sales − prior_year_oregon). in_stock_oregon = finished units currently sitting AT the Oregon Warehouse (null = the SKU was not found in Shopify location inventory). Use these for "how much do I need in Oregon" / "what to ship to Oregon" questions: Oregon demand for a SKU = prior_year_oregon for the season(s) the date spans; units short at Oregon = max(0, Oregon demand − in_stock_oregon). To express that shortfall as RAW MATERIALS to ship/build, multiply the short units by the animator\'s bom qty_per_unit (and one packaging card per unit). NOTE: prior_year_oregon is fulfillment-location based, not the customer\'s shipping state; it is the best available proxy for "Oregon orders". oregon_split_status reports if this data loaded.',
 			],
+			'open_wholesale_orders' => $wholesaleOrders,
 			'sales_by_channel'  => $priorChannel,
 			'seasons'        => $seasons,
 			'animators'      => $animators,

@@ -620,6 +620,62 @@
 	}
 
 	/**
+	 * Open Shopify wholesale / draft orders (customer POs not yet completed), with
+	 * per-order line items. Used by the Research AI so it can answer questions about
+	 * a specific order/PO. Returns ['error'=>?, 'orders'=>[{name,status,created,
+	 * customer,total,units,lines:[{sku,title,qty}]}]]. Open drafts only.
+	 */
+	function shopify_open_wholesale_orders($limit = 50) {
+		$q = '
+		query($cursor: String) {
+		  draftOrders(first: 50, after: $cursor, query: "status:open OR status:invoice_sent", sortKey: UPDATED_AT, reverse: true) {
+		    pageInfo { hasNextPage endCursor }
+		    edges { node {
+		      name status createdAt
+		      customer { displayName }
+		      totalPriceSet { shopMoney { amount } }
+		      lineItems(first: 100) { edges { node { sku title quantity } } }
+		    } }
+		  }
+		}';
+		$orders = []; $cursor = null; $pages = 0;
+		do {
+			$res = shopify_graphql($q, ['cursor' => $cursor]);
+			if (!empty($res['error'])) return ['error' => $res['error'], 'orders' => []];
+			$d = $res['data']['draftOrders'] ?? null;
+			if ($d === null) break;
+			foreach ($d['edges'] as $e) {
+				$n = $e['node'];
+				if (($n['status'] ?? '') === 'COMPLETED') continue;
+				$lines = []; $units = 0;
+				foreach (($n['lineItems']['edges'] ?? []) as $le) {
+					$li  = $le['node'];
+					$qty = (int)($li['quantity'] ?? 0);
+					if ($qty <= 0) continue;
+					$lines[] = ['sku' => trim((string)($li['sku'] ?? '')), 'title' => $li['title'] ?? '', 'qty' => $qty];
+					$units += $qty;
+				}
+				if (empty($lines)) continue;
+				$orders[] = [
+					'name'     => $n['name'] ?? '',
+					'status'   => strtolower((string)($n['status'] ?? '')),
+					'created'  => isset($n['createdAt']) ? substr($n['createdAt'], 0, 10) : '',
+					'customer' => $n['customer']['displayName'] ?? '',
+					'total'    => isset($n['totalPriceSet']['shopMoney']['amount']) ? round((float)$n['totalPriceSet']['shopMoney']['amount']) : null,
+					'units'    => $units,
+					'lines'    => $lines,
+				];
+				if (count($orders) >= $limit) break 2;
+			}
+			$cursor  = $d['pageInfo']['endCursor']  ?? null;
+			$hasNext = $d['pageInfo']['hasNextPage'] ?? false;
+			$pages++;
+		} while ($hasNext && $pages < 10);
+
+		return ['error' => null, 'orders' => $orders];
+	}
+
+	/**
 	 * The Oregon Warehouse Shopify location id (GID). Found by name match
 	 * ("oregon"), overridable via the `oregon_location_id` setting. Cached.
 	 * Used to split demand/stock: Oregon vs everything-else (Arkansas).
