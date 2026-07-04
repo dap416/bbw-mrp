@@ -4,19 +4,22 @@
 	require_once(__DIR__."/../../includes/planning.php");
 	require_once(__DIR__."/../../includes/anthropic.php");
 	require_login();
+	ini_set('display_errors', '0');   // never let a stray PHP warning corrupt the JSON body
+	ob_start();                        // capture accidental output; discarded before we send JSON
+	function rai_send($x) { while (ob_get_level() > 0) { @ob_end_clean(); } header('Content-Type: application/json'); echo json_encode($x, JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE); exit; }
 
-	if (!has_access('research')) { http_response_code(403); echo json_encode(['error'=>'You do not have access to Research.']); exit; }
+	if (!has_access('research')) { http_response_code(403); rai_send(['error'=>'You do not have access to Research.']); exit; }
 
 	header('Content-Type: application/json');
 
 	// Detect a request that blew past the server's POST size limit (big upload).
 	if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($_POST) && empty($_FILES) && (int)($_SERVER['CONTENT_LENGTH'] ?? 0) > 0) {
-		echo json_encode(['error' => 'Upload too large for the server limit. Try a smaller file.']);
+		rai_send(['error' => 'Upload too large for the server limit. Try a smaller file.']);
 		exit;
 	}
 
 	if (!anthropic_is_configured()) {
-		echo json_encode(['error' => 'No Anthropic API key configured. Add one on the Integrations page.']);
+		rai_send(['error' => 'No Anthropic API key configured. Add one on the Integrations page.']);
 		exit;
 	}
 
@@ -44,9 +47,9 @@
 		for ($i = 0; $i < $n && $i < 4; $i++) {
 			if ((int)$f['error'][$i] !== UPLOAD_ERR_OK) continue;
 			$name = $f['name'][$i]; $tmp = $f['tmp_name'][$i]; $size = (int)$f['size'][$i];
-			if ($size > $maxBytes) { echo json_encode(['error' => 'File "'.$name.'" is too large (max 10MB).']); exit; }
+			if ($size > $maxBytes) { rai_send(['error' => 'File "'.$name.'" is too large (max 10MB).']); exit; }
 			$mime = function_exists('mime_content_type') ? (mime_content_type($tmp) ?: $f['type'][$i]) : $f['type'][$i];
-			if (!isset($allowed[$mime])) { echo json_encode(['error' => 'Unsupported file "'.$name.'". Use PDF or an image (PNG/JPG/GIF/WebP).']); exit; }
+			if (!isset($allowed[$mime])) { rai_send(['error' => 'Unsupported file "'.$name.'". Use PDF or an image (PNG/JPG/GIF/WebP).']); exit; }
 			$data = base64_encode(file_get_contents($tmp));
 			$kind = $allowed[$mime];
 			$content[] = ($kind === 'document')
@@ -56,7 +59,7 @@
 		}
 	}
 
-	if (empty($content)) { echo json_encode(['error' => 'Please enter a question or attach a file.']); exit; }
+	if (empty($content)) { rai_send(['error' => 'Please enter a question or attach a file.']); exit; }
 
 	$SYSTEM_BASE =
 "You are the demand-planning assistant for Blue Bird Waterfowl / THE ANIMATOR, a small US manufacturer of waterfowl motion-decoy conversion kits (Animators, BUILT from raw materials) plus accessories it resells as finished goods (cases, wings, plates).
@@ -77,7 +80,7 @@ Key rules:
 	$newChat = false;
 	if ($chatId > 0) {
 		$row = $db->query("SELECT * FROM research_chats WHERE id = " . (int)$chatId)->fetch();
-		if (!$row) { echo json_encode(['error' => 'Chat not found.']); exit; }
+		if (!$row) { rai_send(['error' => 'Chat not found.']); exit; }
 		$context  = (string)$row['context'];
 		$messages = json_decode($row['messages'] ?: '[]', true) ?: [];
 		$title    = $row['title'];
@@ -90,7 +93,7 @@ Key rules:
 			catch (Throwable $e) {}
 			$ctx['planning_events'] = $evts;
 		} catch (Throwable $e) {
-			echo json_encode(['error' => 'Could not build planning data: ' . $e->getMessage()]);
+			rai_send(['error' => 'Could not build planning data: ' . $e->getMessage()]);
 			exit;
 		}
 		$context  = json_encode($ctx, JSON_UNESCAPED_SLASHES);
@@ -131,7 +134,7 @@ Key rules:
 
 	if (!empty($res['error'])) {
 		if ($newChat) { $db->exec("DELETE FROM research_chats WHERE id = " . (int)$chatId); }
-		echo json_encode(['error' => $res['error']]);
+		rai_send(['error' => $res['error']]);
 		exit;
 	}
 
@@ -140,4 +143,4 @@ Key rules:
 	$db->prepare("UPDATE research_chats SET messages = ?, updated_at = NOW() WHERE id = ?")
 	   ->execute([json_encode($messages, JSON_UNESCAPED_SLASHES), $chatId]);
 
-	echo json_encode(['chat_id' => $chatId, 'title' => $title, 'messages' => chat_display_messages($messages)]);
+	rai_send(['chat_id' => $chatId, 'title' => $title, 'messages' => chat_display_messages($messages)]);
