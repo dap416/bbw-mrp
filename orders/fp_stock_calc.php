@@ -19,6 +19,27 @@
 	<h2 class="fw-bold mb-0">Finished Product Stock Order</h2>
 </div>
 
+<!-- ── RECOMMEND A STOCK ORDER ──────────────────────────────────────────── -->
+<div class="card mb-4" style="border-top:3px solid #6f42c1;">
+	<div class="card-body">
+		<div class="mb-2"><span class="fw-bold">Recommend a Stock Order</span></div>
+		<p class="text-muted small mb-3">Suggests what to order to cover demand through a date you choose — last year's sales for the same window (online, POS/tradeshow &amp; completed drafts), current open wholesale draft orders (≥10 units), finished-product stock and pipeline. <strong>Click a product</strong> to see where its demand comes from.</p>
+		<div class="d-flex align-items-center gap-2 flex-wrap mb-2">
+			<span class="small fw-semibold text-muted">Fulfill until:</span>
+			<input type="date" id="recUntil" class="form-control form-control-sm" style="width:170px;" min="<?php echo date('Y-m-d', strtotime('+1 day')); ?>" value="<?php echo date('Y-m-d', strtotime('+90 days')); ?>" />
+			<span class="small fw-semibold text-muted">Warehouse:</span>
+			<select id="recWarehouse" class="form-select form-select-sm" style="width:180px;">
+				<?php foreach ($warehouses as $wh): ?>
+				<option value="<?php echo (int)$wh['id']; ?>" <?php echo (stripos($wh['name'],'arkansas')!==false)?'selected':''; ?>><?php echo htmlspecialchars($wh['name']); ?></option>
+				<?php endforeach; ?>
+			</select>
+			<button id="recBtn" class="btn btn-sm btn-primary"><i class="ti ti-bulb me-1"></i>Recommend</button>
+			<span id="recMsg" class="small text-muted"></span>
+		</div>
+		<div id="recResults"></div>
+	</div>
+</div>
+
 <h5 class="fw-semibold mb-2">Pending Order</h5>
 <div class="card mb-4">
 	<div class="card-body">
@@ -245,6 +266,88 @@
 		});
 	});
 
+</script>
+
+<!-- Demand explanation modal -->
+<div class="modal fade" id="demandModal" tabindex="-1">
+	<div class="modal-dialog">
+		<div class="modal-content">
+			<div class="modal-header"><h5 class="modal-title" id="demandModalTitle">Where this demand comes from</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+			<div class="modal-body" id="demandModalBody"></div>
+		</div>
+	</div>
+</div>
+
+<script>
+function fmt(n){ return Number(n||0).toLocaleString(); }
+var REC_WH = 0, REC_WH_NAME = '';
+
+$('#recBtn').on('click', function() {
+	var until = $('#recUntil').val();
+	if (!until) { alert('Choose a target date.'); return; }
+	REC_WH = $('#recWarehouse').val();
+	REC_WH_NAME = $('#recWarehouse option:selected').text();
+	var $btn = $(this).prop('disabled', true).html('<i class="ti ti-loader me-1"></i>Analyzing…');
+	$('#recMsg').removeClass('text-danger').addClass('text-muted').text('Pulling sales history, draft orders & stock…');
+	$('#recResults').html('');
+	$.ajax({ url:'/ajax/build/recommend.php', method:'POST', dataType:'json', timeout:120000, data:{ until: until, warehouse_id: REC_WH } })
+	.done(function(d){ if (!d || d.error) { $('#recMsg').removeClass('text-muted').addClass('text-danger').text(d && d.error ? d.error : 'Could not build a recommendation.'); return; } renderRec(d); })
+	.fail(function(xhr, status){ $('#recMsg').removeClass('text-muted').addClass('text-danger').text(status==='timeout'?'Timed out pulling Shopify data — try again.':'Request failed ('+(xhr.status||'?')+').'); })
+	.always(function(){ $btn.prop('disabled', false).html('<i class="ti ti-bulb me-1"></i>Recommend'); });
+});
+
+function renderRec(d) {
+	var m = d.meta || {}, rows = d.rows || [];
+	$('#recMsg').removeClass('text-danger').addClass('text-muted').html('<strong>' + $('<div>').text(m.warehouse || 'All').html() + '</strong> — demand through ' + m.until + ' (' + m.window_days + ' days); baseline last year ' + m.prior_window + (m.draft_orders ? '; ' + m.draft_orders + ' open wholesale draft(s).' : '.'));
+	if (!rows.length) { $('#recResults').html('<div class="text-muted small mt-2">Nothing needs ordering — stock and pipeline already cover projected demand. 🎉</div>'); return; }
+	var toOrder = rows.filter(function(r){ return r.recommend > 0; });
+	var html = '<div class="table-responsive mt-2"><table class="table table-sm align-middle" style="font-size:0.85rem;"><thead><tr>' +
+		'<th>Product</th><th class="text-center">Projected Retail</th><th class="text-center">Open Drafts</th><th class="text-center">Total Demand</th><th class="text-center">FP On-Hand</th><th class="text-center">In Pipeline</th><th class="text-center">Recommend</th></tr></thead><tbody>';
+	rows.forEach(function(r) {
+		var recColor = r.recommend > 0 ? '#6f42c1' : '#adb5bd';
+		html += '<tr>' +
+			'<td class="fw-semibold"><a href="#" class="demand-explain" data-prodid="' + r.prodid + '" style="text-decoration:underline dotted;text-underline-offset:3px;color:inherit;" title="Where does this demand come from?">' + $('<div>').text(r.product).html() + '</a>' + (r.sku ? ' <span class="text-muted" style="font-size:0.7rem;">· ' + $('<div>').text(r.sku).html() + '</span>' : '') + '</td>' +
+			'<td class="text-center">' + fmt(r.retail) + '</td>' +
+			'<td class="text-center">' + (r.draft > 0 ? '<span class="badge bg-light text-dark">' + fmt(r.draft) + '</span>' : '—') + '</td>' +
+			'<td class="text-center fw-semibold">' + fmt(r.demand) + '</td>' +
+			'<td class="text-center">' + fmt(r.fp_stock) + '</td>' +
+			'<td class="text-center">' + (r.pipeline > 0 ? fmt(r.pipeline) : '—') + '</td>' +
+			'<td class="text-center"><span style="color:' + recColor + ';font-weight:800;font-size:1.05rem;">' + fmt(r.recommend) + '</span></td>' +
+			'</tr>';
+	});
+	html += '</tbody></table></div>';
+	window._recToOrder = toOrder.map(function(r){ return { prodid: r.prodid, qty: r.recommend, product: r.product }; });
+	if (window._recToOrder.length) {
+		html += '<div class="mt-3 d-flex align-items-center gap-2 flex-wrap"><button id="recAddBtn" class="btn btn-sm btn-success"><i class="ti ti-plus me-1"></i>Add ' + window._recToOrder.length + ' to pending order</button><span class="text-muted small">into <strong>' + $('<div>').text(REC_WH_NAME).html() + '</strong> — review below, then Send Order.</span><span id="recAddMsg" class="small ms-1"></span></div>';
+	}
+	$('#recResults').html(html);
+}
+
+$(document).on('click', '#recAddBtn', function() {
+	var items = window._recToOrder || [];
+	if (!items.length) return;
+	var $btn = $(this);
+	if (!confirm('Add ' + items.length + ' product(s) to the pending order in "' + REC_WH_NAME + '"? You can review and edit before sending.')) return;
+	$btn.prop('disabled', true).html('<i class="ti ti-loader me-1"></i>Adding…');
+	(function next(i) {
+		if (i >= items.length) { location.reload(); return; }
+		$.post('/ajax/orders/package_order_add.php', { prodid: items[i].prodid, qty: items[i].qty, warehouse_id: REC_WH }, function() { next(i + 1); })
+		 .fail(function(){ alert('Failed adding ' + items[i].product); $btn.prop('disabled', false).html('<i class="ti ti-plus me-1"></i>Add to pending order'); });
+	})(0);
+});
+
+$(document).on('click', '.demand-explain', function(e) {
+	e.preventDefault();
+	var prodid = $(this).data('prodid');
+	var product = $(this).text();
+	$('#demandModalTitle').text('Demand: ' + product);
+	$('#demandModalBody').html('<div class="text-muted small"><span class="spinner-border spinner-border-sm me-1"></span>Analyzing…</div>');
+	$('#demandModal').modal('show');
+	$.post('/ajax/build/demand_explain.php', { prodid: prodid, until: $('#recUntil').val(), warehouse_id: (REC_WH || $('#recWarehouse').val()) }, function(res) {
+		if (res && res.ok) $('#demandModalBody').html(res.html);
+		else $('#demandModalBody').html('<div class="text-danger small">' + $('<div>').text((res && res.error) || 'Could not load the explanation.').html() + '</div>');
+	}, 'json').fail(function() { $('#demandModalBody').html('<div class="text-danger small">Request failed.</div>'); });
+});
 </script>
 
 <?php require_once(__DIR__."/../includes/footer.php"); ?>

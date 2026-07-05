@@ -475,7 +475,31 @@
 
 </div><!-- end print-area -->
 
+<!-- Demand explanation modal -->
+<div class="modal fade" id="demandModal" tabindex="-1">
+	<div class="modal-dialog">
+		<div class="modal-content">
+			<div class="modal-header"><h5 class="modal-title" id="demandModalTitle">Where this demand comes from</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+			<div class="modal-body" id="demandModalBody"></div>
+		</div>
+	</div>
+</div>
+
 <script>
+// ── Demand explanation (click a product name) ──
+$(document).on('click', '.demand-explain', function(e) {
+	e.preventDefault();
+	var prodid  = $(this).data('prodid');
+	var product = $(this).text();
+	$('#demandModalTitle').text('Demand: ' + product);
+	$('#demandModalBody').html('<div class="text-muted small"><span class="spinner-border spinner-border-sm me-1"></span>Analyzing where this demand comes from…</div>');
+	$('#demandModal').modal('show');
+	$.post('/ajax/build/demand_explain.php', { prodid: prodid, until: $('#recUntil').val(), warehouse_id: (typeof REC_WH !== 'undefined' ? REC_WH : 0) }, function(res) {
+		if (res && res.ok) $('#demandModalBody').html(res.html);
+		else $('#demandModalBody').html('<div class="text-danger small">' + $('<div>').text((res && res.error) || 'Could not load the explanation.').html() + '</div>');
+	}, 'json').fail(function() { $('#demandModalBody').html('<div class="text-danger small">Request failed.</div>'); });
+});
+
 // ── Recommend a packaging order ──
 $('#recBtn').on('click', function() {
 	var $btn  = $(this);
@@ -531,7 +555,7 @@ function renderRec(d) {
 		else { buildCell = '<span style="color:#2ca01c;font-weight:700;">' + fmt(r.buildable) + '</span>'; }
 
 		html += '<tr>' +
-			'<td class="fw-semibold">' + $('<div>').text(r.product).html() + (r.sku ? ' <span class="text-muted" style="font-size:0.7rem;">· ' + $('<div>').text(r.sku).html() + '</span>' : '') + '</td>' +
+			'<td class="fw-semibold"><a href="#" class="demand-explain" data-prodid="' + r.prodid + '" style="text-decoration:underline dotted;text-underline-offset:3px;color:inherit;" title="Where does this demand come from?">' + $('<div>').text(r.product).html() + '</a>' + (r.sku ? ' <span class="text-muted" style="font-size:0.7rem;">· ' + $('<div>').text(r.sku).html() + '</span>' : '') + '</td>' +
 			'<td class="text-center">' + fmt(r.retail) + '</td>' +
 			'<td class="text-center">' + (r.draft > 0 ? '<span class="badge bg-light text-dark">' + fmt(r.draft) + '</span>' : '—') + '</td>' +
 			'<td class="text-center fw-semibold">' + fmt(r.demand) + '</td>' +

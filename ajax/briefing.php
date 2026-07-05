@@ -102,7 +102,7 @@
 			$recentEvents[] = ['kind' => 'task_completed', 'what' => $t['title'], 'when' => $t['completed_at']];
 	} catch (Throwable $e) {}
 	try {
-		foreach ($db->query("SELECT p.amount, p.date, o.orderref, pt.partno FROM payments p JOIN orders o ON o.id = p.ordid LEFT JOIN parts pt ON pt.id = o.partid WHERE p.date > DATE_SUB(NOW(), INTERVAL 7 DAY) ORDER BY p.date DESC LIMIT 15") as $r)
+		if ($isAdmin) foreach ($db->query("SELECT p.amount, p.date, o.orderref, pt.partno FROM payments p JOIN orders o ON o.id = p.ordid LEFT JOIN parts pt ON pt.id = o.partid WHERE p.date > DATE_SUB(NOW(), INTERVAL 7 DAY) ORDER BY p.date DESC LIMIT 15") as $r)
 			$recentEvents[] = ['kind' => 'payment_made', 'amount' => round((float)$r['amount']), 'order' => $r['orderref'], 'part' => $r['partno'], 'when' => $r['date']];
 	} catch (Throwable $e) {}
 	try {

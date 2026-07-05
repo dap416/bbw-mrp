@@ -19,7 +19,7 @@ require_once(__DIR__."/../../includes/planning.php"); // column_exists()
 require_login();
 header('Content-Type: application/json');
 
-if (!has_access('build')) { http_response_code(403); echo json_encode(['error' => 'No access to Packaging.']); exit; }
+if (!has_access('build') && !has_access('orders')) { http_response_code(403); echo json_encode(['error' => 'No access to Packaging or Orders.']); exit; }
 if (!shopify_is_configured()) { echo json_encode(['error' => 'Shopify is not connected — connect it on the Integrations page to project demand.']); exit; }
 
 $db    = db_connect();
