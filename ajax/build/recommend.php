@@ -1,17 +1,13 @@
 <?php
 /**
- * Recommend a packaging order to fulfill demand until a chosen date.
+ * Recommend a build/order to cover demand until a chosen date. Returns per-product
+ * demand COMPONENTS (online, per-tradeshow, committed, on-hand, pipeline, buildable);
+ * the browser (js/recommend.js) computes Demand and Build under a filter state and
+ * the AI chat (recommend_adjust.php) adjusts it.
  *
- * Demand (units, per animator product) =
- *    projected retail sales  (last year's SAME calendar window — includes online,
- *                             POS/tradeshow, and completed/paid draft orders)
- *  + committed draft orders  (current OPEN drafts >= 10 units = active wholesale POs)
- *
- * Supply already covered =
- *    Shopify finished-product stock  +  in-pipeline (intransit orders not yet received)
- *
- * Recommended build = max(0, demand - covered). We also check current raw-material
- * stock to show how many can actually be built now and the limiting part.
+ * Demand (per animator) = last year's SAME-window sales (online + POS/tradeshows)
+ *   + Shopify committed units (already sold, awaiting fulfillment).
+ * Recommended build = max(0, demand - finished-product on-hand - in-pipeline).
  */
 require_once(__DIR__."/../../includes/fns.php");
 require_once(__DIR__."/../../includes/shopify.php");
@@ -30,8 +26,9 @@ if (!$ts || date('Y-m-d', $ts) <= $today) { echo json_encode(['error' => 'Pick a
 
 $whId = (int)($_POST['warehouse_id'] ?? 0);
 
-// Shared computation (also used by the dashboard briefing).
-$plan = fp_build_plan($db, date('Y-m-d', $ts), $whId);
-if (!empty($plan['error'])) { echo json_encode(['error' => 'Shopify sales lookup failed: ' . $plan['error']]); exit; }
+// Per-product demand components — the browser computes Demand/Build under a filter
+// state (exclude shows / online-only / drop committed) and the AI chat adjusts it.
+$data = fp_demand_components($db, date('Y-m-d', $ts), $whId);
+if (!empty($data['error'])) { echo json_encode(['error' => 'Shopify lookup failed: ' . $data['error']]); exit; }
 
-echo json_encode(['error' => null, 'meta' => $plan['meta'], 'rows' => $plan['rows']]);
+echo json_encode(['error' => null, 'meta' => $data['meta'], 'rows' => $data['rows']]);

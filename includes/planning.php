@@ -356,12 +356,9 @@
 		if (!empty($sales['error'])) return ['error' => $sales['error'], 'meta' => [], 'rows' => []];
 		$retailBySku = $isOregon ? ($sales['by_sku_oregon'] ?? []) : ($sales['by_sku_rest'] ?? []);
 
-		$draftBySku = []; $draftErr = null; $draftOrders = 0;
-		if (!$isOregon) {
-			$drafts = shopify_cache_remember($db, 'rec_drafts', inventory_cache_ttl($db), fn() => shopify_open_draft_demand(10))['data'];
-			if (empty($drafts['error'])) { $draftBySku = $drafts['by_sku'] ?? []; $draftOrders = $drafts['orders'] ?? 0; }
-			else { $draftErr = $drafts['error']; }
-		}
+		// Demand now uses Shopify "committed" (already-sold, unfulfilled) rather than open
+		// draft orders; committed comes from the finished-product location data below.
+		$draftErr = null; $draftOrders = 0;
 
 		$fpLoc   = shopify_cache_remember($db, 'rec_fp', inventory_cache_ttl($db), fn() => shopify_fp_by_location())['data'];
 		$fpBySku = $fpLoc['skus'] ?? [];
@@ -389,16 +386,17 @@
 			if (empty($bom)) continue;                        // only animators (have raw-material BOM)
 			$sku = $hasSku ? trim((string)($p['shopify_sku'] ?? '')) : '';
 
-			$retail   = $sku !== '' ? (int)($retailBySku[$sku] ?? 0) : 0;
-			$draft    = $sku !== '' ? (int)($draftBySku[$sku]  ?? 0) : 0;
-			$demand   = $retail + $draft;
+			$retail    = $sku !== '' ? (int)($retailBySku[$sku] ?? 0) : 0;
+			$fp        = ($sku !== '' && isset($fpBySku[$sku])) ? $fpBySku[$sku] : [];
+			$available = (int)($isOregon ? ($fp['oregon'] ?? 0) : ($fp['rest'] ?? 0));            // sellable (on_hand - committed); may be negative
+			$committed = (int)($isOregon ? ($fp['oregon_committed'] ?? 0) : ($fp['rest_committed'] ?? 0));
+			$onHand    = (int)($isOregon ? ($fp['oregon_on_hand'] ?? 0) : ($fp['rest_on_hand'] ?? 0));
+			$demand    = $retail + $committed;                                                    // last-year sales + already-committed
+			$fpStock   = $available;                                                              // kept = available for existing consumers
+			$pipeline  = (int)($pipelineByProd[$p['id']] ?? 0);
+			$draft     = 0;
 
-			$fp       = ($sku !== '' && isset($fpBySku[$sku])) ? $fpBySku[$sku] : ['oregon' => 0, 'rest' => 0];
-			$fpStock  = (int)($isOregon ? $fp['oregon'] : $fp['rest']);   // may be negative (oversold)
-			$pipeline = (int)($pipelineByProd[$p['id']] ?? 0);
-			$covered  = $fpStock + $pipeline;
-
-			$recommend = max(0, $demand - $covered);
+			$recommend = max(0, $demand - $onHand - $pipeline);
 
 			$buildable = null; $limitPart = null;
 			foreach ($bom as $b) {
@@ -416,9 +414,11 @@
 				'product'    => $p['name'],
 				'sku'        => $sku,
 				'retail'     => $retail,
+				'committed'  => $committed,
 				'draft'      => $draft,
 				'demand'     => $demand,
 				'fp_stock'   => $fpStock,
+				'fp_on_hand' => $onHand,
 				'pipeline'   => $pipeline,
 				'recommend'  => $recommend,
 				'buildable'  => $buildable,
@@ -531,4 +531,114 @@
 		usort($rows, fn($a, $b) => $b['build_pack'] <=> $a['build_pack']);
 
 		return ['error' => $err, 'shows' => $matched ?: $showNames, 'window' => [$since, $until], 'rows' => $rows];
-	}
+	}
+
+	/**
+	 * Per-product demand COMPONENTS for the interactive Recommend panel — no drafts.
+	 * Returns each animator's demand broken into: online sales, per-tradeshow sales,
+	 * Shopify committed units, plus on-hand, pipeline and buildable-now. The browser
+	 * sums these under a filter state (exclude shows / online-only / drop committed)
+	 * to compute Demand and Build = max(0, demand - on_hand - pipeline).
+	 */
+	function fp_demand_components($db, $until, $whId = 0) {
+		if (!shopify_is_configured()) return ['error' => 'Shopify is not connected.', 'meta' => [], 'rows' => []];
+		$today = date('Y-m-d');
+		$ts    = strtotime($until);
+		if (!$ts) return ['error' => 'Bad target date.', 'meta' => [], 'rows' => []];
+		$until = date('Y-m-d', $ts);
+		$windowDays = max(1, (int)round(($ts - strtotime($today)) / 86400));
+
+		$whRow    = $whId ? $db->query("SELECT name FROM warehouses WHERE id = " . (int)$whId)->fetch() : null;
+		$whName   = $whRow['name'] ?? '';
+		$isOregon = stripos($whName, 'oregon') !== false;
+
+		$lyStart = date('Y-m-d', strtotime('-1 year', strtotime($today)));
+		$lyEnd   = date('Y-m-d', strtotime('-1 year', $ts));
+		$ttl     = inventory_cache_ttl($db);
+
+		// Prior-year retail (all channels) bucketed by warehouse.
+		$sales = shopify_cache_remember($db, 'rec_sales_'.$lyStart.'_'.$lyEnd, $ttl, fn() => shopify_sales_by_location($lyStart, $lyEnd))['data'];
+		if (!empty($sales['error'])) return ['error' => $sales['error'], 'meta' => [], 'rows' => []];
+		$retailBySku = $isOregon ? ($sales['by_sku_oregon'] ?? []) : ($sales['by_sku_rest'] ?? []);
+
+		// Per-show sales for the prior window: one call per show (returns all SKUs).
+		$showsBySku = []; $showNames = [];
+		foreach (tradeshow_locations() as $loc) {
+			$name = trim((string)($loc['name'] ?? '')); if ($name === '') continue;
+			$ids  = isset($loc['ids']) ? $loc['ids'] : (isset($loc['id']) ? [$loc['id']] : []);
+			$any  = false;
+			foreach ($ids as $lid) {
+				$r = shopify_cache_remember($db, "showsales_{$lid}_{$lyStart}_{$lyEnd}", $ttl, fn() => shopify_show_sales($lid, $lyStart, $lyEnd))['data'];
+				foreach (($r['by_sku'] ?? []) as $sku => $u) {
+					$u = (int)$u; if ($u <= 0) continue;
+					$showsBySku[$sku][$name] = ($showsBySku[$sku][$name] ?? 0) + $u; $any = true;
+				}
+			}
+			if ($any) $showNames[$name] = true;
+		}
+
+		// Finished-product committed / on-hand by SKU (bucketed).
+		$fpLoc   = shopify_cache_remember($db, 'rec_fp', $ttl, fn() => shopify_fp_by_location())['data'];
+		$fpBySku = $fpLoc['skus'] ?? [];
+
+		$hasSku   = column_exists($db, 'products', 'shopify_sku');
+		$cols     = "id, name" . ($hasSku ? ", shopify_sku" : "");
+		$products = $db->query("SELECT $cols FROM products ORDER BY name ASC")->fetchAll();
+
+		$bomByProd = [];
+		foreach ($db->query("SELECT b.prodid, b.qty, p.id AS partid, p.partno, p.qoh FROM build b JOIN parts p ON p.id = b.partid") as $bl) {
+			$bomByProd[$bl['prodid']][] = $bl;
+		}
+
+		$pipelineByProd = [];
+		$pipeWh = $whId ? " AND warehouse_id = " . (int)$whId : "";
+		foreach ($db->query("SELECT prodid, SUM(qty) AS v FROM intransit WHERE recdate = '0000-00-00 00:00:00' $pipeWh GROUP BY prodid") as $r) {
+			$pipelineByProd[$r['prodid']] = max(0, (int)$r['v']);
+		}
+
+		$rows = [];
+		foreach ($products as $p) {
+			$bom = $bomByProd[$p['id']] ?? [];
+			if (empty($bom)) continue;
+			$sku = $hasSku ? trim((string)($p['shopify_sku'] ?? '')) : '';
+
+			$retail    = $sku !== '' ? (int)($retailBySku[$sku] ?? 0) : 0;
+			$shows     = ($sku !== '' && isset($showsBySku[$sku])) ? $showsBySku[$sku] : [];
+			$showTotal = array_sum($shows);
+			$online    = max(0, $retail - $showTotal);
+
+			$fp        = ($sku !== '' && isset($fpBySku[$sku])) ? $fpBySku[$sku] : [];
+			$committed = (int)($isOregon ? ($fp['oregon_committed'] ?? 0) : ($fp['rest_committed'] ?? 0));
+			$onHand    = (int)($isOregon ? ($fp['oregon_on_hand'] ?? 0) : ($fp['rest_on_hand'] ?? 0));
+			$pipeline  = (int)($pipelineByProd[$p['id']] ?? 0);
+
+			$buildable = null; $limitPart = null;
+			foreach ($bom as $b) {
+				$need = (int)$b['qty']; if ($need <= 0) continue;
+				$onh  = $whId ? (int)wh_get_qty($db, (int)$b['partid'], $whId) : (int)$b['qoh'];
+				$can  = intdiv(max(0, $onh), $need);
+				if ($buildable === null || $can < $buildable) { $buildable = $can; $limitPart = $b['partno']; }
+			}
+			$buildable = $buildable === null ? 0 : $buildable;
+
+			if ($retail <= 0 && $committed <= 0) continue;   // no demand signal at all
+
+			$rows[] = [
+				'prodid' => (int)$p['id'], 'product' => $p['name'], 'sku' => $sku,
+				'online' => $online, 'shows' => (object)$shows,
+				'committed' => $committed, 'on_hand' => $onHand, 'pipeline' => $pipeline,
+				'buildable' => $buildable, 'limit_part' => $limitPart,
+			];
+		}
+
+		return [
+			'error' => null,
+			'meta'  => [
+				'today' => $today, 'until' => $until, 'window_days' => $windowDays,
+				'prior_window' => "$lyStart to $lyEnd",
+				'warehouse' => $whName ?: 'All',
+				'shows' => array_keys($showNames),
+			],
+			'rows' => $rows,
+		];
+	}

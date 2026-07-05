@@ -67,9 +67,9 @@ if (!$rowP) { echo json_encode(['ok'=>true,'html'=>'<div class="text-muted small
 
 $sku    = (string)($rowP['sku'] ?? '');
 $retail = (int)$rowP['retail'];
-$draft  = (int)$rowP['draft'];
+$committed = (int)($rowP['committed'] ?? 0);
 $demand = (int)$rowP['demand'];
-$fpStock   = (int)($rowP['fp_stock'] ?? 0);
+$onHand    = (int)($rowP['fp_on_hand'] ?? 0);
 $pipeline  = (int)($rowP['pipeline'] ?? 0);
 $recommend = (int)($rowP['recommend'] ?? 0);
 $window = $plan['meta']['prior_window'] ?? '';
@@ -94,21 +94,6 @@ if ($sku !== '' && $since !== '' && shopify_is_configured()) {
 }
 $onlineEst = max(0, $retail - $tradeshowUnits);
 
-// Open wholesale orders that include this SKU (the "reportable PO" contributors).
-$woLines = [];
-if ($sku !== '' && shopify_is_configured()) {
-	try {
-		$wo = shopify_cache_remember($db, 'rai_wholesale_orders', 300, fn() => shopify_open_wholesale_orders(60))['data'];
-		foreach (($wo['orders'] ?? []) as $o) {
-			foreach (($o['lines'] ?? []) as $ln) {
-				if (strcasecmp(trim((string)$ln['sku']), $sku) === 0 && (int)$ln['qty'] > 0) {
-					$woLines[] = ['order' => $o['name'], 'customer' => $o['customer'], 'qty' => (int)$ln['qty']];
-				}
-			}
-		}
-	} catch (Throwable $e) {}
-}
-
 $ctx = [
 	'product' => $rowP['product'], 'sku' => $sku, 'fulfill_until' => $until,
 	'total_demand' => $demand,
@@ -117,9 +102,8 @@ $ctx = [
 	'last_year_tradeshow_pos' => $tradeshowUnits,
 	'last_year_tradeshow_by_show' => $shows,
 	'last_year_online_and_other_est' => $onlineEst,
-	'open_wholesale_units' => $draft,
-	'open_wholesale_orders' => $woLines,
-	'fp_on_hand' => $fpStock,
+	'committed_units' => $committed,
+	'fp_on_hand' => $onHand,
 	'in_pipeline' => $pipeline,
 	'recommend_build' => $recommend,
 	'this_order_build' => ($orderQty > 0 ? $orderQty : null),
@@ -127,7 +111,7 @@ $ctx = [
 
 $html = '';
 if (anthropic_is_configured()) {
-	$system = "You explain, in 2-3 short plain sentences, why a finished product's BUILD quantity exists, for a small waterfowl motion-decoy manufacturer. LEAD with the build number: to have enough product through fulfill_until you need to build recommend_build units (if this_order_build is given and differs, mention this order is for that amount) — that covers total_demand units of projected demand minus fp_on_hand finished units already on hand (and in_pipeline already in the pipeline, if any). Then, in one line, say WHERE that demand comes from: last year's same-window sales (note the tradeshow/POS portion, by show, if last_year_tradeshow_pos is meaningful) plus any current open wholesale orders (name the customer + units). Use ONLY the numbers given. total_demand = last_year_sales_total + open_wholesale_units; recommend_build = max(0, total_demand - fp_on_hand - in_pipeline). Keep it basic — no advice, no headings, no fluff. Skip anything that is zero.";
+	$system = "You explain, in 2-3 short plain sentences, why a finished product's BUILD quantity exists, for a small waterfowl motion-decoy manufacturer. LEAD with the build number: to have enough product through fulfill_until you need to build recommend_build units (if this_order_build is given and differs, mention this order is for that amount) — that covers total_demand units of projected demand minus fp_on_hand finished units already on hand (and in_pipeline already in the pipeline, if any). Then, in one line, say WHERE that demand comes from: last year's same-window sales (note the tradeshow/POS portion, by show, if last_year_tradeshow_pos is meaningful) plus committed_units already sold and awaiting fulfillment on Shopify. Use ONLY the numbers given. total_demand = last_year_sales_total + committed_units; recommend_build = max(0, total_demand - fp_on_hand - in_pipeline). Keep it basic — no advice, no headings, no fluff. Skip anything that is zero.";
 	$res = anthropic_message($system, "Explain this build from this data (JSON):\n" . json_encode($ctx, JSON_UNESCAPED_SLASHES), 400);
 	if (empty($res['error'])) $html = '<div style="font-size:0.9rem;">' . nl2br(htmlspecialchars(trim($res['text']))) . '</div>';
 }
@@ -140,14 +124,11 @@ if ($tradeshowUnits > 0) {
 	$rowsHtml .= '<tr><td class="ps-3 text-muted small">• of that, in-person/tradeshow POS: '.htmlspecialchars(implode(', ', array_map(fn($s)=>$s['show'], $shows))).'</td><td class="text-end text-muted small">'.number_format($tradeshowUnits).'</td></tr>';
 	$rowsHtml .= '<tr><td class="ps-3 text-muted small">• online &amp; other (est.)</td><td class="text-end text-muted small">'.number_format($onlineEst).'</td></tr>';
 }
-if ($draft > 0) {
-	$rowsHtml .= '<tr><td>Open wholesale orders (unfulfilled POs, ≥10 mixed units)</td><td class="text-end fw-semibold">'.number_format($draft).'</td></tr>';
-	foreach ($woLines as $w) {
-		$rowsHtml .= '<tr><td class="ps-3 text-muted small">• '.htmlspecialchars(($w['order'] ?: '').($w['customer'] ? ' — '.$w['customer'] : '')).'</td><td class="text-end text-muted small">'.number_format($w['qty']).'</td></tr>';
-	}
+if ($committed > 0) {
+	$rowsHtml .= '<tr><td>Committed on Shopify (already sold, unfulfilled)</td><td class="text-end fw-semibold">'.number_format($committed).'</td></tr>';
 }
 $rowsHtml .= '<tr style="border-top:1px solid #dee2e6;"><td class="fw-semibold">Total demand through '.htmlspecialchars(date('M j, Y', strtotime($until))).'</td><td class="text-end fw-semibold">'.number_format($demand).'</td></tr>';
-$rowsHtml .= '<tr><td class="text-muted">less finished product on hand</td><td class="text-end text-muted">− '.number_format($fpStock).'</td></tr>';
+$rowsHtml .= '<tr><td class="text-muted">less finished product on hand</td><td class="text-end text-muted">− '.number_format($onHand).'</td></tr>';
 if ($pipeline > 0) $rowsHtml .= '<tr><td class="text-muted">less already in pipeline</td><td class="text-end text-muted">− '.number_format($pipeline).'</td></tr>';
 $rowsHtml .= '<tr style="border-top:2px solid #6f42c1;"><td class="fw-bold">Need to build</td><td class="text-end fw-bold" style="color:#6f42c1;">'.number_format($recommend).'</td></tr>';
 if ($orderQty > 0 && $orderQty !== $recommend) $rowsHtml .= '<tr><td class="text-muted small">This order</td><td class="text-end text-muted small">'.number_format($orderQty).'</td></tr>';

@@ -200,7 +200,7 @@
 	<div class="panel-header mb-2">
 		<span class="panel-title">Recommend a Packaging Order</span>
 	</div>
-	<p class="text-muted small mb-3">Suggests what to build to cover demand through a date you choose — using last year's sales for the same window (online, POS/tradeshow &amp; completed drafts), current open wholesale draft orders (≥10 units), finished-product stock, what's already in the pipeline, and your raw-material stock.</p>
+	<p class="text-muted small mb-3">Suggests what to build to cover demand through a date you choose — last year's sales for the same window (online + POS/tradeshows), units already <strong>committed</strong> (sold, awaiting fulfillment) on Shopify, finished-product on-hand, what's already in the pipeline, and your raw-material stock. Then fine-tune it in plain language below.</p>
 
 	<div class="d-flex align-items-center gap-2 flex-wrap mb-2">
 		<span class="small fw-semibold text-muted">Fulfill until:</span>
@@ -493,6 +493,7 @@
 	</div>
 </div>
 
+<script src="/js/recommend.js"></script>
 <script>
 // ── Demand explanation (click a product name) ──
 $(document).on('click', '.demand-explain', function(e) {
@@ -511,104 +512,14 @@ $(document).on('click', '.demand-explain', function(e) {
 	}, 'json').fail(function() { $('#demandModalBody').html('<div class="text-danger small">Request failed.</div>'); });
 });
 
-// ── Recommend a packaging order ──
-$('#recBtn').on('click', function() {
-	var $btn  = $(this);
-	var until = $('#recUntil').val();
-	if (!until) { alert('Please choose a target date.'); return; }
-
-	$btn.prop('disabled', true).html('<i class="ti ti-loader me-1"></i>Analyzing…');
-	$('#recMsg').removeClass('text-danger').addClass('text-muted').text('Pulling sales history, draft orders & stock — this can take a few seconds…');
-	$('#recResults').html('');
-
-	$.ajax({ url: '/ajax/build/recommend.php', method: 'POST', dataType: 'json', timeout: 120000, data: { until: until, warehouse_id: REC_WH } })
-	.done(function(d) {
-		if (!d || d.error) { $('#recMsg').removeClass('text-muted').addClass('text-danger').text(d && d.error ? d.error : 'Could not build a recommendation.'); return; }
-		renderRec(d);
-	})
-	.fail(function(xhr, status) {
-		$('#recMsg').removeClass('text-muted').addClass('text-danger').text(status === 'timeout' ? 'Timed out pulling Shopify data — try again.' : 'Request failed (' + (xhr.status||'?') + ').');
-	})
-	.always(function() { $btn.prop('disabled', false).html('<i class="ti ti-bulb me-1"></i>Recommend'); });
-});
-
-function fmt(n){ return Number(n||0).toLocaleString(); }
-
-function renderRec(d) {
-	var m = d.meta || {};
-	var rows = d.rows || [];
-	$('#recMsg').removeClass('text-danger').addClass('text-muted')
-		.html('<strong>' + $('<div>').text(m.warehouse || 'All').html() + '</strong> — ' + $('<div>').text(m.scope || '').html() +
-			'<br>Demand through ' + m.until + ' (' + m.window_days + ' days); baseline last year ' + m.prior_window +
-			(m.draft_orders ? '; ' + m.draft_orders + ' open wholesale draft order(s) counted.' : '.'));
-
-	if (!rows.length) { $('#recResults').html('<div class="text-muted small mt-2">Nothing needs building for this window — stock and pipeline already cover projected demand. 🎉</div>'); return; }
-
-	var toBuild = rows.filter(function(r){ return r.recommend > 0; });
-
-	var html = '<div class="table-responsive mt-2"><table class="table dash-table align-middle" style="font-size:0.85rem;">';
-	html += '<thead><tr>' +
-		'<th>Product</th>' +
-		'<th class="text-center">Projected Retail</th>' +
-		'<th class="text-center">Open Drafts</th>' +
-		'<th class="text-center">Total Demand</th>' +
-		'<th class="text-center">FP On-Hand</th>' +
-		'<th class="text-center">In Pipeline</th>' +
-		'<th class="text-center">Recommend Build</th>' +
-		'<th class="text-center">Buildable Now</th>' +
-		'</tr></thead><tbody>';
-
-	rows.forEach(function(r) {
-		var recColor = r.recommend > 0 ? '#6f42c1' : '#adb5bd';
-		var buildCell;
-		if (r.recommend <= 0) { buildCell = '<span class="text-muted">—</span>'; }
-		else if (r.short > 0) { buildCell = '<span style="color:#e64545;font-weight:700;">' + fmt(r.buildable) + '</span><br><span class="text-danger" style="font-size:0.68rem;">short ' + fmt(r.short) + ' — need ' + (r.limit_part||'raw materials') + '</span>'; }
-		else { buildCell = '<span style="color:#2ca01c;font-weight:700;">' + fmt(r.buildable) + '</span>'; }
-
-		html += '<tr>' +
-			'<td class="fw-semibold"><a href="#" class="demand-explain" data-prodid="' + r.prodid + '" style="text-decoration:underline dotted;text-underline-offset:3px;color:inherit;" title="Where does this demand come from?">' + $('<div>').text(r.product).html() + '</a>' + (r.sku ? ' <span class="text-muted" style="font-size:0.7rem;">· ' + $('<div>').text(r.sku).html() + '</span>' : '') + '</td>' +
-			'<td class="text-center">' + fmt(r.retail) + '</td>' +
-			'<td class="text-center">' + (r.draft > 0 ? '<span class="badge bg-light text-dark">' + fmt(r.draft) + '</span>' : '—') + '</td>' +
-			'<td class="text-center fw-semibold">' + fmt(r.demand) + '</td>' +
-			'<td class="text-center">' + fmt(r.fp_stock) + '</td>' +
-			'<td class="text-center">' + (r.pipeline > 0 ? fmt(r.pipeline) : '—') + '</td>' +
-			'<td class="text-center"><span style="color:' + recColor + ';font-weight:800;font-size:1.05rem;">' + fmt(r.recommend) + '</span></td>' +
-			'<td class="text-center">' + buildCell + '</td>' +
-			'</tr>';
-	});
-	html += '</tbody></table></div>';
-	html += '<div class="text-muted" style="font-size:0.72rem;">“Recommend Build” = demand − finished-product on-hand − pipeline. “Buildable Now” = how many you can build from raw materials in stock right now; <span class="text-danger">red</span> means you’d need to order more of the limiting part first.</div>';
-
-	window._recToBuild = toBuild.map(function(r){ return { prodid: r.prodid, qty: r.recommend, product: r.product }; });
-	if (window._recToBuild.length) {
-		html += '<div class="mt-3 d-flex align-items-center gap-2 flex-wrap">' +
-			'<button id="recAddBtn" class="btn btn-sm btn-success"><i class="ti ti-plus me-1"></i>Add ' + window._recToBuild.length + ' as packaging orders</button>' +
-			'<span class="text-muted small">into <strong>' + $('<div>').text(REC_WH_NAME || 'current warehouse').html() + '</strong> — you can edit or remove them in the list below.</span>' +
-			'<span id="recAddMsg" class="small ms-1"></span></div>';
-	}
-
-	$('#recResults').html(html);
-}
-
+// ── Recommend panel (shared /js/recommend.js) ──
 var REC_WH      = <?php echo (int)$activeWH; ?>;
 var REC_WH_NAME = <?php echo json_encode($activeWHName); ?>;
-
-$(document).on('click', '#recAddBtn', function() {
-	var items = window._recToBuild || [];
-	if (!items.length) return;
-	var $btn = $(this);
-
-	var lines = items.map(function(i){ return '  • ' + i.product + ': ' + fmt(i.qty); }).join('\n');
-	if (!confirm('Create ' + items.length + ' packaging order(s) in "' + (REC_WH_NAME || 'current warehouse') + '"?\n\n' + lines + '\n\nThey\'ll appear in Packaging Orders below, where you can edit, build, or remove them. (No inventory is deducted until you Finalize.)')) return;
-
-	$btn.prop('disabled', true).html('<i class="ti ti-loader me-1"></i>Adding…');
-	$.post('/ajax/build/create_orders.php',
-		{ orders: JSON.stringify(items.map(function(i){ return { prodid: i.prodid, qty: i.qty }; })), warehouse_id: REC_WH, until: $('#recUntil').val(), source: 'recommend' },
-		function(res) {
-			if (typeof res === 'string' && res.indexOf('ok:') === 0) { location.reload(); }
-			else { $('#recAddMsg').addClass('text-danger').text('Error: ' + res); $btn.prop('disabled', false).html('<i class="ti ti-plus me-1"></i>Add as packaging orders'); }
-		}
-	).fail(function(xhr){ $('#recAddMsg').addClass('text-danger').text('Failed: ' + (xhr.responseText || xhr.status)); $btn.prop('disabled', false).html('<i class="ti ti-plus me-1"></i>Add as packaging orders'); });
+initRecommendPanel({
+	addEndpoint: '/ajax/build/create_orders.php',
+	addMode: 'placed',
+	getWarehouse: function(){ return REC_WH; },
+	getWarehouseName: function(){ return REC_WH_NAME; }
 });
 
 // ── Set "Build By" due date on a packaging order ──
