@@ -768,6 +768,83 @@
 	}
 
 	/**
+	 * Large fulfilled orders in a window (total value >= $minValue), used to isolate
+	 * one-off big wholesale POs from the last-year baseline so a PO that recurs this
+	 * year (as committed) isn't double-counted. Returns per-SKU units bucketed by
+	 * location plus the contributing order list. Mirrors shopify_sales_by_location().
+	 */
+	function shopify_large_orders($since, $until, $minValue = 5000) {
+		$oregonId = shopify_oregon_location_id();
+		$query = '
+		query($cursor: String, $q: String!) {
+		  orders(first: 100, after: $cursor, query: $q, sortKey: CREATED_AT) {
+		    pageInfo { hasNextPage endCursor }
+		    edges { node {
+		      name
+		      cancelledAt
+		      currentTotalPriceSet { shopMoney { amount } }
+		      fulfillments(first: 10) { location { id } }
+		      lineItems(first: 50) { edges { node { quantity sku variant { id } } } }
+		    } }
+		  }
+		}';
+		$q = "created_at:>=$since AND created_at:<=$until";
+		$oregon = []; $rest = []; $orders = []; $cursor = null; $pages = 0;
+		$bundles = shopify_bundle_map();
+
+		do {
+			$res = shopify_graphql($query, ['cursor' => $cursor, 'q' => $q]);
+			if (!empty($res['error'])) return ['error' => $res['error'], 'by_sku_oregon' => [], 'by_sku_rest' => [], 'orders' => []];
+			$o = $res['data']['orders'] ?? null;
+			if ($o === null) return ['error' => 'Malformed Shopify orders response.', 'by_sku_oregon' => [], 'by_sku_rest' => [], 'orders' => []];
+
+			foreach ($o['edges'] as $oe) {
+				$n = $oe['node'];
+				if (!empty($n['cancelledAt'])) continue;
+				$total = (float)($n['currentTotalPriceSet']['shopMoney']['amount'] ?? 0);
+				if ($total < $minValue) continue;
+
+				$isOregon = false;
+				if ($oregonId !== '') {
+					foreach (($n['fulfillments'] ?? []) as $f) {
+						if (($f['location']['id'] ?? '') === $oregonId) { $isOregon = true; break; }
+					}
+				}
+
+				$orderSku = [];
+				foreach ($n['lineItems']['edges'] as $le) {
+					$li  = $le['node'];
+					$sku = trim((string)($li['sku'] ?? ''));
+					$qty = (int)($li['quantity'] ?? 0);
+					if ($qty <= 0) continue;
+					$vid = $li['variant']['id'] ?? '';
+					if ($sku === '' && $vid && isset($bundles[$vid])) {
+						foreach ($bundles[$vid] as $c) $orderSku[$c['sku']] = ($orderSku[$c['sku']] ?? 0) + $qty * (int)$c['qty'];
+						continue;
+					}
+					if ($sku === '') continue;
+					$orderSku[$sku] = ($orderSku[$sku] ?? 0) + $qty;
+				}
+				$units = array_sum($orderSku);
+				if ($units <= 0) continue;
+
+				foreach ($orderSku as $sku => $qv) {
+					if ($isOregon) $oregon[$sku] = ($oregon[$sku] ?? 0) + $qv;
+					else           $rest[$sku]   = ($rest[$sku]   ?? 0) + $qv;
+				}
+				$orders[] = ['name' => (string)($n['name'] ?? ''), 'value' => round($total), 'units' => $units, 'oregon' => $isOregon];
+			}
+
+			$cursor  = $o['pageInfo']['endCursor']  ?? null;
+			$hasNext = $o['pageInfo']['hasNextPage'] ?? false;
+			$pages++;
+		} while ($hasNext && $pages < 40);
+
+		usort($orders, fn($a, $b) => $b['value'] <=> $a['value']);
+		return ['error' => null, 'by_sku_oregon' => $oregon, 'by_sku_rest' => $rest, 'orders' => $orders, 'min_value' => $minValue];
+	}
+
+	/**
 	 * Finished-product available inventory per SKU, split by location:
 	 *   [sku => ['oregon' => qty at Oregon Warehouse, 'rest' => qty everywhere else]]
 	 * Negative (oversold) values are preserved so a backorder increases build need.

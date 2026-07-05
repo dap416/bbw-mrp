@@ -1,17 +1,19 @@
 /* Shared interactive Recommend panel (Packaging + FP Stock Order pages).
  * The server (ajax/build/recommend.php) returns per-product demand COMPONENTS
- * (online, per-show, committed, on_hand, pipeline, buildable). This panel computes
- * Demand and Build under a filter state; the AI chat (recommend_adjust.php) only
- * translates plain language into that filter state.
+ * (online, per-show, large_po, committed, on_hand, pipeline, buildable). This panel
+ * computes Demand and Build under a filter state; the AI chat (recommend_adjust.php)
+ * only translates plain language into that filter state.
  *
  * Page provides: #recUntil, #recBtn, #recMsg, #recResults (+ optional #recWarehouse)
  * and calls initRecommendPanel({ addEndpoint, addMode:'placed'|'pending',
  *   getWarehouse:fn, getWarehouseName:fn }).
  */
 (function () {
+	function defaultFilters() { return { mode: 'all', excluded_shows: [], include_committed: true, include_large_po: true }; }
+
 	window.initRecommendPanel = function (cfg) {
 		var components = [], meta = {}, shows = [];
-		var filters = { mode: 'all', excluded_shows: [], include_committed: true };
+		var filters = defaultFilters();
 
 		function fmt(n) { return Number(n || 0).toLocaleString(); }
 		function esc(s) { return $('<div>').text(s == null ? '' : s).html(); }
@@ -22,6 +24,7 @@
 			if (filters.mode === 'online_only') return Number(r.online || 0);
 			var d = Number(r.online || 0), sh = r.shows || {};
 			for (var name in sh) { if (filters.excluded_shows.indexOf(name) === -1) d += Number(sh[name] || 0); }
+			if (filters.include_large_po) d += Number(r.large_po || 0);
 			if (filters.include_committed) d += Number(r.committed || 0);
 			return d;
 		}
@@ -29,10 +32,25 @@
 
 		function render() {
 			if (!components.length) { $('#recResults').html('<div class="text-muted small mt-2">Nothing needs building for this window — stock and pipeline already cover projected demand. 🎉</div>'); return; }
-			var untilLabel = meta.until || '';
-			var html = '<div class="table-responsive mt-2"><table class="table dash-table align-middle" style="font-size:0.85rem;"><thead><tr>' +
+			var untilLabel = meta.until || '', poThresh = meta.large_po_threshold || 5000;
+			var hasLargePo = components.some(function (r) { return Number(r.large_po || 0) > 0; });
+
+			// Large-PO include/exclude control (only shown if any big POs exist last year).
+			var controls = '';
+			if (hasLargePo) {
+				var poOrders = meta.large_po_orders || [];
+				var poList = poOrders.slice(0, 6).map(function (o) { return esc(o.name) + ' ($' + fmt(o.value) + ')'; }).join(', ');
+				controls = '<div class="mt-2 p-2 rounded" style="background:#fff7e6;border:1px solid #ffe1a8;font-size:0.8rem;">' +
+					'<label style="cursor:pointer;margin:0;"><input type="checkbox" id="recInclLargePo"' + (filters.include_large_po ? ' checked' : '') + '> ' +
+					'<strong>Include large POs (&gt;$' + fmt(poThresh) + ') from this window last year</strong></label>' +
+					(poList ? '<div class="text-muted mt-1" style="font-size:0.73rem;">Last year: ' + poList + (poOrders.length > 6 ? ', …' : '') + '. <strong>Uncheck</strong> if that PO is recurring this year — it would already be counted in <em>committed</em>, so leaving it on double-counts it.</div>' : '') +
+					'</div>';
+			}
+
+			var html = controls + '<div class="table-responsive mt-2"><table class="table dash-table align-middle" style="font-size:0.85rem;"><thead><tr>' +
 				'<th>Product</th>' +
 				'<th class="text-center">Demand<br><span class="text-muted fw-normal" style="font-size:0.7rem;">through ' + esc(untilLabel) + '</span></th>' +
+				(hasLargePo ? '<th class="text-center">Large PO\'s<br><span class="text-muted fw-normal" style="font-size:0.7rem;">last yr &gt;$' + fmt(poThresh) + '</span></th>' : '') +
 				'<th class="text-center">FP On-Hand</th>' +
 				'<th class="text-center">Recommended Build</th>' +
 				'<th class="text-center">Buildable Now</th>' +
@@ -46,9 +64,17 @@
 				if (build <= 0) buildCell = '<span class="text-muted">—</span>';
 				else if (short > 0) buildCell = '<span style="color:#e64545;font-weight:700;">' + fmt(r.buildable) + '</span><br><span class="text-danger" style="font-size:0.68rem;">short ' + fmt(short) + ' — need ' + esc(r.limit_part || 'raw materials') + '</span>';
 				else buildCell = '<span style="color:#2ca01c;font-weight:700;">' + fmt(r.buildable) + '</span>';
+				var poCell = '';
+				if (hasLargePo) {
+					var po = Number(r.large_po || 0);
+					if (po <= 0) poCell = '<td class="text-center text-muted">—</td>';
+					else if (filters.include_large_po) poCell = '<td class="text-center" style="color:#b8860b;font-weight:600;">' + fmt(po) + '</td>';
+					else poCell = '<td class="text-center text-muted"><span class="text-decoration-line-through">' + fmt(po) + '</span></td>';
+				}
 				html += '<tr>' +
 					'<td class="fw-semibold">' + esc(r.product) + (r.sku ? ' <span class="text-muted" style="font-size:0.7rem;">· ' + esc(r.sku) + '</span>' : '') + '</td>' +
 					'<td class="text-center fw-semibold">' + fmt(demand) + '</td>' +
+					poCell +
 					'<td class="text-center">' + fmt(r.on_hand) + '</td>' +
 					'<td class="text-center"><span style="color:#6f42c1;font-weight:800;font-size:1.25rem;">' + fmt(build) + '</span></td>' +
 					'<td class="text-center">' + buildCell + '</td>' +
@@ -62,6 +88,7 @@
 				inc.push('online');
 				var incShows = shows.filter(function (s) { return filters.excluded_shows.indexOf(s) === -1; });
 				if (incShows.length) inc.push('shows: ' + incShows.join(', '));
+				if (hasLargePo && filters.include_large_po) inc.push('large POs');
 				if (filters.include_committed) inc.push('committed');
 			}
 			var exclNote = filters.excluded_shows.length ? ' · excluded: ' + esc(filters.excluded_shows.join(', ')) : '';
@@ -89,7 +116,7 @@
 			var $btn = $('#recBtn').prop('disabled', true).html('<i class="ti ti-loader me-1"></i>Analyzing…');
 			$('#recMsg').removeClass('text-danger').addClass('text-muted').text('Pulling sales history, tradeshows & Shopify stock…');
 			$('#recResults').html('');
-			filters = { mode: 'all', excluded_shows: [], include_committed: true };
+			filters = defaultFilters();
 			$.ajax({ url: '/ajax/build/recommend.php', method: 'POST', dataType: 'json', timeout: 120000, data: { until: until, warehouse_id: whId() } })
 			.done(function (d) {
 				if (!d || d.error) { $('#recMsg').removeClass('text-muted').addClass('text-danger').text(d && d.error ? d.error : 'Could not build a recommendation.'); return; }
@@ -114,6 +141,7 @@
 		}
 
 		$(document).on('click', '#recBtn', loadComponents);
+		$(document).on('change', '#recInclLargePo', function () { filters.include_large_po = $(this).is(':checked'); render(); });
 		$(document).on('click', '#recChatSend', function () { var m = $.trim($('#recChatInput').val()); if (!m) return; $('#recChatInput').val(''); askAdjust(m); });
 		$(document).on('keypress', '#recChatInput', function (e) { if (e.which === 13) { e.preventDefault(); $('#recChatSend').click(); } });
 		$(document).on('click', '#recResetFilters', function (e) { e.preventDefault(); askAdjust('reset'); });

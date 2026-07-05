@@ -561,6 +561,12 @@
 		if (!empty($sales['error'])) return ['error' => $sales['error'], 'meta' => [], 'rows' => []];
 		$retailBySku = $isOregon ? ($sales['by_sku_oregon'] ?? []) : ($sales['by_sku_rest'] ?? []);
 
+		// Large one-off POs (fulfilled, >= threshold) in the same window last year —
+		// isolated so a PO that recurs this year (as committed) isn't double-counted.
+		$largePoMin = 5000;
+		$large      = shopify_cache_remember($db, 'rec_largepo_'.$lyStart.'_'.$lyEnd.'_'.$largePoMin, $ttl, fn() => shopify_large_orders($lyStart, $lyEnd, $largePoMin))['data'];
+		$largeBySku = $isOregon ? ($large['by_sku_oregon'] ?? []) : ($large['by_sku_rest'] ?? []);
+
 		// Per-show sales for the prior window: one call per show (returns all SKUs).
 		$showsBySku = []; $showNames = [];
 		foreach (tradeshow_locations() as $loc) {
@@ -603,9 +609,10 @@
 			$sku = $hasSku ? trim((string)($p['shopify_sku'] ?? '')) : '';
 
 			$retail    = $sku !== '' ? (int)($retailBySku[$sku] ?? 0) : 0;
+			$largePo   = $sku !== '' ? (int)($largeBySku[$sku] ?? 0) : 0;
 			$shows     = ($sku !== '' && isset($showsBySku[$sku])) ? $showsBySku[$sku] : [];
 			$showTotal = array_sum($shows);
-			$online    = max(0, $retail - $showTotal);
+			$online    = max(0, $retail - $showTotal - $largePo);
 
 			$fp        = ($sku !== '' && isset($fpBySku[$sku])) ? $fpBySku[$sku] : [];
 			$committed = (int)($isOregon ? ($fp['oregon_committed'] ?? 0) : ($fp['rest_committed'] ?? 0));
@@ -625,7 +632,7 @@
 
 			$rows[] = [
 				'prodid' => (int)$p['id'], 'product' => $p['name'], 'sku' => $sku,
-				'online' => $online, 'shows' => (object)$shows,
+				'online' => $online, 'shows' => (object)$shows, 'large_po' => $largePo,
 				'committed' => $committed, 'on_hand' => $onHand, 'pipeline' => $pipeline,
 				'buildable' => $buildable, 'limit_part' => $limitPart,
 			];
@@ -638,6 +645,8 @@
 				'prior_window' => "$lyStart to $lyEnd",
 				'warehouse' => $whName ?: 'All',
 				'shows' => array_keys($showNames),
+				'large_po_orders' => $large['orders'] ?? [],
+				'large_po_threshold' => $largePoMin,
 			],
 			'rows' => $rows,
 		];
