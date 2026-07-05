@@ -30,15 +30,15 @@ $windowNote = '';
 if ($orderId > 0) {
 	try {
 		intransit_source_ensure($db);
-		$ord = $db->query("SELECT `prodid`,`qty`,`source_until`,`duedate` FROM `intransit` WHERE `id` = " . $orderId)->fetch();
+		$ord = $db->query("SELECT `prodid`,`qty`,`source_until` FROM `intransit` WHERE `id` = " . $orderId)->fetch();
 		if ($ord) {
 			if ((int)$ord['prodid']) $prodid = (int)$ord['prodid'];
 			$orderQty = (int)$ord['qty'];
 			$su = (string)($ord['source_until'] ?? '');
-			$dd = (string)($ord['duedate'] ?? '');
-			if ($su && $su !== '0000-00-00' && $su > date('Y-m-d'))     { $until = $su; }
-			elseif ($dd && $dd !== '0000-00-00' && $dd > date('Y-m-d')) { $until = $dd; $windowNote = 'Window = this order&rsquo;s Build By date (its original recommend window wasn&rsquo;t recorded).'; }
-			else { $windowNote = 'This order predates demand-window tracking, so the window below is an estimate — set a Build By date to fix it.'; }
+			// Only the demand window (source_until) is valid here — NOT the Build By
+			// date, which is a completion deadline and unrelated to the demand horizon.
+			if ($su && $su !== '0000-00-00' && $su > date('Y-m-d')) { $until = $su; }
+			else { $windowNote = 'This order&rsquo;s demand window wasn&rsquo;t recorded (older order, or entered manually), so the window below is an estimate. Create the order from Recommend to capture its exact window.'; }
 		}
 	} catch (Throwable $e) {}
 }

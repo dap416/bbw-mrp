@@ -257,11 +257,8 @@
 		<tbody>
 		<?php foreach ($ordersPending as $order):
 			$remaining = (int)$order['qty'] - (int)$order['buildqty'];
-			$explUntil = '';
-			foreach ([$order['source_until'] ?? '', $order['duedate'] ?? ''] as $cand) {
-				if ($cand && $cand !== '0000-00-00' && $cand > date('Y-m-d')) { $explUntil = $cand; break; }
-			}
-			if ($explUntil === '') $explUntil = date('Y-m-d', strtotime('+90 days'));
+			$su = $order['source_until'] ?? '';
+			$explUntil = ($su && $su !== '0000-00-00' && $su > date('Y-m-d')) ? $su : date('Y-m-d', strtotime('+90 days'));
 		?>
 		<tr>
 			<td class="fw-semibold">
