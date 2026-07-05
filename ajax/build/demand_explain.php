@@ -21,6 +21,7 @@ $db     = db_connect();
 $prodid = (int)($_POST['prodid'] ?? 0);
 $until  = trim($_POST['until'] ?? '');
 $whId   = (int)($_POST['warehouse_id'] ?? 0);
+$orderQty = (int)($_POST['order_qty'] ?? 0);   // the actual build/order quantity, when opened from an order row
 $ts     = strtotime($until);
 if ($prodid <= 0)                 { echo json_encode(['error' => 'Missing product.']); exit; }
 if (!$ts || date('Y-m-d',$ts) <= date('Y-m-d')) { echo json_encode(['error' => 'Pick a future target date.']); exit; }
@@ -28,7 +29,7 @@ $until = date('Y-m-d', $ts);
 
 // Cache the whole explanation per product+window+warehouse.
 $db->exec("CREATE TABLE IF NOT EXISTS data_cache (ckey VARCHAR(64) PRIMARY KEY, cval LONGTEXT, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB");
-$ckey = 'demexpl_' . $prodid . '_' . $until . '_' . $whId;
+$ckey = 'demexpl_' . $prodid . '_' . $until . '_' . $whId . '_' . $orderQty;
 if (empty($_POST['refresh'])) {
 	try {
 		$s = $db->prepare("SELECT cval, updated_at FROM data_cache WHERE ckey = ?"); $s->execute([$ckey]);
@@ -47,6 +48,9 @@ $sku    = (string)($rowP['sku'] ?? '');
 $retail = (int)$rowP['retail'];
 $draft  = (int)$rowP['draft'];
 $demand = (int)$rowP['demand'];
+$fpStock   = (int)($rowP['fp_stock'] ?? 0);
+$pipeline  = (int)($rowP['pipeline'] ?? 0);
+$recommend = (int)($rowP['recommend'] ?? 0);
 $window = $plan['meta']['prior_window'] ?? '';
 $since = ''; $lyEnd = '';
 if (preg_match('/(\d{4}-\d{2}-\d{2})\s+to\s+(\d{4}-\d{2}-\d{2})/', $window, $mm)) { $since = $mm[1]; $lyEnd = $mm[2]; }
@@ -94,12 +98,16 @@ $ctx = [
 	'last_year_online_and_other_est' => $onlineEst,
 	'open_wholesale_units' => $draft,
 	'open_wholesale_orders' => $woLines,
+	'fp_on_hand' => $fpStock,
+	'in_pipeline' => $pipeline,
+	'recommend_build' => $recommend,
+	'this_order_build' => ($orderQty > 0 ? $orderQty : null),
 ];
 
 $html = '';
 if (anthropic_is_configured()) {
-	$system = "You explain, in 2-3 short plain sentences, where a finished product's projected demand number comes from for a small waterfowl motion-decoy manufacturer. Use ONLY the numbers given. total_demand = last_year_sales_total + open_wholesale_units. Point out the biggest driver(s): last year's same-window sales (and, if last_year_tradeshow_pos is meaningful, note how much of that was in-person/tradeshow POS vs online) and any current open wholesale orders (name the customer + units briefly). Keep it basic — no advice, no fluff, no headings. If a piece is zero, don't mention it.";
-	$res = anthropic_message($system, "Explain the demand from this data (JSON):\n" . json_encode($ctx, JSON_UNESCAPED_SLASHES), 400);
+	$system = "You explain, in 2-3 short plain sentences, why a finished product's BUILD quantity exists, for a small waterfowl motion-decoy manufacturer. LEAD with the build number: to have enough product through fulfill_until you need to build recommend_build units (if this_order_build is given and differs, mention this order is for that amount) — that covers total_demand units of projected demand minus fp_on_hand finished units already on hand (and in_pipeline already in the pipeline, if any). Then, in one line, say WHERE that demand comes from: last year's same-window sales (note the tradeshow/POS portion, by show, if last_year_tradeshow_pos is meaningful) plus any current open wholesale orders (name the customer + units). Use ONLY the numbers given. total_demand = last_year_sales_total + open_wholesale_units; recommend_build = max(0, total_demand - fp_on_hand - in_pipeline). Keep it basic — no advice, no headings, no fluff. Skip anything that is zero.";
+	$res = anthropic_message($system, "Explain this build from this data (JSON):\n" . json_encode($ctx, JSON_UNESCAPED_SLASHES), 400);
 	if (empty($res['error'])) $html = '<div style="font-size:0.9rem;">' . nl2br(htmlspecialchars(trim($res['text']))) . '</div>';
 }
 
@@ -117,7 +125,11 @@ if ($draft > 0) {
 		$rowsHtml .= '<tr><td class="ps-3 text-muted small">• '.htmlspecialchars(($w['order'] ?: '').($w['customer'] ? ' — '.$w['customer'] : '')).'</td><td class="text-end text-muted small">'.number_format($w['qty']).'</td></tr>';
 	}
 }
-$rowsHtml .= '<tr style="border-top:2px solid #dee2e6;"><td class="fw-bold">Total demand</td><td class="text-end fw-bold">'.number_format($demand).'</td></tr>';
+$rowsHtml .= '<tr style="border-top:1px solid #dee2e6;"><td class="fw-semibold">Total demand through '.htmlspecialchars(date('M j, Y', strtotime($until))).'</td><td class="text-end fw-semibold">'.number_format($demand).'</td></tr>';
+$rowsHtml .= '<tr><td class="text-muted">less finished product on hand</td><td class="text-end text-muted">− '.number_format($fpStock).'</td></tr>';
+if ($pipeline > 0) $rowsHtml .= '<tr><td class="text-muted">less already in pipeline</td><td class="text-end text-muted">− '.number_format($pipeline).'</td></tr>';
+$rowsHtml .= '<tr style="border-top:2px solid #6f42c1;"><td class="fw-bold">Need to build</td><td class="text-end fw-bold" style="color:#6f42c1;">'.number_format($recommend).'</td></tr>';
+if ($orderQty > 0 && $orderQty !== $recommend) $rowsHtml .= '<tr><td class="text-muted small">This order</td><td class="text-end text-muted small">'.number_format($orderQty).'</td></tr>';
 
 $html .= '<table class="table table-sm mt-2 mb-0" style="font-size:0.85rem;"><tbody>'.$rowsHtml.'</tbody></table>';
 if (!shopify_is_configured()) $html .= '<div class="text-muted small mt-1">Connect Shopify for the tradeshow/wholesale breakdown.</div>';

@@ -265,7 +265,7 @@
 		?>
 		<tr>
 			<td class="fw-semibold">
-					<a href="#" class="demand-explain" data-prodid="<?php echo (int)$order['prodid']; ?>" data-until="<?php echo $explUntil; ?>" style="text-decoration:underline dotted;text-underline-offset:3px;color:inherit;" title="Where does this demand come from?"><?php echo htmlspecialchars($order['prodname']); ?></a>
+					<a href="#" class="demand-explain" data-prodid="<?php echo (int)$order['prodid']; ?>" data-until="<?php echo $explUntil; ?>" data-orderqty="<?php echo (int)$order['qty']; ?>" style="text-decoration:underline dotted;text-underline-offset:3px;color:inherit;" title="Where does this demand come from?"><?php echo htmlspecialchars($order['prodname']); ?></a>
 					<?php if (!empty($order['source_note'])): ?>
 					<div class="text-muted" style="font-size:0.68rem;"><i class="ti ti-info-circle"></i> <?php echo htmlspecialchars($order['source_note']); ?></div>
 					<?php endif; ?>
@@ -501,12 +501,13 @@
 $(document).on('click', '.demand-explain', function(e) {
 	e.preventDefault();
 	var prodid  = $(this).data('prodid');
-	var until   = $(this).data('until') || $('#recUntil').val();
-	var product = $(this).text();
-	$('#demandModalTitle').text('Demand: ' + product);
+	var until    = $(this).data('until') || $('#recUntil').val();
+	var orderqty = $(this).data('orderqty') || 0;
+	var product  = $(this).text();
+	$('#demandModalTitle').text('Build: ' + product);
 	$('#demandModalBody').html('<div class="text-muted small"><span class="spinner-border spinner-border-sm me-1"></span>Analyzing where this demand comes from…</div>');
 	$('#demandModal').modal('show');
-	$.post('/ajax/build/demand_explain.php', { prodid: prodid, until: until, warehouse_id: (typeof REC_WH !== 'undefined' ? REC_WH : 0) }, function(res) {
+	$.post('/ajax/build/demand_explain.php', { prodid: prodid, until: until, order_qty: orderqty, warehouse_id: (typeof REC_WH !== 'undefined' ? REC_WH : 0) }, function(res) {
 		if (res && res.ok) $('#demandModalBody').html(res.html);
 		else $('#demandModalBody').html('<div class="text-danger small">' + $('<div>').text((res && res.error) || 'Could not load the explanation.').html() + '</div>');
 	}, 'json').fail(function() { $('#demandModalBody').html('<div class="text-danger small">Request failed.</div>'); });
