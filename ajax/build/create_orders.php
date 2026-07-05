@@ -14,6 +14,11 @@ require_can(can_edit('build'), 'You do not have permission to create packaging o
 $db  = db_connect();
 $now = date("Y-m-d H:i:s");
 $whId = (int)($_POST['warehouse_id'] ?? 0);
+$source = trim((string)($_POST['source'] ?? ''));
+$until  = trim((string)($_POST['until'] ?? ''));
+$untilVal = preg_match('/^\d{4}-\d{2}-\d{2}$/', $until) ? $until : null;
+$sourceNote = intransit_source_note($source, $untilVal);
+intransit_source_ensure($db);
 
 $items = json_decode($_POST['orders'] ?? '[]', true);
 if (!is_array($items) || empty($items)) { echo 'error: nothing to add'; exit; }
@@ -25,12 +30,12 @@ foreach ($db->query("SELECT id FROM `products`") as $r) { $valid[(int)$r['id']] 
 $created = 0;
 try {
 	$db->beginTransaction();
-	$stmt = $db->prepare("INSERT INTO `intransit` (`prodid`,`qty`,`adddate`,`orddate`,`warehouse_id`) VALUES (?,?,?,?,?)");
+	$stmt = $db->prepare("INSERT INTO `intransit` (`prodid`,`qty`,`adddate`,`orddate`,`warehouse_id`,`source_note`,`source_until`) VALUES (?,?,?,?,?,?,?)");
 	foreach ($items as $it) {
 		$pid = (int)($it['prodid'] ?? 0);
 		$qty = (int)($it['qty'] ?? 0);
 		if ($pid <= 0 || $qty <= 0 || empty($valid[$pid])) continue;
-		$stmt->execute([$pid, $qty, $now, $now, $whId ?: null]);
+		$stmt->execute([$pid, $qty, $now, $now, $whId ?: null, $sourceNote, $untilVal]);
 		$created++;
 	}
 	$db->commit();

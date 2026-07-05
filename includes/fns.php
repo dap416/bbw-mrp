@@ -260,6 +260,27 @@
 	 * date, and a completed flag. Shared by tasks.php, the ajax endpoints, and
 	 * the dashboard morning briefing.
 	 */
+	/** Ensure the FP-order "source" columns exist (where an order came from). */
+	function intransit_source_ensure($db) {
+		foreach ([
+			"ALTER TABLE intransit ADD COLUMN source_note VARCHAR(255) NULL",
+			"ALTER TABLE intransit ADD COLUMN source_until DATE NULL",
+		] as $sql) { try { $db->exec($sql); } catch (Throwable $e) {} }
+	}
+
+	/**
+	 * Build a readable "where this FP order came from" note.
+	 * $source 'recommend' → notes the demand window; anything else → manual add.
+	 */
+	function intransit_source_note($source, $until = null) {
+		$who  = $_SESSION['user_name'] ?? '';
+		$when = date('m/d/y');
+		if ($source === 'recommend') {
+			return 'Recommend' . ($until ? ' — cover demand through ' . $until : '') . ' · added ' . $when . ($who ? ' by ' . $who : '');
+		}
+		return 'Manual add · ' . $when . ($who ? ' by ' . $who : '');
+	}
+
 	/** Audit log for edits to finished-product stock (intransit) orders. */
 	function intransit_edits_ensure($db) {
 		$db->exec("CREATE TABLE IF NOT EXISTS intransit_edits (

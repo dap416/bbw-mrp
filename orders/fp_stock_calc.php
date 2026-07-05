@@ -7,6 +7,7 @@
 	require_once(__DIR__."/../includes/header.php");
 
 	$dbLink = db_connect();
+	intransit_source_ensure($dbLink);   // where each FP order came from
 
 	$products      = $dbLink->query("SELECT * FROM `products` ORDER BY `name` ASC");
 	$pendingOrders = $dbLink->query("SELECT i.*, p.name AS prodname, w.name AS wh_name FROM `intransit` i JOIN `products` p ON p.id = i.prodid LEFT JOIN `warehouses` w ON w.id = i.warehouse_id WHERE i.`orddate` = '0000-00-00 00:00:00'");
@@ -86,9 +87,10 @@
 		$rowId    = $order['id'];
 		$prodName = $order['prodname'] ?? '(unknown)';
 		$whName   = $order['wh_name']  ?? '—';
+		$srcNote  = $order['source_note'] ?? '';
 ?>
 				<tr>
-					<td><?php echo htmlspecialchars($prodName); ?></td>
+					<td><?php echo htmlspecialchars($prodName); ?><?php if (!empty($srcNote)): ?><div class="text-muted" style="font-size:0.68rem;"><i class="ti ti-info-circle"></i> <?php echo htmlspecialchars($srcNote); ?></div><?php endif; ?></td>
 					<td class="text-muted small"><?php echo htmlspecialchars($whName); ?></td>
 					<td class="text-end">
 						<div class="d-flex align-items-center justify-content-end gap-2">
@@ -135,9 +137,10 @@
 		$prodName = $sent['prodname'] ?? '(unknown)';
 		$whName   = $sent['wh_name']  ?? '—';
 		$ordDate  = date('M j, Y', strtotime($sent['orddate']));
+		$srcNote  = $sent['source_note'] ?? '';
 ?>
 				<tr id="sent-row-<?php echo $rowId; ?>">
-					<td><?php echo htmlspecialchars($prodName); ?></td>
+					<td><?php echo htmlspecialchars($prodName); ?><?php if (!empty($srcNote)): ?><div class="text-muted" style="font-size:0.68rem;"><i class="ti ti-info-circle"></i> <?php echo htmlspecialchars($srcNote); ?></div><?php endif; ?></td>
 					<td class="text-muted small"><?php echo htmlspecialchars($whName); ?></td>
 					<td class="text-muted small"><?php echo $ordDate; ?></td>
 					<td class="text-end">
@@ -331,7 +334,7 @@ $(document).on('click', '#recAddBtn', function() {
 	$btn.prop('disabled', true).html('<i class="ti ti-loader me-1"></i>Adding…');
 	(function next(i) {
 		if (i >= items.length) { location.reload(); return; }
-		$.post('/ajax/orders/package_order_add.php', { prodid: items[i].prodid, qty: items[i].qty, warehouse_id: REC_WH }, function() { next(i + 1); })
+		$.post('/ajax/orders/package_order_add.php', { prodid: items[i].prodid, qty: items[i].qty, warehouse_id: REC_WH, source: 'recommend', until: $('#recUntil').val() }, function() { next(i + 1); })
 		 .fail(function(){ alert('Failed adding ' + items[i].product); $btn.prop('disabled', false).html('<i class="ti ti-plus me-1"></i>Add to pending order'); });
 	})(0);
 });

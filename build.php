@@ -9,6 +9,7 @@
 	$db = db_connect();
 	// Self-heal the "Build By" due-date column (works without running setup_build_duedate.php).
 	try { $db->exec("ALTER TABLE `intransit` ADD COLUMN `duedate` DATE DEFAULT NULL"); } catch (Throwable $e) {}
+	intransit_source_ensure($db);   // where each FP order came from
 	$warehouses = get_warehouses($db);
 	$canEditBuild = can_edit('build');
 
@@ -256,9 +257,19 @@
 		<tbody>
 		<?php foreach ($ordersPending as $order):
 			$remaining = (int)$order['qty'] - (int)$order['buildqty'];
+			$explUntil = '';
+			foreach ([$order['source_until'] ?? '', $order['duedate'] ?? ''] as $cand) {
+				if ($cand && $cand !== '0000-00-00' && $cand > date('Y-m-d')) { $explUntil = $cand; break; }
+			}
+			if ($explUntil === '') $explUntil = date('Y-m-d', strtotime('+90 days'));
 		?>
 		<tr>
-			<td class="fw-semibold"><?php echo htmlspecialchars($order['prodname']); ?></td>
+			<td class="fw-semibold">
+					<a href="#" class="demand-explain" data-prodid="<?php echo (int)$order['prodid']; ?>" data-until="<?php echo $explUntil; ?>" style="text-decoration:underline dotted;text-underline-offset:3px;color:inherit;" title="Where does this demand come from?"><?php echo htmlspecialchars($order['prodname']); ?></a>
+					<?php if (!empty($order['source_note'])): ?>
+					<div class="text-muted" style="font-size:0.68rem;"><i class="ti ti-info-circle"></i> <?php echo htmlspecialchars($order['source_note']); ?></div>
+					<?php endif; ?>
+				</td>
 			<?php if (count($warehouses) > 1): ?>
 			<td class="text-muted small"><?php echo htmlspecialchars($order['wh_name'] ?? '—'); ?></td>
 			<?php endif; ?>
@@ -490,11 +501,12 @@
 $(document).on('click', '.demand-explain', function(e) {
 	e.preventDefault();
 	var prodid  = $(this).data('prodid');
+	var until   = $(this).data('until') || $('#recUntil').val();
 	var product = $(this).text();
 	$('#demandModalTitle').text('Demand: ' + product);
 	$('#demandModalBody').html('<div class="text-muted small"><span class="spinner-border spinner-border-sm me-1"></span>Analyzing where this demand comes from…</div>');
 	$('#demandModal').modal('show');
-	$.post('/ajax/build/demand_explain.php', { prodid: prodid, until: $('#recUntil').val(), warehouse_id: (typeof REC_WH !== 'undefined' ? REC_WH : 0) }, function(res) {
+	$.post('/ajax/build/demand_explain.php', { prodid: prodid, until: until, warehouse_id: (typeof REC_WH !== 'undefined' ? REC_WH : 0) }, function(res) {
 		if (res && res.ok) $('#demandModalBody').html(res.html);
 		else $('#demandModalBody').html('<div class="text-danger small">' + $('<div>').text((res && res.error) || 'Could not load the explanation.').html() + '</div>');
 	}, 'json').fail(function() { $('#demandModalBody').html('<div class="text-danger small">Request failed.</div>'); });
@@ -592,7 +604,7 @@ $(document).on('click', '#recAddBtn', function() {
 
 	$btn.prop('disabled', true).html('<i class="ti ti-loader me-1"></i>Adding…');
 	$.post('/ajax/build/create_orders.php',
-		{ orders: JSON.stringify(items.map(function(i){ return { prodid: i.prodid, qty: i.qty }; })), warehouse_id: REC_WH },
+		{ orders: JSON.stringify(items.map(function(i){ return { prodid: i.prodid, qty: i.qty }; })), warehouse_id: REC_WH, until: $('#recUntil').val(), source: 'recommend' },
 		function(res) {
 			if (typeof res === 'string' && res.indexOf('ok:') === 0) { location.reload(); }
 			else { $('#recAddMsg').addClass('text-danger').text('Error: ' + res); $btn.prop('disabled', false).html('<i class="ti ti-plus me-1"></i>Add as packaging orders'); }
