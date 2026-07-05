@@ -22,14 +22,35 @@ $prodid = (int)($_POST['prodid'] ?? 0);
 $until  = trim($_POST['until'] ?? '');
 $whId   = (int)($_POST['warehouse_id'] ?? 0);
 $orderQty = (int)($_POST['order_qty'] ?? 0);   // the actual build/order quantity, when opened from an order row
+$orderId  = (int)($_POST['orderid'] ?? 0);     // when set, use THIS order's window + qty (never the live Recommend box)
+
+// When opened from a specific FP order, the window is the one THAT ORDER was made
+// for — its stored recommend window, else its Build By date — never the box.
+$windowNote = '';
+if ($orderId > 0) {
+	try {
+		intransit_source_ensure($db);
+		$ord = $db->query("SELECT `prodid`,`qty`,`source_until`,`duedate` FROM `intransit` WHERE `id` = " . $orderId)->fetch();
+		if ($ord) {
+			if ((int)$ord['prodid']) $prodid = (int)$ord['prodid'];
+			$orderQty = (int)$ord['qty'];
+			$su = (string)($ord['source_until'] ?? '');
+			$dd = (string)($ord['duedate'] ?? '');
+			if ($su && $su !== '0000-00-00' && $su > date('Y-m-d'))     { $until = $su; }
+			elseif ($dd && $dd !== '0000-00-00' && $dd > date('Y-m-d')) { $until = $dd; $windowNote = 'Window = this order&rsquo;s Build By date (its original recommend window wasn&rsquo;t recorded).'; }
+			else { $windowNote = 'This order predates demand-window tracking, so the window below is an estimate — set a Build By date to fix it.'; }
+		}
+	} catch (Throwable $e) {}
+}
+
 $ts     = strtotime($until);
 if ($prodid <= 0)                 { echo json_encode(['error' => 'Missing product.']); exit; }
 if (!$ts || date('Y-m-d',$ts) <= date('Y-m-d')) { echo json_encode(['error' => 'Pick a future target date.']); exit; }
 $until = date('Y-m-d', $ts);
 
-// Cache the whole explanation per product+window+warehouse.
+// Cache the whole explanation per product+window+warehouse+order.
 $db->exec("CREATE TABLE IF NOT EXISTS data_cache (ckey VARCHAR(64) PRIMARY KEY, cval LONGTEXT, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB");
-$ckey = 'demexpl_' . $prodid . '_' . $until . '_' . $whId . '_' . $orderQty;
+$ckey = 'demexpl_' . $prodid . '_' . $until . '_' . $whId . '_' . $orderQty . '_' . $orderId;
 if (empty($_POST['refresh'])) {
 	try {
 		$s = $db->prepare("SELECT cval, updated_at FROM data_cache WHERE ckey = ?"); $s->execute([$ckey]);
@@ -132,6 +153,7 @@ $rowsHtml .= '<tr style="border-top:2px solid #6f42c1;"><td class="fw-bold">Need
 if ($orderQty > 0 && $orderQty !== $recommend) $rowsHtml .= '<tr><td class="text-muted small">This order</td><td class="text-end text-muted small">'.number_format($orderQty).'</td></tr>';
 
 $html .= '<table class="table table-sm mt-2 mb-0" style="font-size:0.85rem;"><tbody>'.$rowsHtml.'</tbody></table>';
+if ($windowNote !== '') $html .= '<div class="text-muted small mt-1"><i class="ti ti-info-circle"></i> ' . $windowNote . '</div>';
 if (!shopify_is_configured()) $html .= '<div class="text-muted small mt-1">Connect Shopify for the tradeshow/wholesale breakdown.</div>';
 
 try { $db->prepare("INSERT INTO data_cache (ckey,cval,updated_at) VALUES (?,?,NOW()) ON DUPLICATE KEY UPDATE cval=VALUES(cval), updated_at=NOW()")->execute([$ckey, $html]); } catch (Throwable $e) {}
