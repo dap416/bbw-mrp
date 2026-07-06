@@ -1,21 +1,24 @@
 /* Shared interactive Recommend panel (Packaging + FP Stock Order pages).
  * The server (ajax/build/recommend.php) returns per-product demand COMPONENTS
  * (online, per-show, large_po, committed, on_hand, pipeline, buildable). This panel
- * computes Demand and Build under a filter state; the AI chat (recommend_adjust.php)
- * only translates plain language into that filter state.
+ * computes Demand and Build under a filter state. A conversational assistant
+ * (recommend_adjust.php) holds the full dataset — it explains the reasoning and
+ * changes the filters/buffer when asked; the browser does the final math.
  *
  * Page provides: #recUntil, #recBtn, #recMsg, #recResults (+ optional #recWarehouse)
  * and calls initRecommendPanel({ addEndpoint, addMode:'placed'|'pending',
  *   getWarehouse:fn, getWarehouseName:fn }).
  */
 (function () {
-	// Large prior-year POs are BYPASSED by default: one-off orders over the threshold
-	// rarely repeat, and any that do recur this year are already counted in committed.
-	function defaultFilters() { return { mode: 'all', excluded_shows: [], include_committed: true, include_large_po: false }; }
+	// Large prior-year POs are BYPASSED by default (they rarely repeat and any that
+	// recur are already in committed). buffer_pct is an optional safety-stock %.
+	function defaultFilters() { return { mode: 'all', excluded_shows: [], include_committed: true, include_large_po: false, buffer_pct: 0 }; }
 
 	window.initRecommendPanel = function (cfg) {
 		var components = [], meta = {}, shows = [];
 		var filters = defaultFilters();
+		var chatHistory = [];   // [{role:'user'|'assistant', content}]
+		var pending = false;
 
 		function fmt(n) { return Number(n || 0).toLocaleString(); }
 		function esc(s) { return $('<div>').text(s == null ? '' : s).html(); }
@@ -23,21 +26,48 @@
 		function whName() { return cfg.getWarehouseName ? cfg.getWarehouseName() : ''; }
 
 		function demandFor(r) {
-			if (filters.mode === 'online_only') return Number(r.online || 0);
-			var d = Number(r.online || 0), sh = r.shows || {};
-			for (var name in sh) { if (filters.excluded_shows.indexOf(name) === -1) d += Number(sh[name] || 0); }
-			if (filters.include_large_po) d += Number(r.large_po || 0);
-			if (filters.include_committed) d += Number(r.committed || 0);
+			var d;
+			if (filters.mode === 'online_only') d = Number(r.online || 0);
+			else {
+				d = Number(r.online || 0);
+				var sh = r.shows || {};
+				for (var name in sh) { if (filters.excluded_shows.indexOf(name) === -1) d += Number(sh[name] || 0); }
+				if (filters.include_large_po) d += Number(r.large_po || 0);
+				if (filters.include_committed) d += Number(r.committed || 0);
+			}
+			var buf = Number(filters.buffer_pct || 0);
+			if (buf) d = Math.round(d * (1 + buf / 100));
 			return d;
 		}
 		function buildFor(r) { return Math.max(0, demandFor(r) - Number(r.on_hand || 0) - Number(r.pipeline || 0)); }
 
+		function snapshot() {
+			return {
+				meta: meta,
+				components: components.map(function (r) {
+					return { product: r.product, sku: r.sku, online: Number(r.online || 0), shows: r.shows || {}, large_po: Number(r.large_po || 0), committed: Number(r.committed || 0), on_hand: Number(r.on_hand || 0), pipeline: Number(r.pipeline || 0), buildable: Number(r.buildable || 0), limit_part: r.limit_part || null };
+				}),
+				results: components.map(function (r) { return { product: r.product, demand: demandFor(r), build: buildFor(r) }; })
+			};
+		}
+
+		function renderChat() {
+			var h = '';
+			chatHistory.forEach(function (m) {
+				if (m.role === 'user') h += '<div class="text-end mb-2"><span style="display:inline-block;background:#6f42c1;color:#fff;padding:4px 9px;border-radius:10px;max-width:85%;text-align:left;">' + esc(m.content) + '</span></div>';
+				else h += '<div class="mb-2"><span style="display:inline-block;background:#fff;border:1px solid #e6e0f5;padding:5px 10px;border-radius:10px;max-width:92%;">' + esc(m.content).replace(/\n/g, '<br>') + '</span></div>';
+			});
+			if (pending) h += '<div class="mb-1 text-muted small"><span class="spinner-border spinner-border-sm me-1"></span>Thinking…</div>';
+			var $c = $('#recChat');
+			$c.html(h || '<div class="text-muted small">Reading the data…</div>');
+			if ($c[0]) $c.scrollTop($c[0].scrollHeight);
+		}
+
 		function render() {
 			if (!components.length) { $('#recResults').html('<div class="text-muted small mt-2">Nothing needs building for this window — stock and pipeline already cover projected demand. 🎉</div>'); return; }
-			var untilLabel = meta.until || '', poThresh = meta.large_po_threshold || 5000;
+			var untilLabel = meta.until || '', poThresh = meta.large_po_threshold || 2000;
 			var hasLargePo = components.some(function (r) { return Number(r.large_po || 0) > 0; });
 
-			// Large-PO include/exclude control (only shown if any big POs exist last year).
 			var controls = '';
 			if (hasLargePo) {
 				var poOrders = meta.large_po_orders || [];
@@ -93,13 +123,16 @@
 				if (hasLargePo && filters.include_large_po) inc.push('large POs');
 				if (filters.include_committed) inc.push('committed');
 			}
+			if (Number(filters.buffer_pct || 0) > 0) inc.push('+' + filters.buffer_pct + '% buffer');
 			var exclNote = filters.excluded_shows.length ? ' · excluded: ' + esc(filters.excluded_shows.join(', ')) : '';
 
-			html += '<div id="recReasoning" class="mt-2 p-2 rounded" style="background:#f6f4fb;border:1px solid #e6e0f5;font-size:0.83rem;"></div>';
-			html += '<div class="text-muted mt-1" style="font-size:0.72rem;">Including: ' + esc(inc.join(' + ')) + exclNote + '. Recommended Build = Demand − On-Hand − Pipeline. <a href="#" id="recResetFilters">reset</a></div>';
-			html += '<div class="mt-2 d-flex gap-2 align-items-center" style="max-width:680px;">' +
-				'<input type="text" id="recChatInput" class="form-control form-control-sm" placeholder="Want to add details or remove tradeshows? e.g. “not building for Delta” or “only online”">' +
-				'<button id="recChatSend" class="btn btn-sm btn-outline-primary">Ask</button></div>';
+			html += '<div class="text-muted mt-2" style="font-size:0.72rem;">Including: ' + esc(inc.join(' + ')) + exclNote + '. Recommended Build = Demand − On-Hand − Pipeline. <a href="#" id="recResetFilters">reset</a></div>';
+
+			html += '<div class="mt-3"><div class="fw-semibold small mb-1"><i class="ti ti-message-2 me-1"></i>Ask about or adjust this build</div>' +
+				'<div id="recChat" style="max-height:300px;overflow-y:auto;background:#f6f4fb;border:1px solid #e6e0f5;border-radius:6px;padding:8px;font-size:0.83rem;"></div>' +
+				'<div class="mt-2 d-flex gap-2 align-items-center" style="max-width:760px;">' +
+				'<input type="text" id="recChatInput" class="form-control form-control-sm" placeholder="Ask why a number is what it is, or change it — e.g. “why is LDA 578?”, “add a 10% safety buffer”, “drop Delta”, “ignore committed”">' +
+				'<button id="recChatSend" class="btn btn-sm btn-primary"' + (pending ? ' disabled' : '') + '>Send</button></div></div>';
 
 			window._recToBuild = toBuild;
 			if (toBuild.length) {
@@ -109,7 +142,7 @@
 					'<span id="recAddMsg" class="small ms-1"></span></div>';
 			}
 			$('#recResults').html(html);
-			$('#recReasoning').text(window._recNarrative || ('Building to cover projected demand through ' + untilLabel + '.'));
+			renderChat();
 		}
 
 		function loadComponents() {
@@ -119,34 +152,52 @@
 			$('#recMsg').removeClass('text-danger').addClass('text-muted').text('Pulling sales history, tradeshows & Shopify stock…');
 			$('#recResults').html('');
 			filters = defaultFilters();
+			chatHistory = [];
 			$.ajax({ url: '/ajax/build/recommend.php', method: 'POST', dataType: 'json', timeout: 120000, data: { until: until, warehouse_id: whId() } })
 			.done(function (d) {
 				if (!d || d.error) { $('#recMsg').removeClass('text-muted').addClass('text-danger').text(d && d.error ? d.error : 'Could not build a recommendation.'); return; }
 				components = d.rows || []; meta = d.meta || {}; shows = meta.shows || [];
 				$('#recMsg').removeClass('text-danger').addClass('text-muted').html('<strong>' + esc(meta.warehouse || 'All') + '</strong> — demand through ' + esc(meta.until) + ' (' + meta.window_days + ' days); baseline last year ' + esc(meta.prior_window) + '.');
-				window._recNarrative = '';
 				render();
-				askAdjust('');
+				askAssistant('');   // auto reasoning summary
 			})
 			.fail(function (xhr, status) { $('#recMsg').removeClass('text-muted').addClass('text-danger').text(status === 'timeout' ? 'Timed out pulling Shopify data — try again.' : 'Request failed (' + (xhr.status || '?') + ').'); })
 			.always(function () { $btn.prop('disabled', false).html('<i class="ti ti-bulb me-1"></i>Recommend'); });
 		}
 
-		function askAdjust(message) {
-			if (message) $('#recReasoning').html('<span class="text-muted"><span class="spinner-border spinner-border-sm me-1"></span>Adjusting…</span>');
+		function askAssistant(message) {
+			var prior = chatHistory.slice(-12);
+			if (message) chatHistory.push({ role: 'user', content: message });
+			pending = true;
+			renderChat();
 			$('#recChatSend').prop('disabled', true);
-			$.post('/ajax/build/recommend_adjust.php', { message: message, filters: JSON.stringify(filters), shows: JSON.stringify(shows) }, function (res) {
-				if (res && res.ok) { filters = res.filters || filters; window._recNarrative = res.narrative || ''; render(); }
-				else if (message) { $('#recReasoning').html('<span class="text-danger">' + esc((res && res.error) || 'Could not adjust.') + '</span>'); }
-			}, 'json').fail(function () { if (message) $('#recReasoning').html('<span class="text-danger">Request failed.</span>'); })
-			.always(function () { $('#recChatSend').prop('disabled', false); });
+			$.post('/ajax/build/recommend_adjust.php', {
+				message: message,
+				filters: JSON.stringify(filters),
+				shows: JSON.stringify(shows),
+				history: JSON.stringify(prior),
+				data: JSON.stringify(snapshot())
+			}, function (res) {
+				pending = false;
+				if (res && res.ok) {
+					if (res.filters) filters = res.filters;
+					chatHistory.push({ role: 'assistant', content: res.reply || '(no answer)' });
+				} else {
+					chatHistory.push({ role: 'assistant', content: (res && res.error) || 'Could not process that.' });
+				}
+				render();
+			}, 'json').fail(function () {
+				pending = false;
+				chatHistory.push({ role: 'assistant', content: 'Request failed — try again.' });
+				render();
+			});
 		}
 
 		$(document).on('click', '#recBtn', loadComponents);
 		$(document).on('change', '#recInclLargePo', function () { filters.include_large_po = $(this).is(':checked'); render(); });
-		$(document).on('click', '#recChatSend', function () { var m = $.trim($('#recChatInput').val()); if (!m) return; $('#recChatInput').val(''); askAdjust(m); });
+		$(document).on('click', '#recChatSend', function () { if (pending) return; var m = $.trim($('#recChatInput').val()); if (!m) return; $('#recChatInput').val(''); askAssistant(m); });
 		$(document).on('keypress', '#recChatInput', function (e) { if (e.which === 13) { e.preventDefault(); $('#recChatSend').click(); } });
-		$(document).on('click', '#recResetFilters', function (e) { e.preventDefault(); askAdjust('reset'); });
+		$(document).on('click', '#recResetFilters', function (e) { e.preventDefault(); filters = defaultFilters(); render(); askAssistant('reset to the default recommendation'); });
 
 		$(document).on('click', '#recAddBtn', function () {
 			var items = window._recToBuild || [];
