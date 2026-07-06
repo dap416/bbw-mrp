@@ -88,6 +88,17 @@ function charles_snapshot($db) {
 	$yoy  = charles_expense_yoy($deep);
 	$roi  = charles_tradeshow_roi($db, false);
 
+	// Upcoming credit-card charges (manual credit-out events not yet paid). These do NOT
+	// reduce bank cash — they land on a card — but they ARE money committed, so they must
+	// be visible alongside bills + POs or "what I owe" looks too low.
+	$creditOutUpcoming = 0.0; $creditOutItems = [];
+	foreach (($events['all'] ?? []) as $e) {
+		if (($e['etype'] ?? '') === 'out' && ($e['paidby'] ?? 'cash') === 'card' && empty($e['paid'])) {
+			$creditOutUpcoming += (float)$e['amount'];
+			$creditOutItems[] = ['label' => $e['label'], 'amount' => round((float)$e['amount']), 'ym' => $e['ym']];
+		}
+	}
+
 	$gaps = [];
 	if (empty($data['qb_connected'])) $gaps[] = 'QuickBooks is not connected — connect it on Integrations so I can see your real P&L, Balance Sheet, bills and full expense history.';
 	if (empty($cards) && empty($locs)) $gaps[] = 'No credit cards or line of credit are on file — add them (with APR + limit) on the Cash Flow page so I can plan financing and payoff.';
@@ -107,7 +118,12 @@ function charles_snapshot($db) {
 		'card_available' => round($cardAvail), 'loc_available' => round($locAvail),
 		'ar_total' => round((float)($data['ar_total'] ?? 0)),
 		'ap_total' => round((float)($data['ap_total'] ?? 0)),
-		'net_position' => round((float)($data['net_quick'] ?? 0)),
+		'ap_total_note' => 'ap_total = supplier bills + open MRP purchase orders, modeled as CASH owed (open POs draw down bank cash; the MRP does NOT tag a PO as paid-by-card). It excludes upcoming_card_charges below.',
+		'open_po_total' => round((float)($data['pos']['total'] ?? 0)),
+		'upcoming_card_charges' => round($creditOutUpcoming),
+		'upcoming_card_charge_items' => $creditOutItems,
+		'total_committed_all' => round((float)($data['ap_total'] ?? 0) + $creditOutUpcoming),
+		'obligations_note' => 'What is owed sits in three buckets, do not conflate them: (1) ap_total = bills + open MRP POs (cash owed). (2) upcoming_card_charges = planned credit-out events that hit a CARD, not bank cash. (3) card_debt + loc_debt = balances already on the cards/LOC. If the owner says raw-material POs go on a credit card, then those PO balances should be treated as card charges (they grow a card balance, not drain cash) — flag this and advise accordingly.',
 		'bills' => $data['bills']['items'] ?? [],
 		'pos' => $data['pos']['items'] ?? [],
 		'ar' => $data['ar']['items'] ?? [],

@@ -188,8 +188,8 @@
         <?php if (is_owner()) { ?>
         <li class="pc-item">
           <a href="/charles.php" class="pc-link">
-            <span class="pc-micon"><i class="ti ti-user-dollar"></i></span>
-            <span class="pc-mtext">Talk to Charles <span style="color:#2ca01c;font-weight:700;">$</span></span>
+            <span class="pc-micon"><i class="ti ti-currency-dollar"></i></span>
+            <span class="pc-mtext">Talk to Charles</span>
           </a>
         </li>
         <?php } ?>

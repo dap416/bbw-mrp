@@ -38,9 +38,10 @@
 		['Card room left', c_money0($snap['card_available']), '#4680ff', 'ti-credit-card'],
 		['LOC room left',  c_money0($snap['loc_available']),  '#6f42c1', 'ti-cash-banknote'],
 		['Owed to you (A/R)', c_money0($snap['ar_total']),    '#12b886', 'ti-arrow-down-left'],
-		['You owe (A/P)',  c_money0($snap['ap_total']),       '#e64545', 'ti-arrow-up-right'],
+		['Owe suppliers (A/P)', c_money0($snap['ap_total']),  '#e64545', 'ti-arrow-up-right'],
 		['Net position',   c_money0($snap['net_position']),   ($snap['net_position']>=0?'#1e7e34':'#e64545'), 'ti-scale'],
 	];
+	if (!empty($snap['upcoming_card_charges'])) $tiles[] = ['Planned card charges', c_money0($snap['upcoming_card_charges']), '#3ea5c9', 'ti-credit-card'];
 	foreach ($tiles as $t): ?>
 	<div class="col-6 col-md-4 col-xl-2">
 		<div class="card h-100 mb-0"><div class="card-body py-2 px-3">
