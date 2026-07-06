@@ -189,7 +189,7 @@
         <li class="pc-item">
           <a href="/charles.php" class="pc-link">
             <span class="pc-micon"><i class="ti ti-user-dollar"></i></span>
-            <span class="pc-mtext">Talk to Charles</span>
+            <span class="pc-mtext">Talk to Charles <span style="color:#2ca01c;font-weight:700;">$</span></span>
           </a>
         </li>
         <?php } ?>
