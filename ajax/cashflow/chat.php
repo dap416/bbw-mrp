@@ -54,7 +54,7 @@ foreach ($md['blocks'] as $b) {
 		'cash_in_items' => $inItems, 'cash_out_items' => $outItems, 'card_payments' => $cards, 'tax_reserve' => round($b['tax_reserve']),
 	];
 }
-$evList = [];   foreach ($events['all'] as $e) $evList[] = ['id' => $e['id'], 'etype' => $e['etype'], 'label' => $e['label'], 'amount' => $e['amount'], 'ym' => $e['ym'], 'week' => $e['week']];
+$evList = [];   foreach ($events['all'] as $e) $evList[] = ['id' => $e['id'], 'etype' => $e['etype'], 'label' => $e['label'], 'amount' => $e['amount'], 'ym' => $e['ym'], 'week' => $e['week'], 'paidby' => $e['paidby'] ?? 'cash'];
 $arList = [];   foreach (($data['ar']['items'] ?? []) as $a) $arList[] = ['order' => $a['name'], 'customer' => $a['customer'], 'amount' => $a['amount'], 'expected' => $a['expected'] ?? null];
 $poList = [];   foreach (($data['pos']['items'] ?? []) as $p) $poList[] = ['ref' => $p['ref'], 'supplier' => $p['supplier'], 'part' => $p['part'], 'balance' => $p['balance'], 'pay_by' => $p['pay_by'] ?? null];
 $billList = []; foreach (($data['bills']['items'] ?? []) as $bb) $billList[] = ['vendor' => $bb['vendor'], 'balance' => $bb['balance'], 'due' => $bb['due']];
@@ -99,7 +99,7 @@ Allowed actions (use exact field names; amounts are plain numbers):
 - {\"type\":\"unmark_expenses_paid\",\"ym\":\"YYYY-MM\",\"why\":\"...\"}
 - {\"type\":\"set_month_actual\",\"ym\":\"YYYY-MM\",\"field\":\"income\"|\"projection\",\"value\":12345|null,\"why\":\"...\"}
 - {\"type\":\"update_balance\",\"label\":\"exact account name from balances\",\"balance\":1234,\"as_of\":\"YYYY-MM-DD\",\"apr\":24.99,\"min\":150,\"why\":\"...\"}  // as_of/apr/min optional
-- {\"type\":\"add_event\",\"etype\":\"in\"|\"out\",\"label\":\"...\",\"amount\":1234,\"ym\":\"YYYY-MM\",\"week\":1,\"why\":\"...\"}  // use 'in' to model drawing cash from an LOC (a loan deposit into the bank)
+- {\"type\":\"add_event\",\"etype\":\"in\"|\"out\",\"label\":\"...\",\"amount\":1234,\"ym\":\"YYYY-MM\",\"week\":1,\"paidby\":\"cash\"|\"card\",\"why\":\"...\"}  // use 'in' to model drawing cash from an LOC. For an 'out' event, paidby='card' means it goes on a credit card (e.g. an FP purchase order from China) — tracked but NOT counted as cash out; paidby='cash' (default) reduces the bank balance.
 - {\"type\":\"delete_event\",\"id\":12,\"why\":\"...\"}
 - {\"type\":\"set_setting\",\"key\":\"shopify_loan_pct\"|\"cash_buffer\"|\"tax_monthly\",\"value\":30000,\"why\":\"...\"}
 - {\"type\":\"set_receivable_date\",\"order\":\"#13989\",\"date\":\"YYYY-MM-DD\"|null,\"why\":\"...\"}

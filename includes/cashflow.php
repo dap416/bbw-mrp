@@ -626,6 +626,8 @@
 			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			user_id    INT NULL
 		) ENGINE=InnoDB");
+		// 'cash' (reduces the bank balance) | 'card' (goes on a credit card — tracked, not cash out).
+		try { $db->exec("ALTER TABLE cash_events ADD COLUMN paidby VARCHAR(8) NOT NULL DEFAULT 'cash'"); } catch (Throwable $e) {}
 	}
 
 	function load_cash_events($db) {
@@ -636,7 +638,8 @@
 			foreach ($db->query("SELECT * FROM cash_events ORDER BY ym, week, id") as $r) {
 				$ev = ['id' => (int)$r['id'], 'etype' => $r['etype'] === 'in' ? 'in' : 'out',
 				       'label' => $r['label'], 'amount' => (float)$r['amount'],
-				       'ym' => $r['ym'], 'week' => max(1, min(4, (int)$r['week']))];
+				       'ym' => $r['ym'], 'week' => max(1, min(4, (int)$r['week'])),
+				       'paidby' => (($r['paidby'] ?? 'cash') === 'card') ? 'card' : 'cash'];
 				$res['all'][] = $ev;
 				$res['by_ym'][$ev['ym']][$ev['etype']][] = $ev;
 				if ($ev['etype'] === 'in') $li[$ev['label']] = true; else $lo[$ev['label']] = true;
@@ -774,7 +777,15 @@
 			if (!$expensesDone && $row['recurring'] > 0)$out[] = ['label' => 'Recurring expenses', 'amount' => (float)$row['recurring'], 'week' => 0, 'source' => 'auto'];
 			if ($row['onetime'] > 0)                    $out[] = ['label' => 'Bills & POs due', 'amount' => (float)$row['onetime'], 'week' => 0, 'source' => 'auto'];
 			if ($taxSet > 0)            $out[] = ['label' => 'Tax reserve set-aside', 'amount' => $taxSet, 'week' => 0, 'source' => 'auto'];
-			foreach (($events['by_ym'][$ym]['out'] ?? []) as $e) $out[] = ['label' => $e['label'], 'amount' => $e['amount'], 'week' => $e['week'], 'source' => 'manual', 'id' => $e['id']];
+			// Split manual cash-out events: 'card' ones go on a credit card, so they are
+			// tracked/displayed but must NOT reduce the bank balance or the cash-out total.
+			$creditOut = [];
+			foreach (($events['by_ym'][$ym]['out'] ?? []) as $e) {
+				$item = ['label' => $e['label'], 'amount' => $e['amount'], 'week' => $e['week'], 'source' => 'manual', 'id' => $e['id'], 'paidby' => ($e['paidby'] ?? 'cash')];
+				if (($e['paidby'] ?? 'cash') === 'card') $creditOut[] = $item;
+				else                                     $out[] = $item;
+			}
+			$creditOutTotal = array_sum(array_map(fn($x) => $x['amount'], $creditOut));
 
 			$outBeforeCards = array_sum(array_map(fn($x) => $x['amount'], $out));
 
@@ -782,6 +793,7 @@
 			if ($isPast) {
 				$blocks[] = array_merge([
 					'ym' => $ym, 'label' => $row['label'], 'cash_in' => $in, 'cash_out' => $out,
+					'credit_out' => $creditOut, 'credit_out_total' => $creditOutTotal,
 					'in_total' => $inTotal, 'out_total' => $outBeforeCards, 'net' => $inTotal - $outBeforeCards,
 					'end_cash' => null, 'end_debt' => array_sum(array_map(fn($c) => $c['bal'], $cards)),
 					'card_payments' => [], 'tax_setaside' => $taxSet, 'tax_payment' => 0.0, 'tax_reserve' => 0.0,
@@ -860,6 +872,7 @@
 			$blocks[] = array_merge([
 				'ym' => $ym, 'label' => $row['label'],
 				'cash_in' => $in, 'cash_out' => $out,
+				'credit_out' => $creditOut, 'credit_out_total' => $creditOutTotal,
 				'in_total' => $inTotal, 'out_total' => $outTotal, 'net' => $net,
 				'end_cash' => $cash, 'end_debt' => $endDebt,
 				'card_payments' => $cardPayments,

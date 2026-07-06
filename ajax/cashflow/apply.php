@@ -74,10 +74,11 @@ foreach ($actions as $a) {
 				$lab   = trim($a['label'] ?? '');
 				$amt   = round((float)($a['amount'] ?? 0), 2);
 				$week  = max(1, min(4, (int)($a['week'] ?? 1)));
+				$paidby = ($etype === 'out' && ($a['paidby'] ?? 'cash') === 'card') ? 'card' : 'cash';
 				if ($lab === '' || $amt <= 0 || !ymok($a['ym'] ?? '')) { $results[] = 'skip add_event: bad fields'; break; }
 				ensure_cash_events_table($db);
-				$db->prepare("INSERT INTO cash_events (etype,label,amount,ym,week,user_id) VALUES (?,?,?,?,?,?)")->execute([$etype, $lab, $amt, $a['ym'], $week, $uid]);
-				$results[] = "Added $etype event '$lab' \$$amt to {$a['ym']} wk$week";
+				$db->prepare("INSERT INTO cash_events (etype,label,amount,ym,week,paidby,user_id) VALUES (?,?,?,?,?,?,?)")->execute([$etype, $lab, $amt, $a['ym'], $week, $paidby, $uid]);
+				$results[] = "Added $etype event '$lab' \$$amt to {$a['ym']} wk$week" . ($paidby === 'card' ? ' (on card)' : '');
 				break;
 
 			case 'delete_event':
