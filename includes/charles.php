@@ -92,7 +92,10 @@ function charles_snapshot($db) {
 	if (empty($data['qb_connected'])) $gaps[] = 'QuickBooks is not connected — connect it on Integrations so I can see your real P&L, Balance Sheet, bills and full expense history.';
 	if (empty($cards) && empty($locs)) $gaps[] = 'No credit cards or line of credit are on file — add them (with APR + limit) on the Cash Flow page so I can plan financing and payoff.';
 	if (!empty($data['qb_connected']) && empty($deep['years'])) $gaps[] = 'I haven\'t pulled your full P&L/expense history yet — it loads with the briefing (or hit Re-analyze).';
-	if (!empty($roi['missing_costs'])) $gaps[] = 'I don\'t know what ' . (int)$roi['missing_costs'] . ' of your tradeshows cost to attend — enter each show\'s all-in cost below so I can score its true ROI (revenue vs cost).';
+	if (!empty($roi['missing_costs'])) {
+		if (!empty($roi['qb_expense_total'])) $gaps[] = 'QuickBooks shows about $' . number_format((float)$roi['qb_expense_total']) . ' in tradeshow expense (' . $roi['qb_expense_year'] . '), but the account names don\'t map to specific shows — so I use the total for an overall ROI. Rename your show expense accounts after the shows (or enter per-show costs below) for exact show-by-show ROI.';
+		else $gaps[] = 'I can\'t find tradeshow costs in QuickBooks yet — name your show expense accounts after the shows (e.g. "Tradeshow – Delta"), or enter each show\'s cost below, so I can score ROI.';
+	}
 
 	return [
 		'today' => date('Y-m-d'),
@@ -323,9 +326,41 @@ function charles_qb_deep($db, $refreshIfStale = false) {
 }
 
 /**
+ * Detect tradeshow-related expense categories in the deep QB P&L and total them
+ * (per year + most-recent-year), matching a category to a show when its name
+ * contains the show name. Lets Charles use real QuickBooks show costs, not guesses.
+ */
+function charles_qb_tradeshow_costs($deep, $showNames) {
+	$out = ['categories' => [], 'per_show' => [], 'total' => 0.0, 'year_used' => null, 'total_by_year' => []];
+	if (empty($deep['years'])) return $out;
+	$years = array_keys($deep['years']); sort($years);
+	$rx = '/trade\s*show|tradeshow|booth|expo\b|convention|festival|show\s*fee/i';
+	$catByYear = []; $totByYear = [];
+	foreach ($years as $y) {
+		foreach (($deep['years'][$y]['expenses'] ?? []) as $cat => $amt) {
+			if (preg_match($rx, (string)$cat)) { $catByYear[$cat][$y] = round($amt); $totByYear[$y] = ($totByYear[$y] ?? 0) + round($amt); }
+		}
+	}
+	if (empty($catByYear)) return $out;
+	$yearUsed = null;
+	for ($k = count($years) - 1; $k >= 0; $k--) { if (!empty($totByYear[$years[$k]])) { $yearUsed = $years[$k]; break; } }
+	foreach ($catByYear as $cat => $byY) $out['categories'][] = ['name' => $cat, 'by_year' => $byY];
+	$out['total_by_year'] = $totByYear;
+	$out['year_used'] = $yearUsed;
+	$out['total'] = $yearUsed !== null ? (float)($totByYear[$yearUsed] ?? 0) : 0.0;
+	foreach ($catByYear as $cat => $byY) {
+		$amt = $yearUsed !== null ? (float)($byY[$yearUsed] ?? 0) : 0;
+		if ($amt <= 0) foreach ($byY as $a) $amt = max($amt, (float)$a);
+		foreach ($showNames as $sn) { if ($sn !== '' && stripos($cat, $sn) !== false) $out['per_show'][strtolower($sn)] = ($out['per_show'][strtolower($sn)] ?? 0) + $amt; }
+	}
+	return $out;
+}
+
+/**
  * Tradeshow ROI: last season's revenue at each show (Shopify POS location) vs the
- * show's cost (owner-entered in charles_show_costs). Cached ~24h; the briefing
- * refreshes it. Flags any show with ROI under 1.0 (costs more than it sold).
+ * show's cost — taken from QuickBooks tradeshow expense categories, with an optional
+ * manual per-show override (charles_show_costs). Cached ~24h; the briefing refreshes
+ * it. Flags any show with ROI under 1.0, and gives an overall ROI from the QB total.
  */
 function charles_tradeshow_roi($db, $refreshIfStale = false) {
 	$key = 'charles_tradeshow_roi';
@@ -341,12 +376,12 @@ function charles_tradeshow_roi($db, $refreshIfStale = false) {
 	if (!shopify_is_configured()) { $res = ['rows' => [], 'loaded' => true, 'error' => 'Shopify not connected']; }
 	else {
 		charles_ensure_tables($db);
-		$costs = [];
-		try { foreach ($db->query("SELECT show_name, cost FROM charles_show_costs") as $r) $costs[strtolower(trim($r['show_name']))] = (float)$r['cost']; } catch (Throwable $e) {}
+		$manual = [];
+		try { foreach ($db->query("SELECT show_name, cost FROM charles_show_costs") as $r) $manual[strtolower(trim($r['show_name']))] = (float)$r['cost']; } catch (Throwable $e) {}
 		$since = date('Y-m-d', strtotime('-14 months'));
 		$until = date('Y-m-d');
 		$ttl = inventory_cache_ttl($db);
-		$rows = []; $missing = 0;
+		$rows = [];
 		foreach (tradeshow_locations() as $loc) {
 			$name = trim((string)($loc['name'] ?? '')); if ($name === '') continue;
 			$ids = isset($loc['ids']) ? $loc['ids'] : (isset($loc['id']) ? [$loc['id']] : []);
@@ -356,13 +391,31 @@ function charles_tradeshow_roi($db, $refreshIfStale = false) {
 				$rev += (float)($r['revenue'] ?? 0); $units += (int)($r['total_units'] ?? 0);
 			}
 			if ($rev <= 0 && $units <= 0) continue;
-			$cost = $costs[strtolower($name)] ?? null;
-			$roi  = ($cost !== null && $cost > 0) ? round($rev / $cost, 2) : null;
-			if ($cost === null) $missing++;
-			$rows[] = ['show' => $name, 'revenue' => round($rev), 'units' => $units, 'cost' => $cost !== null ? round($cost) : null, 'roi' => $roi];
+			$rows[] = ['show' => $name, 'revenue' => round($rev), 'units' => $units, 'cost' => null, 'roi' => null, 'cost_source' => null];
 		}
+
+		// Costs: prefer a manual override, else the matching QuickBooks tradeshow expense.
+		$qb = charles_qb_tradeshow_costs(charles_qb_deep($db, false), array_map(fn($x) => $x['show'], $rows));
+		$missing = 0;
+		foreach ($rows as &$row) {
+			$sl = strtolower($row['show']);
+			if (isset($manual[$sl])) { $row['cost'] = round($manual[$sl]); $row['cost_source'] = 'manual'; }
+			elseif (isset($qb['per_show'][$sl])) { $row['cost'] = round($qb['per_show'][$sl]); $row['cost_source'] = 'quickbooks'; }
+			if ($row['cost'] !== null && $row['cost'] > 0) $row['roi'] = round($row['revenue'] / $row['cost'], 2);
+			else $missing++;
+		}
+		unset($row);
 		usort($rows, fn($a, $b) => $b['revenue'] <=> $a['revenue']);
-		$res = ['rows' => $rows, 'loaded' => true, 'window' => "$since to $until", 'missing_costs' => $missing];
+
+		$totalRev   = array_sum(array_map(fn($x) => $x['revenue'], $rows));
+		$overallRoi = ($qb['total'] > 0) ? round($totalRev / $qb['total'], 2) : null;
+
+		$res = [
+			'rows' => $rows, 'loaded' => true, 'window' => "$since to $until", 'missing_costs' => $missing,
+			'qb_expense_total' => round($qb['total']), 'qb_expense_year' => $qb['year_used'],
+			'qb_expense_categories' => $qb['categories'],
+			'overall_revenue' => round($totalRev), 'overall_roi' => $overallRoi,
+		];
 	}
 	try { $db->prepare("INSERT INTO data_cache (ckey,cval,updated_at) VALUES (?,?,NOW()) ON DUPLICATE KEY UPDATE cval=VALUES(cval), updated_at=NOW()")->execute([$key, json_encode($res)]); } catch (Throwable $e) {}
 	return $res;

@@ -126,8 +126,16 @@
 <?php $roi = $snap['tradeshow_roi'] ?? []; $roiRows = $roi['rows'] ?? []; ?>
 <?php if (!empty($roiRows)): ?>
 <div class="card mb-3"><div class="card-body">
-	<h6 class="fw-bold mb-1">Tradeshow ROI <span class="text-muted small">— last season's floor sales vs. cost</span></h6>
-	<p class="text-muted small mb-2">Enter each show's <strong>all-in cost</strong> (booth, travel, lodging, labor) and Charles scores its ROI. Under 1.0× means it sold less on the floor than it cost — though a show can still be worth it for the wholesale accounts and exposure it brings.</p>
+	<h6 class="fw-bold mb-1">Tradeshow ROI <span class="text-muted small">— last season's floor sales vs. cost (from QuickBooks)</span></h6>
+	<?php if (!empty($roi['overall_roi']) || !empty($roi['qb_expense_total'])):
+		$orv = $roi['overall_roi']; $ocol = $orv===null ? '#adb5bd' : ($orv < 1 ? '#e64545' : ($orv < 1.5 ? '#d9822b' : '#2ca01c')); ?>
+	<div class="mb-2 p-2 rounded" style="background:#f6f8fc;border:1px solid #e6e9f0;font-size:0.9rem;">
+		Overall: <strong><?php echo c_money0($roi['overall_revenue'] ?? 0); ?></strong> in show sales vs <strong><?php echo c_money0($roi['qb_expense_total'] ?? 0); ?></strong> tradeshow expense<?php echo !empty($roi['qb_expense_year']) ? ' (' . htmlspecialchars($roi['qb_expense_year']) . ')' : ''; ?> =
+		<span class="fw-bold" style="color:<?php echo $ocol; ?>;"><?php echo $orv===null ? '—' : number_format($orv, 2) . '× ROI'; ?></span>
+		<?php echo ($orv !== null && $orv < 1) ? ' <span class="badge bg-danger" style="font-size:0.55rem;">below break-even</span>' : ''; ?>
+	</div>
+	<?php endif; ?>
+	<p class="text-muted small mb-2">Costs come from your <strong>QuickBooks</strong> tradeshow expense accounts. For per-show ROI, name the expense account after the show (e.g. "Tradeshow – Delta"); you can also type a cost to override. Under 1.0× means the show's floor sales didn't cover its cost — though it may still pay off in wholesale accounts and exposure.</p>
 	<div class="row g-3">
 		<div class="col-12 col-lg-7">
 			<div class="table-responsive"><table class="table table-sm align-middle mb-1" style="font-size:0.84rem;">
@@ -143,6 +151,7 @@
 								<span class="input-group-text">$</span>
 								<input type="number" class="form-control show-cost" data-show="<?php echo htmlspecialchars($r['show'], ENT_QUOTES); ?>" value="<?php echo $r['cost']!==null ? (int)$r['cost'] : ''; ?>" placeholder="cost">
 							</div>
+							<?php if (($r['cost_source'] ?? '') === 'quickbooks'): ?><div class="text-muted" style="font-size:0.6rem;">from QuickBooks</div><?php elseif (($r['cost_source'] ?? '') === 'manual'): ?><div class="text-muted" style="font-size:0.6rem;">manual override</div><?php endif; ?>
 						</td>
 						<td class="text-center"><?php echo $rv===null ? '<span class="text-muted">—</span>' : '<span class="fw-bold" style="color:'.$col.';">'.number_format($rv,2).'×</span>' . ($rv<1 ? ' <span class="badge bg-danger" style="font-size:0.5rem;vertical-align:middle;">under 1</span>' : ''); ?></td>
 					</tr>
