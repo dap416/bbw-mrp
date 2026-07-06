@@ -94,7 +94,7 @@
 
 	/** The single business owner (George) — used to gate the "Talk to Charles" tools. */
 	function is_owner() {
-		return current_user_email() === 'bluebirdwaterfowl@gmail.com';
+		return in_array(current_user_email(), ['gparker@bluebirdwaterfowl.com', 'bluebirdwaterfowl@gmail.com'], true);
 	}
 
 	function can_do($action) {
