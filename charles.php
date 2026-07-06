@@ -15,6 +15,10 @@
 	$db   = db_connect();
 	$snap = charles_snapshot($db);
 
+	// Charles's suggested tasks (his advice that became tasks assigned to George).
+	$charlesTasks = [];
+	try { tasks_ensure_table($db); foreach ($db->query("SELECT id, title, notes, due_date, completed, completed_at FROM tasks WHERE task_type = 'charles' ORDER BY completed ASC, (due_date IS NULL), due_date ASC, id DESC LIMIT 40") as $t) $charlesTasks[] = $t; } catch (Throwable $e) {}
+
 	function c_money0($n) { return '$' . number_format((float)$n, 0); }
 	$buffer  = (float)($snap['settings']['cash_buffer'] ?? 0);
 	$runway  = $snap['runway_months'];
@@ -28,7 +32,15 @@
 		<?php if (!empty($snap['synced_at'])): ?><span class="ms-2">Data as of <?php echo htmlspecialchars(date('M j, g:ia', strtotime($snap['synced_at']))); ?></span><?php endif; ?>
 	</div>
 </div>
-<p class="text-muted mb-3" style="max-width:860px;">Charles is your AI CPA. He reads your QuickBooks, cash, cards &amp; line of credit, and the whole MRP — then tells you, in plain English, what to order when and how to fund it without running out of cash. He never moves money: his advice becomes tasks you approve and complete.</p>
+<!-- ── TABS ─────────────────────────────────────────────────────────────────── -->
+<ul class="nav nav-tabs mb-3" id="charlesTabs">
+	<li class="nav-item"><a class="nav-link active" href="#" data-tab="talk"><i class="ti ti-microphone me-1"></i>Talk to Charles</a></li>
+	<li class="nav-item"><a class="nav-link" href="#" data-tab="reports"><i class="ti ti-report-analytics me-1"></i>Reports from Charles</a></li>
+</ul>
+
+<!-- ══ REPORTS TAB ═══════════════════════════════════════════════════════════ -->
+<div id="tab-reports" class="charles-tab" style="display:none;">
+<p class="text-muted mb-3" style="max-width:860px;">Everything Charles is looking at — the numbers, charts, his written briefing, tradeshow ROI, and the tasks his advice has turned into. He never moves money: his advice becomes tasks you approve and complete.</p>
 
 <!-- ── KEY NUMBERS ──────────────────────────────────────────────────────────── -->
 <div class="row g-2 mb-3">
@@ -187,25 +199,42 @@
 </div></div>
 <?php endif; ?>
 
-<!-- ── TALK TO CHARLES ──────────────────────────────────────────────────────── -->
-<div class="card"><div class="card-body">
+<!-- ── CHARLES'S SUGGESTED TASKS ────────────────────────────────────────────── -->
+<?php if (!empty($charlesTasks)): ?>
+<div class="card mb-3"><div class="card-body">
+	<h6 class="fw-bold mb-2"><i class="ti ti-checklist me-1"></i>Charles's suggested tasks</h6>
+	<?php foreach ($charlesTasks as $t): $done = !empty($t['completed']); ?>
+		<div class="d-flex justify-content-between align-items-center py-1 small" style="border-bottom:1px solid #f1f3f5;<?php echo $done ? 'opacity:.55;' : ''; ?>">
+			<span><?php echo $done ? '✓ ' : ''; ?><span<?php echo $done ? ' style="text-decoration:line-through;"' : ''; ?>><?php echo htmlspecialchars($t['title']); ?></span><?php echo !empty($t['notes']) ? ' <span class="text-muted">— '.htmlspecialchars($t['notes']).'</span>' : ''; ?></span>
+			<span class="text-muted" style="font-size:0.7rem;white-space:nowrap;"><?php echo $done ? ('done '.date('M j', strtotime($t['completed_at']))) : (($t['due_date'] && $t['due_date'] !== '0000-00-00') ? ('by '.date('M j', strtotime($t['due_date']))) : 'open'); ?></span>
+		</div>
+	<?php endforeach; ?>
+	<div class="text-muted mt-2" style="font-size:0.7rem;">Manage &amp; complete these on your <a href="/tasks.php">Task List</a> — completing one applies its money move to your books.</div>
+</div></div>
+<?php endif; ?>
+
+</div><!-- ══ /REPORTS TAB ══ -->
+
+<!-- ══ TALK TAB ══════════════════════════════════════════════════════════════ -->
+<div id="tab-talk" class="charles-tab" style="display:flex;flex-direction:column;">
 	<div class="d-flex align-items-center justify-content-between mb-2 flex-wrap gap-2">
-		<h6 class="fw-bold mb-0"><i class="ti ti-message-2 me-1"></i>Talk to Charles</h6>
+		<span class="fw-semibold"><i class="ti ti-user-dollar me-1" style="color:#2ca01c;"></i>Charles is on the line</span>
 		<div class="d-flex gap-2 align-items-center">
-			<select id="chHistory" class="form-select form-select-sm" style="width:170px;"><option value="">History…</option></select>
+			<button id="chVoice" class="btn btn-sm btn-light" title="Have Charles speak his replies">🔈 Voice off</button>
+			<select id="chHistory" class="form-select form-select-sm" style="width:150px;"><option value="">History…</option></select>
 			<button id="chNew" class="btn btn-sm btn-light">+ New</button>
 			<a href="#" id="chDelete" class="small text-danger hidden">delete</a>
 		</div>
 	</div>
-	<div id="chMsgs" style="max-height:440px;overflow-y:auto;background:#f7f9fc;border:1px solid #e6e9f0;border-radius:8px;padding:10px;font-size:0.9rem;">
-		<div class="text-muted small">Ask Charles anything — “Are we going to be okay this fall?”, “Should I pay down the highest card with the LOC?”, “What should I build next and how do I pay for it?”</div>
-	</div>
+	<div id="chMsgs" style="flex:1 1 auto;min-height:280px;max-height:68vh;overflow-y:auto;background:#f7f9fc;border:1px solid #e6e9f0;border-radius:12px;padding:14px;font-size:0.95rem;"></div>
 	<div id="chActions" class="mt-2 hidden"></div>
-	<div class="mt-2 d-flex gap-2">
-		<input type="text" id="chInput" class="form-control" placeholder="Talk to Charles…">
-		<button id="chSend" class="btn btn-primary">Send</button>
+	<div class="mt-2 d-flex gap-2 align-items-center">
+		<button id="chMic" class="btn btn-outline-secondary btn-lg" title="Talk to Charles (microphone)"><i class="ti ti-microphone"></i></button>
+		<input type="text" id="chInput" class="form-control form-control-lg" placeholder="Talk to Charles… or tap the mic and speak">
+		<button id="chSend" class="btn btn-primary btn-lg">Send</button>
 	</div>
-</div></div>
+	<div style="height:25vh;flex:0 0 auto;"></div><!-- keeps the input ~25% up from the bottom -->
+</div>
 
 <script>
 var CH = <?php echo json_encode(['months' => $snap['months'], 'forecast' => $snap['forecast'], 'buffer' => $buffer, 'expense_yoy' => $snap['expense_yoy'], 'tradeshow_roi' => $snap['tradeshow_roi']], JSON_UNESCAPED_SLASHES); ?>;
@@ -284,7 +313,7 @@ function chSend(){
 	$('#chInput').val(''); chMsgs.push({role:'user',content:t}); $('#chActions').addClass('hidden').html(''); window._chTasks=null;
 	chPending=true; chRender();
 	$.ajax({url:'/ajax/charles/chat.php',method:'POST',dataType:'json',timeout:180000,data:{messages:JSON.stringify(chMsgs), chat_id:chChatId}})
-	.done(function(d){ chPending=false; if(!d||d.error){ chMsgs.push({role:'assistant',content:'⚠ '+((d&&d.error)||'failed')}); chRender(); return; } chMsgs.push({role:'assistant',content:d.reply||'(no reply)'}); if(d.chat_id) chChatId=d.chat_id; chRender(); chLoadHistory(); if(d.tasks&&d.tasks.length) chShowTasks(d.tasks); })
+	.done(function(d){ chPending=false; if(!d||d.error){ chMsgs.push({role:'assistant',content:'⚠ '+((d&&d.error)||'failed')}); chRender(); return; } chMsgs.push({role:'assistant',content:d.reply||'(no reply)'}); if(d.chat_id) chChatId=d.chat_id; chRender(); chLoadHistory(); if(typeof chSpeak==='function') chSpeak(d.reply||''); if(d.tasks&&d.tasks.length) chShowTasks(d.tasks); })
 	.fail(function(x,s){ chPending=false; chMsgs.push({role:'assistant',content:'⚠ '+(s==='timeout'?'timed out — try again':'request failed')}); chRender(); });
 }
 $('#chSend').on('click', chSend);
@@ -339,6 +368,48 @@ $(document).on('change', '.show-cost', function(){
 		if (resp && resp.ok) location.reload(); else { alert((resp && resp.error) || 'Save failed'); $i.prop('disabled', false); }
 	}, 'json').fail(function(){ alert('Save failed'); $i.prop('disabled', false); });
 });
+
+// ── Tabs ──
+$('#charlesTabs a').on('click', function(e){
+	e.preventDefault();
+	var tab = $(this).data('tab');
+	$('#charlesTabs a').removeClass('active'); $(this).addClass('active');
+	$('.charles-tab').hide(); $('#tab-' + tab).css('display', tab === 'talk' ? 'flex' : 'block');
+	if (tab === 'talk') { var m = document.getElementById('chMsgs'); if (m) m.scrollTop = m.scrollHeight; $('#chInput').focus(); }
+	else { setTimeout(function(){ window.dispatchEvent(new Event('resize')); }, 60); }  // let Chart.js size to the now-visible tab
+});
+
+// ── Voice: Charles speaks his replies (text-to-speech) ──
+var chVoiceOn = localStorage.getItem('charlesVoice') === '1';
+function chUpdVoiceBtn(){ $('#chVoice').html(chVoiceOn ? '🔊 Voice on' : '🔈 Voice off').toggleClass('btn-primary', chVoiceOn).toggleClass('btn-light', !chVoiceOn); }
+chUpdVoiceBtn();
+$('#chVoice').on('click', function(){ chVoiceOn = !chVoiceOn; localStorage.setItem('charlesVoice', chVoiceOn ? '1' : '0'); chUpdVoiceBtn(); if (!chVoiceOn && window.speechSynthesis) speechSynthesis.cancel(); if (chVoiceOn) chSpeak('Okay, I can talk now.'); });
+function chSpeak(text){
+	if (!chVoiceOn || !window.speechSynthesis || !text) return;
+	try {
+		speechSynthesis.cancel();
+		var clean = String(text).replace(/```[\s\S]*?```/g, '').replace(/[#*_`>]/g, '').replace(/\s+/g, ' ').trim();
+		if (!clean) return;
+		var u = new SpeechSynthesisUtterance(clean); u.rate = 1.03; u.pitch = 1;
+		speechSynthesis.speak(u);
+	} catch (e) {}
+}
+
+// ── Voice: you speak to Charles (speech-to-text mic) ──
+(function(){
+	var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+	if (!SR) { $('#chMic').prop('disabled', true).attr('title', 'Voice input isn\'t supported in this browser — try Chrome.'); return; }
+	var recog = new SR(); recog.lang = 'en-US'; recog.interimResults = true; recog.maxAlternatives = 1;
+	var listening = false, finalText = '';
+	recog.onstart = function(){ listening = true; $('#chMic').removeClass('btn-outline-secondary').addClass('btn-danger'); };
+	recog.onresult = function(e){ var interim = '', fin = ''; for (var i = e.resultIndex; i < e.results.length; i++){ if (e.results[i].isFinal) fin += e.results[i][0].transcript; else interim += e.results[i][0].transcript; } if (fin) finalText += fin; $('#chInput').val((finalText + ' ' + interim).trim()); };
+	recog.onerror = function(){ listening = false; $('#chMic').removeClass('btn-danger').addClass('btn-outline-secondary'); };
+	recog.onend = function(){ listening = false; $('#chMic').removeClass('btn-danger').addClass('btn-outline-secondary'); var t = $.trim($('#chInput').val()); if (t) chSend(); finalText = ''; };
+	$('#chMic').on('click', function(){ if (listening) { recog.stop(); return; } finalText = ''; $('#chInput').val(''); if (window.speechSynthesis) speechSynthesis.cancel(); try { recog.start(); } catch(_){} });
+})();
+
+// ── Opening: Charles greets with a quick update when you arrive ──
+setTimeout(function(){ if (chMsgs.length === 0 && chChatId === 0 && !window._chOpened) { window._chOpened = true; $('#chInput').val("Give me a brief update — the 1 or 2 most important things right now, then let's talk."); chSend(); } }, 500);
 </script>
 
 <?php require_once(__DIR__."/includes/footer.php"); ?>
