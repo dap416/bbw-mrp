@@ -185,6 +185,15 @@
         </li>
         <?php } ?>
 
+        <?php if (is_owner()) { ?>
+        <li class="pc-item">
+          <a href="/charles.php" class="pc-link">
+            <span class="pc-micon"><i class="ti ti-user-dollar"></i></span>
+            <span class="pc-mtext">Talk to Charles</span>
+          </a>
+        </li>
+        <?php } ?>
+
         <?php if (has_access('research') && menu_visible('research')) { ?>
         <li class="pc-item">
           <a href="/research.php" class="pc-link">

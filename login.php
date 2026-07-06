@@ -25,9 +25,10 @@
 
 		if ($user && password_verify($password, $user['password'])) {
 
-			$_SESSION['user_id']   = $user['id'];
-			$_SESSION['user_name'] = $user['name'];
-			$_SESSION['user_role'] = $user['role'];
+			$_SESSION['user_id']    = $user['id'];
+			$_SESSION['user_name']  = $user['name'];
+			$_SESSION['user_role']  = $user['role'];
+			$_SESSION['user_email'] = strtolower(trim($user['username'] ?? ''));
 			$_SESSION['user_access'] = [
 				'access_orders'         => (int)($user['access_orders']         ?? 0),
 				'access_inventory'      => (int)($user['access_inventory']      ?? 0),

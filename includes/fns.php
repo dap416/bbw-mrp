@@ -72,6 +72,31 @@
 		return ($_SESSION['user_role'] ?? '') === 'master';
 	}
 
+	/**
+	 * The current user's login email (= users.username). Populated at login; if an
+	 * older session predates that, it's looked up once and cached back to the session
+	 * so no re-login is needed.
+	 */
+	function current_user_email() {
+		if (isset($_SESSION['user_email'])) return $_SESSION['user_email'];
+		$uid = (int)($_SESSION['user_id'] ?? 0);
+		if ($uid) {
+			try {
+				$db = db_connect();
+				if ($db) {
+					$r = $db->query("SELECT username FROM users WHERE id = $uid")->fetch();
+					if ($r) { $_SESSION['user_email'] = strtolower(trim($r['username'])); return $_SESSION['user_email']; }
+				}
+			} catch (Throwable $e) {}
+		}
+		return $_SESSION['user_email'] = '';
+	}
+
+	/** The single business owner (George) — used to gate the "Talk to Charles" tools. */
+	function is_owner() {
+		return current_user_email() === 'bluebirdwaterfowl@gmail.com';
+	}
+
 	function can_do($action) {
 		$role = $_SESSION['user_role'] ?? '';
 		if ($role === 'admin' || $role === 'master') return true;
