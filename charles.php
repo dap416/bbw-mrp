@@ -219,7 +219,7 @@
 <div id="tab-talk" class="charles-tab" style="display:flex;flex-direction:column;">
 	<div class="d-flex align-items-center justify-content-between mb-2 flex-wrap gap-2">
 		<div class="d-flex gap-2 align-items-center">
-			<button id="chCall" class="btn btn-sm btn-outline-success">📞 Hands-free</button>
+			<button id="chCall" class="btn btn-sm btn-outline-success">📞 Live talk</button>
 			<span id="chStatus" class="small text-muted"></span>
 		</div>
 		<div class="d-flex gap-2 align-items-center flex-wrap">
@@ -317,8 +317,8 @@ function chSend(){
 	$('#chInput').val(''); chMsgs.push({role:'user',content:t}); $('#chActions').addClass('hidden').html(''); window._chTasks=null;
 	chPending=true; chRender();
 	$.ajax({url:'/ajax/charles/chat.php',method:'POST',dataType:'json',timeout:180000,data:{messages:JSON.stringify(chMsgs), chat_id:chChatId}})
-	.done(function(d){ chPending=false; if(!d||d.error){ chMsgs.push({role:'assistant',content:'⚠ '+((d&&d.error)||'failed')}); chRender(); return; } chMsgs.push({role:'assistant',content:d.reply||'(no reply)'}); if(d.chat_id) chChatId=d.chat_id; if(typeof chSaveSession==='function') chSaveSession(); chRender(); chLoadHistory(); if(typeof chSpeak==='function') chSpeak(d.reply||'', function(){ if(typeof chHandsFree!=='undefined' && chHandsFree){ chStatus('Your turn…'); setTimeout(chListen, 300); } }); if(d.tasks&&d.tasks.length) chShowTasks(d.tasks); })
-	.fail(function(x,s){ chPending=false; chMsgs.push({role:'assistant',content:'⚠ '+(s==='timeout'?'timed out — try again':'request failed')}); chRender(); if(typeof chHandsFree!=='undefined' && chHandsFree){ chStatus('Your turn…'); setTimeout(chListen, 500); } });
+	.done(function(d){ chPending=false; if(!d||d.error){ chMsgs.push({role:'assistant',content:'⚠ '+((d&&d.error)||'failed')}); chRender(); return; } chMsgs.push({role:'assistant',content:d.reply||'(no reply)'}); if(d.chat_id) chChatId=d.chat_id; if(typeof chSaveSession==='function') chSaveSession(); chRender(); chLoadHistory(); if(typeof chSpeak==='function') chSpeak((d.spoken&&d.spoken.trim())?d.spoken:(d.reply?'I put my answer up on the screen — take a look.':'')); if(d.tasks&&d.tasks.length) chShowTasks(d.tasks); })
+	.fail(function(x,s){ chPending=false; chMsgs.push({role:'assistant',content:'⚠ '+(s==='timeout'?'timed out — try again':'request failed')}); chRender(); if(typeof chLiveHint==='function') chLiveHint(); });
 }
 $('#chSend').on('click', chSend);
 $('#chInput').on('keypress', function(e){ if(e.which===13) chSend(); });
@@ -385,15 +385,16 @@ $('#charlesTabs a').on('click', function(e){
 
 // ── Voice state ──
 var chVoiceOn = localStorage.getItem('charlesVoice') === '1';
-var chHandsFree = false;
+var chLive = false;                          // live-talk: voice replies + push-to-talk
 var chVoices = [], chVoiceName = localStorage.getItem('charlesVoiceName') || '';
 var chSR = window.SpeechRecognition || window.webkitSpeechRecognition;
-var chRecog = null, chListening = false, chFinalText = '';
+var chRecog = null, chListening = false, chFinalText = '', chPttHeld = false;
 function chStatus(s){ $('#chStatus').text(s || ''); }
+function chLiveHint(){ if (chLive) chStatus('Hold Tab (or the mic) to talk'); }
 function chUpdVoiceBtn(){ $('#chVoice').html(chVoiceOn ? '🔊 Voice on' : '🔈 Voice off').toggleClass('btn-primary', chVoiceOn).toggleClass('btn-light', !chVoiceOn); }
 chUpdVoiceBtn();
 
-// Voice picker (populate from the device's speechSynthesis voices).
+// Voice picker (from the device's speechSynthesis voices).
 function chLoadVoices(){
 	if (!window.speechSynthesis) { $('#chVoiceSel').hide(); return; }
 	chVoices = speechSynthesis.getVoices() || [];
@@ -407,47 +408,54 @@ function chLoadVoices(){
 if (window.speechSynthesis) { chLoadVoices(); speechSynthesis.onvoiceschanged = chLoadVoices; } else { $('#chVoiceSel').hide(); }
 $('#chVoiceSel').on('change', function(){ chVoiceName = $(this).val(); localStorage.setItem('charlesVoiceName', chVoiceName); if (chVoiceOn) chSpeak('This is how I sound now.'); });
 
-// Charles speaks (text-to-speech); onDone fires when he finishes.
-function chSpeak(text, onDone){
-	if (!chVoiceOn || !window.speechSynthesis || !text) { if (onDone) onDone(); return; }
+// Charles speaks — his short conversational line, not the written answer.
+function chSpeak(text){
+	if (!chVoiceOn || !window.speechSynthesis || !text) { chLiveHint(); return; }
 	try {
 		speechSynthesis.cancel();
 		var clean = String(text).replace(/```[\s\S]*?```/g, '').replace(/[#*_`>]/g, '').replace(/\s+/g, ' ').trim();
-		if (!clean) { if (onDone) onDone(); return; }
+		if (!clean) { chLiveHint(); return; }
 		var u = new SpeechSynthesisUtterance(clean); u.rate = 1.03; u.pitch = 1;
 		if (chVoiceName) { var vv = chVoices.filter(function(v){ return v.name === chVoiceName; })[0]; if (vv) u.voice = vv; }
-		u.onend = function(){ if (onDone) onDone(); };
-		u.onerror = function(){ if (onDone) onDone(); };
-		if (chHandsFree) chStatus('Charles is talking…');
+		u.onstart = function(){ if (chLive) chStatus('Charles is talking… (hold Tab to jump in)'); };
+		u.onend   = function(){ chLiveHint(); };
+		u.onerror = function(){ chLiveHint(); };
 		speechSynthesis.speak(u);
-	} catch (e) { if (onDone) onDone(); }
+	} catch (e) { chLiveHint(); }
 }
 $('#chVoice').on('click', function(){ chVoiceOn = !chVoiceOn; localStorage.setItem('charlesVoice', chVoiceOn ? '1' : '0'); chUpdVoiceBtn(); if (!chVoiceOn && window.speechSynthesis) speechSynthesis.cancel(); if (chVoiceOn) chSpeak('Okay, I can talk now.'); });
 
-// Mic (speech-to-text).
+// Mic / speech-to-text.
 if (!chSR) { $('#chMic, #chCall').prop('disabled', true).attr('title', 'Voice needs Chrome or Edge.'); }
 else {
 	chRecog = new chSR(); chRecog.lang = 'en-US'; chRecog.interimResults = true; chRecog.maxAlternatives = 1;
-	chRecog.onstart  = function(){ chListening = true; $('#chMic').removeClass('btn-outline-secondary').addClass('btn-danger'); chStatus(chHandsFree ? 'Listening…' : ''); };
+	chRecog.onstart  = function(){ chListening = true; $('#chMic').removeClass('btn-outline-secondary').addClass('btn-danger'); chStatus('Listening…'); };
 	chRecog.onresult = function(e){ var interim = '', fin = ''; for (var i = e.resultIndex; i < e.results.length; i++){ if (e.results[i].isFinal) fin += e.results[i][0].transcript; else interim += e.results[i][0].transcript; } if (fin) chFinalText += fin; $('#chInput').val((chFinalText + ' ' + interim).trim()); };
-	chRecog.onerror  = function(ev){ chListening = false; $('#chMic').removeClass('btn-danger').addClass('btn-outline-secondary'); if (chHandsFree && ev.error !== 'aborted') setTimeout(chListen, 900); };
-	chRecog.onend    = function(){ chListening = false; $('#chMic').removeClass('btn-danger').addClass('btn-outline-secondary'); var t = $.trim($('#chInput').val()); chFinalText = ''; if (t) { chSend(); } else if (chHandsFree) { setTimeout(chListen, 700); } };
+	chRecog.onerror  = function(){ chListening = false; $('#chMic').removeClass('btn-danger').addClass('btn-outline-secondary'); chLiveHint(); };
+	chRecog.onend    = function(){ chListening = false; $('#chMic').removeClass('btn-danger').addClass('btn-outline-secondary'); var t = $.trim($('#chInput').val()); chFinalText = ''; if (t) chSend(); else chLiveHint(); };
 }
 function chListen(){ if (!chRecog || chListening || chPending) return; try { chFinalText = ''; $('#chInput').val(''); if (window.speechSynthesis) speechSynthesis.cancel(); chRecog.start(); } catch(_){} }
-$('#chMic').on('click', function(){ if (chListening) { try { chRecog.stop(); } catch(_){} return; } chListen(); });
+function chStopListen(){ if (chRecog && chListening) { try { chRecog.stop(); } catch(_){} } }
 
-// Hands-free (continuous back-and-forth "call").
+// Mic button: tap to dictate one message (when not in a live call).
+$('#chMic').on('click', function(){ if (chLive) return; if (chListening) { chStopListen(); return; } chListen(); });
+
+// Live talk: voice replies + push-to-talk (no always-on mic).
 $('#chCall').on('click', function(){
-	chHandsFree = !chHandsFree;
-	$('#chCall').toggleClass('btn-success', chHandsFree).toggleClass('btn-outline-success', !chHandsFree).html(chHandsFree ? '📞 End call' : '📞 Hands-free');
-	if (chHandsFree) {
-		if (!chVoiceOn) { chVoiceOn = true; localStorage.setItem('charlesVoice', '1'); chUpdVoiceBtn(); }
-		chStatus('Hands-free on — go ahead'); chListen();
-	} else {
-		if (chRecog && chListening) { try { chRecog.abort(); } catch(_){} }
-		chListening = false; if (window.speechSynthesis) speechSynthesis.cancel(); chStatus('');
-	}
+	chLive = !chLive;
+	$('#chCall').toggleClass('btn-success', chLive).toggleClass('btn-outline-success', !chLive).html(chLive ? '📞 End call' : '📞 Live talk');
+	if (chLive) { if (!chVoiceOn) { chVoiceOn = true; localStorage.setItem('charlesVoice', '1'); chUpdVoiceBtn(); } chLiveHint(); }
+	else { chStopListen(); if (window.speechSynthesis) speechSynthesis.cancel(); chStatus(''); }
 });
+
+// Push-to-talk: hold Tab (or press-and-hold the mic) to talk; release to send.
+// Holding also INTERRUPTS Charles mid-sentence so you can jump in.
+function chPttStart(){ if (!chLive || chListening || chPending) return; chPttHeld = true; if (window.speechSynthesis) speechSynthesis.cancel(); chListen(); }
+function chPttStop(){ if (!chPttHeld) return; chPttHeld = false; chStopListen(); }   // onend auto-sends the transcript
+$(document).on('keydown', function(e){ if (chLive && (e.key === 'Tab' || e.keyCode === 9) && !e.repeat) { e.preventDefault(); chPttStart(); } });
+$(document).on('keyup',   function(e){ if (chLive && (e.key === 'Tab' || e.keyCode === 9)) { e.preventDefault(); chPttStop(); } });
+$('#chMic').on('mousedown touchstart', function(e){ if (chLive) { e.preventDefault(); chPttStart(); } });
+$(document).on('mouseup touchend', function(){ if (chLive) chPttStop(); });
 
 // ── Session persistence ──
 // One chat stays active per "day", where a day runs until ~2am (so a late night

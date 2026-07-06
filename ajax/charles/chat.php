@@ -40,6 +40,12 @@ if (preg_match('/```json\s*(\{.*?\})\s*```/s', $text, $mm)) {
 	if (is_array($j) && !empty($j['tasks']) && is_array($j['tasks'])) $tasks = $j['tasks'];
 	$text = trim(preg_replace('/```json\s*\{.*?\}\s*```/s', '', $text)); // hide the raw JSON from the reply
 }
+// The short conversational line Charles would say out loud (kept out of the written reply).
+$spoken = '';
+if (preg_match('/```speak\s*(.*?)```/s', $text, $sm)) {
+	$spoken = trim($sm[1]);
+	$text = trim(str_replace($sm[0], '', $text));
+}
 
 // Persist the conversation (resumable history).
 $chatId = (int)($_POST['chat_id'] ?? 0);
@@ -60,4 +66,4 @@ if ($tasks) {
 	charles_memory_append($db, 'proposed', 'Charles proposed: ' . implode('; ', array_filter($titles)));
 }
 
-echo json_encode(['reply' => $text, 'tasks' => $tasks, 'chat_id' => $chatId, 'title' => $title]);
+echo json_encode(['reply' => $text, 'spoken' => $spoken, 'tasks' => $tasks, 'chat_id' => $chatId, 'title' => $title]);
