@@ -330,7 +330,15 @@ function chShowTasks(tasks){
 	h+='<div class="d-flex gap-2 mt-2"><button class="btn btn-sm btn-success" id="chApply">Add to my tasks</button><button class="btn btn-sm btn-secondary" id="chCancelTasks">Not now</button><span id="chApplyMsg" class="small ms-1"></span></div><div class="text-muted mt-1" style="font-size:0.68rem;">Nothing changes in your books until you complete the task (after you\'ve actually done it).</div></div>';
 	$('#chActions').html(h).removeClass('hidden');
 }
-$(document).on('click','#chApply',function(){ var $b=$(this).prop('disabled',true).text('Adding…'); $.ajax({url:'/ajax/charles/apply.php',method:'POST',dataType:'json',data:{tasks:JSON.stringify(window._chTasks||[])}}).done(function(d){ if(d&&d.ok){ $('#chApplyMsg').removeClass('text-danger').text('Added '+d.created+' task(s) to your list ✓'); $('#chApply,#chCancelTasks').prop('disabled',true); } else { $('#chApplyMsg').addClass('text-danger').text((d&&d.error)||'failed'); $b.prop('disabled',false).text('Add to my tasks'); } }).fail(function(){ $('#chApplyMsg').addClass('text-danger').text('failed'); $b.prop('disabled',false).text('Add to my tasks'); }); });
+$(document).on('click','#chApply',function(){
+	var $b=$(this).prop('disabled',true).text('Adding…');
+	$.ajax({url:'/ajax/charles/apply.php',method:'POST',dataType:'json',timeout:30000,data:{tasks:JSON.stringify(window._chTasks||[])}})
+	.done(function(d){
+		if(d&&d.ok){ window._chTasks=null; $('#chActions').html('<div class="p-2 rounded" style="background:#f2fbf4;border:1px solid #bfe6c8;font-size:0.85rem;"><span class="text-success fw-semibold">✓ Added '+(d.created||0)+' task(s) to your list.</span> <span class="text-muted">Complete them — after you\'ve actually made the move — to update your books.</span> <a href="/tasks.php" class="ms-1">Open Task List</a></div>'); }
+		else { $('#chApplyMsg').addClass('text-danger').text((d&&d.error)||'Could not add.'); $b.prop('disabled',false).text('Add to my tasks'); }
+	})
+	.fail(function(x,s){ $('#chApplyMsg').addClass('text-danger').text(s==='timeout'?'Timed out — it may still have added; check your Task List.':'Failed to add.'); $b.prop('disabled',false).text('Add to my tasks'); });
+});
 $(document).on('click','#chCancelTasks',function(){ $('#chActions').addClass('hidden').html(''); window._chTasks=null; });
 
 function chLoadHistory(){ $.getJSON('/ajax/charles/chat_list.php', function(d){ var o='<option value="">History…</option>'; (d.chats||[]).forEach(function(c){ o+='<option value="'+c.id+'"'+(c.id==chChatId?' selected':'')+'>'+chEsc(c.title)+'</option>'; }); $('#chHistory').html(o); }); }
