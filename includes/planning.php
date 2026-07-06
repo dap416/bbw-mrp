@@ -563,7 +563,7 @@
 
 		// Large one-off POs (fulfilled, >= threshold) in the same window last year —
 		// isolated so a PO that recurs this year (as committed) isn't double-counted.
-		$largePoMin = 5000;
+		$largePoMin = 2000;
 		$large      = shopify_cache_remember($db, 'rec_largepo_'.$lyStart.'_'.$lyEnd.'_'.$largePoMin, $ttl, fn() => shopify_large_orders($lyStart, $lyEnd, $largePoMin))['data'];
 		$largeBySku = $isOregon ? ($large['by_sku_oregon'] ?? []) : ($large['by_sku_rest'] ?? []);
 

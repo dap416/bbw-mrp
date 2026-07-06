@@ -9,7 +9,9 @@
  *   getWarehouse:fn, getWarehouseName:fn }).
  */
 (function () {
-	function defaultFilters() { return { mode: 'all', excluded_shows: [], include_committed: true, include_large_po: true }; }
+	// Large prior-year POs are BYPASSED by default: one-off orders over the threshold
+	// rarely repeat, and any that do recur this year are already counted in committed.
+	function defaultFilters() { return { mode: 'all', excluded_shows: [], include_committed: true, include_large_po: false }; }
 
 	window.initRecommendPanel = function (cfg) {
 		var components = [], meta = {}, shows = [];
@@ -43,7 +45,7 @@
 				controls = '<div class="mt-2 p-2 rounded" style="background:#fff7e6;border:1px solid #ffe1a8;font-size:0.8rem;">' +
 					'<label style="cursor:pointer;margin:0;"><input type="checkbox" id="recInclLargePo"' + (filters.include_large_po ? ' checked' : '') + '> ' +
 					'<strong>Include large POs (&gt;$' + fmt(poThresh) + ') from this window last year</strong></label>' +
-					(poList ? '<div class="text-muted mt-1" style="font-size:0.73rem;">Last year: ' + poList + (poOrders.length > 6 ? ', …' : '') + '. <strong>Uncheck</strong> if that PO is recurring this year — it would already be counted in <em>committed</em>, so leaving it on double-counts it.</div>' : '') +
+					(poList ? '<div class="text-muted mt-1" style="font-size:0.73rem;"><strong>Bypassed by default</strong> — big one-off POs rarely repeat, and any that do are already counted in <em>committed</em> this year (so counting last year\'s too would double-build). Last year: ' + poList + (poOrders.length > 6 ? ', …' : '') + '. Check only to add them back into demand.</div>' : '') +
 					'</div>';
 			}
 

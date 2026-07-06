@@ -23,14 +23,14 @@ $curFilters = [
 	'mode' => (($cur['mode'] ?? 'all') === 'online_only') ? 'online_only' : 'all',
 	'excluded_shows' => array_values(array_filter(array_map(fn($x) => trim((string)$x), (array)($cur['excluded_shows'] ?? [])), fn($x) => $x !== '')),
 	'include_committed' => array_key_exists('include_committed', $cur) ? (bool)$cur['include_committed'] : true,
-	'include_large_po' => array_key_exists('include_large_po', $cur) ? (bool)$cur['include_large_po'] : true,
+	'include_large_po' => array_key_exists('include_large_po', $cur) ? (bool)$cur['include_large_po'] : false,   // bypassed by default
 ];
 
 $system =
-"You maintain the demand filters for a build recommendation at a small waterfowl motion-decoy maker, and write a 1-2 sentence plain narrative of what the demand now includes. Output ONLY a JSON object (no code fence), exactly this shape: {\"filters\":{\"mode\":\"all\"|\"online_only\",\"excluded_shows\":[],\"include_committed\":true,\"include_large_po\":true},\"narrative\":\"...\"}.
+"You maintain the demand filters for a build recommendation at a small waterfowl motion-decoy maker, and write a 1-2 sentence plain narrative of what the demand now includes. Output ONLY a JSON object (no code fence), exactly this shape: {\"filters\":{\"mode\":\"all\"|\"online_only\",\"excluded_shows\":[],\"include_committed\":true,\"include_large_po\":false},\"narrative\":\"...\"}.
 Start from current_filters and apply the user's instruction:
 - 'only online' / 'online sales only' => mode=online_only.
-- 'reset' / 'start over' / 'everything back' => mode=all, excluded_shows=[], include_committed=true, include_large_po=true.
+- 'reset' / 'start over' / 'everything back' => mode=all, excluded_shows=[], include_committed=true, include_large_po=false (large one-off POs stay bypassed).
 - 'remove' / 'exclude' / 'not building for' / 'skip' a show => add the matching show name (from the shows list) to excluded_shows.
 - 'add back' / 'include' a show => remove it from excluded_shows.
 - 'ignore committed' / 'without committed' => include_committed=false; 'include committed' => include_committed=true.
@@ -52,8 +52,8 @@ $showLc = []; foreach ($shows as $s) $showLc[strtolower($s)] = $s;
 $excl = [];
 foreach ((array)($f['excluded_shows'] ?? []) as $x) { $k = strtolower(trim((string)$x)); if (isset($showLc[$k])) $excl[] = $showLc[$k]; }
 $excl = array_values(array_unique($excl));
-$incCommitted = array_key_exists('include_committed', $f) ? (bool)$f['include_committed'] : true;
-$incLargePo   = array_key_exists('include_large_po', $f) ? (bool)$f['include_large_po'] : true;
+$incCommitted = array_key_exists('include_committed', $f) ? (bool)$f['include_committed'] : $curFilters['include_committed'];
+$incLargePo   = array_key_exists('include_large_po', $f) ? (bool)$f['include_large_po'] : $curFilters['include_large_po'];
 
 echo json_encode([
 	'ok' => true,
