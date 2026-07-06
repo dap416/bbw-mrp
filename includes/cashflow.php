@@ -857,11 +857,12 @@
 					if ($targetIdx === null) $targetIdx = $k;
 				}
 			}
-			$cardPayments = []; $cardTotal = 0.0;
+			$cardPayments = []; $cardTotal = 0.0; $loanPaid = 0.0; $cardPaid = 0.0;
 			foreach ($cards as $k => &$c) {
 				if ($pay[$k] <= 0 && $c['bal'] <= 0) continue;
 				$c['bal'] = max(0.0, $c['bal'] - $pay[$k]);
 				$cardTotal += $pay[$k];
+				if (($c['type'] ?? 'credit') === 'loc') $loanPaid += $pay[$k]; else $cardPaid += $pay[$k];
 				$avail = $c['limit'] !== null ? max(0.0, (float)$c['limit'] - (float)$c['bal']) : null;
 				$cardPayments[] = ['label' => $c['label'], 'apr' => $c['apr'], 'amount' => round($pay[$k], 2),
 				                   'is_target' => ($k === $targetIdx), 'paid_off' => ($c['bal'] <= 0.005),
@@ -869,7 +870,9 @@
 				                   'available' => $avail === null ? null : round($avail, 2), 'type' => $c['type']];
 			}
 			unset($c);
-			if ($cardTotal > 0) $out[] = ['label' => 'Card payments (avalanche)', 'amount' => round($cardTotal, 2), 'week' => 0, 'source' => 'auto'];
+			// Split the cash-out line so loan payments read distinctly from card payments.
+			if ($loanPaid > 0) $out[] = ['label' => 'LOC loan payments', 'amount' => round($loanPaid, 2), 'week' => 0, 'source' => 'auto'];
+			if ($cardPaid > 0) $out[] = ['label' => 'Card payments (avalanche)', 'amount' => round($cardPaid, 2), 'week' => 0, 'source' => 'auto'];
 
 			$outTotal = $outBeforeCards + $cardTotal;
 			$net      = $inTotal - $outTotal;

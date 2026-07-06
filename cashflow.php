@@ -265,8 +265,8 @@
 	<!-- CARD PAYDOWN PLAN (this month) -->
 	<div class="col-12 col-lg-7">
 	<div class="card h-100" style="border-left:4px solid #6f42c1;"><div class="card-body py-2">
-		<h6 class="fw-bold mb-1">Card Paydown Plan — this month<?php echo $b0 ? ' ('.$b0['label'].')' : ''; ?></h6>
-		<p class="text-muted small mb-2">Keep a <strong><?php echo money0($monthData['buffer']); ?></strong> cash buffer; pay minimums on all cards, then throw every spare dollar at the <strong>highest-APR</strong> card first.</p>
+		<h6 class="fw-bold mb-1">Card &amp; Loan Paydown Plan — this month<?php echo $b0 ? ' ('.$b0['label'].')' : ''; ?></h6>
+		<p class="text-muted small mb-2">Keep a <strong><?php echo money0($monthData['buffer']); ?></strong> cash buffer; pay each card &amp; loan its minimum, then throw every spare dollar at the <strong>highest-APR</strong> card first. Fixed-term LOC loans just take their scheduled payment.</p>
 		<?php
 		$cps = array_values(array_filter($b0['card_payments'] ?? [], fn($c)=>$c['amount']>0));
 		usort($cps, fn($a,$b)=> ($b['is_target']<=>$a['is_target']) ?: (($b['apr']??-1)<=>($a['apr']??-1)));
@@ -274,19 +274,19 @@
 			<div class="text-muted small">No card payments this month (no card balances, or no cash above the buffer).</div>
 		<?php else: ?>
 		<table class="table table-sm mb-0" style="font-size:0.84rem;">
-			<thead><tr style="background:#f1f3f5;"><th>#</th><th>Card</th><th class="text-end">APR</th><th class="text-end">Balance</th><th class="text-end">Pay this month</th></tr></thead>
+			<thead><tr style="background:#f1f3f5;"><th>#</th><th>Card / Loan</th><th class="text-end">APR</th><th class="text-end">Balance</th><th class="text-end">Pay this month</th></tr></thead>
 			<tbody>
 			<?php $n=0; foreach ($cps as $c): $n++; ?>
 				<tr<?php echo $c['is_target'] ? ' style="background:#f3effc;"' : ''; ?>>
 					<td><?php echo $n; ?></td>
-					<td class="fw-semibold"><?php echo htmlspecialchars($c['label']); ?> <?php echo $c['is_target'] ? '<span class="badge bg-primary" style="font-size:0.58rem;">FOCUS</span>' : ''; ?><?php echo $c['paid_off'] ? ' <span class="badge bg-success" style="font-size:0.58rem;">PAID OFF</span>' : ''; ?></td>
+					<td class="fw-semibold"><?php echo htmlspecialchars($c['label']); ?> <?php echo ($c['type'] ?? '') === 'loc' ? '<span class="badge bg-info text-dark" style="font-size:0.54rem;">LOAN</span> ' : ''; ?><?php echo $c['is_target'] ? '<span class="badge bg-primary" style="font-size:0.58rem;">FOCUS</span>' : ''; ?><?php echo $c['paid_off'] ? ' <span class="badge bg-success" style="font-size:0.58rem;">PAID OFF</span>' : ''; ?></td>
 					<td class="text-end"><?php echo $c['apr'] !== null ? rtrim(rtrim(number_format($c['apr'],2),'0'),'.').'%' : '—'; ?></td>
 					<td class="text-end text-muted"><?php echo money0($c['balance']); ?><?php echo isset($c['available']) && $c['available'] !== null ? '<br><span style="font-size:0.66rem;">'.money0($c['available']).' Avail</span>' : ''; ?></td>
 					<td class="text-end fw-bold"><?php echo money($c['amount']); ?></td>
 				</tr>
 			<?php endforeach; ?>
 			</tbody>
-			<tfoot><tr class="fw-bold border-top"><td colspan="4">Total to cards this month</td><td class="text-end"><?php echo money(array_sum(array_map(fn($c)=>$c['amount'],$cps))); ?></td></tr></tfoot>
+			<tfoot><tr class="fw-bold border-top"><td colspan="4">Total to cards &amp; loans this month</td><td class="text-end"><?php echo money(array_sum(array_map(fn($c)=>$c['amount'],$cps))); ?></td></tr></tfoot>
 		</table>
 		<?php endif; ?>
 	</div></div>
@@ -406,10 +406,11 @@
 
 		<?php if (!empty($b['card_payments'])): ?>
 		<div class="mt-2">
-			<div class="fw-semibold text-uppercase mb-1" style="font-size:0.6rem;letter-spacing:.04em;color:#6f42c1;">Card Payments &amp; Balances</div>
+			<div class="fw-semibold text-uppercase mb-1" style="font-size:0.6rem;letter-spacing:.04em;color:#6f42c1;">Card &amp; Loan Payments</div>
 			<?php foreach ($b['card_payments'] as $c): ?>
 			<div class="d-flex justify-content-between align-items-center py-1" style="font-size:0.76rem;border-bottom:1px solid #f3f1fa;">
 				<span><?php echo htmlspecialchars($c['label']); ?><?php
+					echo ($c['type'] ?? '') === 'loc' ? ' <span class="badge bg-info text-dark" style="font-size:0.5rem;vertical-align:middle;">LOAN</span>' : '';
 					echo $c['apr'] !== null ? ' <span class="text-muted" style="font-size:0.66rem;">'.rtrim(rtrim(number_format($c['apr'],2),'0'),'.').'%</span>' : '';
 					echo $c['is_target'] ? ' <span class="badge bg-primary" style="font-size:0.54rem;vertical-align:middle;">FOCUS</span>' : '';
 					echo $c['paid_off'] ? ' <span class="badge bg-success" style="font-size:0.54rem;vertical-align:middle;">PAID OFF</span>' : '';

@@ -76,7 +76,7 @@ function charles_snapshot($db) {
 			'end_debt' => round($b['end_debt']),
 			'credit_out' => round($b['credit_out_total'] ?? 0),
 			'tax_reserve' => round($b['tax_reserve'] ?? 0),
-			'card_payments' => array_map(fn($c) => ['label' => $c['label'], 'amount' => round($c['amount']), 'apr' => $c['apr'], 'balance' => round($c['balance'])], $b['card_payments'] ?? []),
+			'card_payments' => array_map(fn($c) => ['label' => $c['label'], 'amount' => round($c['amount']), 'apr' => $c['apr'], 'balance' => round($c['balance']), 'type' => $c['type'] ?? 'credit'], $b['card_payments'] ?? []),
 		];
 	}
 
