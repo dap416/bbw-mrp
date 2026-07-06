@@ -390,7 +390,8 @@ var chVoices = [], chVoiceName = localStorage.getItem('charlesVoiceName') || '';
 var chSR = window.SpeechRecognition || window.webkitSpeechRecognition;
 var chRecog = null, chListening = false, chFinalText = '', chPttHeld = false;
 function chStatus(s){ $('#chStatus').text(s || ''); }
-function chLiveHint(){ if (chLive) chStatus('Hold Tab (or the mic) to talk'); }
+function chLiveHint(){ if (chLive) chStatus('Hold Spacebar (or the mic) to talk'); }
+function chIsTyping(e){ var el = e.target, tag = (el && el.tagName || '').toLowerCase(); return tag === 'input' || tag === 'textarea' || tag === 'select' || (el && el.isContentEditable); }
 function chUpdVoiceBtn(){ $('#chVoice').html(chVoiceOn ? '🔊 Voice on' : '🔈 Voice off').toggleClass('btn-primary', chVoiceOn).toggleClass('btn-light', !chVoiceOn); }
 chUpdVoiceBtn();
 
@@ -452,8 +453,8 @@ $('#chCall').on('click', function(){
 // Holding also INTERRUPTS Charles mid-sentence so you can jump in.
 function chPttStart(){ if (!chLive || chListening || chPending) return; chPttHeld = true; if (window.speechSynthesis) speechSynthesis.cancel(); chListen(); }
 function chPttStop(){ if (!chPttHeld) return; chPttHeld = false; chStopListen(); }   // onend auto-sends the transcript
-$(document).on('keydown', function(e){ if (chLive && (e.key === 'Tab' || e.keyCode === 9) && !e.repeat) { e.preventDefault(); chPttStart(); } });
-$(document).on('keyup',   function(e){ if (chLive && (e.key === 'Tab' || e.keyCode === 9)) { e.preventDefault(); chPttStop(); } });
+$(document).on('keydown', function(e){ if (chLive && (e.key === ' ' || e.code === 'Space' || e.keyCode === 32) && !e.repeat && !chIsTyping(e)) { e.preventDefault(); chPttStart(); } });
+$(document).on('keyup',   function(e){ if (chLive && (e.key === ' ' || e.code === 'Space' || e.keyCode === 32) && !chIsTyping(e)) { e.preventDefault(); chPttStop(); } });
 $('#chMic').on('mousedown touchstart', function(e){ if (chLive) { e.preventDefault(); chPttStart(); } });
 $(document).on('mouseup touchend', function(){ if (chLive) chPttStop(); });
 
