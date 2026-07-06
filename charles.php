@@ -218,10 +218,14 @@
 <!-- ══ TALK TAB ══════════════════════════════════════════════════════════════ -->
 <div id="tab-talk" class="charles-tab" style="display:flex;flex-direction:column;">
 	<div class="d-flex align-items-center justify-content-between mb-2 flex-wrap gap-2">
-		<span class="fw-semibold"><i class="ti ti-user-dollar me-1" style="color:#2ca01c;"></i>Charles is on the line</span>
 		<div class="d-flex gap-2 align-items-center">
+			<button id="chCall" class="btn btn-sm btn-outline-success">📞 Hands-free</button>
+			<span id="chStatus" class="small text-muted"></span>
+		</div>
+		<div class="d-flex gap-2 align-items-center flex-wrap">
 			<button id="chVoice" class="btn btn-sm btn-light" title="Have Charles speak his replies">🔈 Voice off</button>
-			<select id="chHistory" class="form-select form-select-sm" style="width:150px;"><option value="">History…</option></select>
+			<select id="chVoiceSel" class="form-select form-select-sm" style="width:150px;" title="Charles's voice"></select>
+			<select id="chHistory" class="form-select form-select-sm" style="width:130px;"><option value="">History…</option></select>
 			<button id="chNew" class="btn btn-sm btn-light">+ New</button>
 			<a href="#" id="chDelete" class="small text-danger hidden">delete</a>
 		</div>
@@ -313,8 +317,8 @@ function chSend(){
 	$('#chInput').val(''); chMsgs.push({role:'user',content:t}); $('#chActions').addClass('hidden').html(''); window._chTasks=null;
 	chPending=true; chRender();
 	$.ajax({url:'/ajax/charles/chat.php',method:'POST',dataType:'json',timeout:180000,data:{messages:JSON.stringify(chMsgs), chat_id:chChatId}})
-	.done(function(d){ chPending=false; if(!d||d.error){ chMsgs.push({role:'assistant',content:'⚠ '+((d&&d.error)||'failed')}); chRender(); return; } chMsgs.push({role:'assistant',content:d.reply||'(no reply)'}); if(d.chat_id) chChatId=d.chat_id; chRender(); chLoadHistory(); if(typeof chSpeak==='function') chSpeak(d.reply||''); if(d.tasks&&d.tasks.length) chShowTasks(d.tasks); })
-	.fail(function(x,s){ chPending=false; chMsgs.push({role:'assistant',content:'⚠ '+(s==='timeout'?'timed out — try again':'request failed')}); chRender(); });
+	.done(function(d){ chPending=false; if(!d||d.error){ chMsgs.push({role:'assistant',content:'⚠ '+((d&&d.error)||'failed')}); chRender(); return; } chMsgs.push({role:'assistant',content:d.reply||'(no reply)'}); if(d.chat_id) chChatId=d.chat_id; chRender(); chLoadHistory(); if(typeof chSpeak==='function') chSpeak(d.reply||'', function(){ if(typeof chHandsFree!=='undefined' && chHandsFree){ chStatus('Your turn…'); setTimeout(chListen, 300); } }); if(d.tasks&&d.tasks.length) chShowTasks(d.tasks); })
+	.fail(function(x,s){ chPending=false; chMsgs.push({role:'assistant',content:'⚠ '+(s==='timeout'?'timed out — try again':'request failed')}); chRender(); if(typeof chHandsFree!=='undefined' && chHandsFree){ chStatus('Your turn…'); setTimeout(chListen, 500); } });
 }
 $('#chSend').on('click', chSend);
 $('#chInput').on('keypress', function(e){ if(e.which===13) chSend(); });
@@ -379,34 +383,71 @@ $('#charlesTabs a').on('click', function(e){
 	else { setTimeout(function(){ window.dispatchEvent(new Event('resize')); }, 60); }  // let Chart.js size to the now-visible tab
 });
 
-// ── Voice: Charles speaks his replies (text-to-speech) ──
+// ── Voice state ──
 var chVoiceOn = localStorage.getItem('charlesVoice') === '1';
+var chHandsFree = false;
+var chVoices = [], chVoiceName = localStorage.getItem('charlesVoiceName') || '';
+var chSR = window.SpeechRecognition || window.webkitSpeechRecognition;
+var chRecog = null, chListening = false, chFinalText = '';
+function chStatus(s){ $('#chStatus').text(s || ''); }
 function chUpdVoiceBtn(){ $('#chVoice').html(chVoiceOn ? '🔊 Voice on' : '🔈 Voice off').toggleClass('btn-primary', chVoiceOn).toggleClass('btn-light', !chVoiceOn); }
 chUpdVoiceBtn();
-$('#chVoice').on('click', function(){ chVoiceOn = !chVoiceOn; localStorage.setItem('charlesVoice', chVoiceOn ? '1' : '0'); chUpdVoiceBtn(); if (!chVoiceOn && window.speechSynthesis) speechSynthesis.cancel(); if (chVoiceOn) chSpeak('Okay, I can talk now.'); });
-function chSpeak(text){
-	if (!chVoiceOn || !window.speechSynthesis || !text) return;
+
+// Voice picker (populate from the device's speechSynthesis voices).
+function chLoadVoices(){
+	if (!window.speechSynthesis) { $('#chVoiceSel').hide(); return; }
+	chVoices = speechSynthesis.getVoices() || [];
+	var en = chVoices.filter(function(v){ return /^en/i.test(v.lang); });
+	var list = en.length ? en : chVoices;
+	if (!list.length) return;
+	var o = '<option value="">Default voice</option>';
+	list.forEach(function(v){ o += '<option value="' + v.name.replace(/"/g,'') + '"' + (v.name === chVoiceName ? ' selected' : '') + '>' + v.name + '</option>'; });
+	$('#chVoiceSel').html(o);
+}
+if (window.speechSynthesis) { chLoadVoices(); speechSynthesis.onvoiceschanged = chLoadVoices; } else { $('#chVoiceSel').hide(); }
+$('#chVoiceSel').on('change', function(){ chVoiceName = $(this).val(); localStorage.setItem('charlesVoiceName', chVoiceName); if (chVoiceOn) chSpeak('This is how I sound now.'); });
+
+// Charles speaks (text-to-speech); onDone fires when he finishes.
+function chSpeak(text, onDone){
+	if (!chVoiceOn || !window.speechSynthesis || !text) { if (onDone) onDone(); return; }
 	try {
 		speechSynthesis.cancel();
 		var clean = String(text).replace(/```[\s\S]*?```/g, '').replace(/[#*_`>]/g, '').replace(/\s+/g, ' ').trim();
-		if (!clean) return;
+		if (!clean) { if (onDone) onDone(); return; }
 		var u = new SpeechSynthesisUtterance(clean); u.rate = 1.03; u.pitch = 1;
+		if (chVoiceName) { var vv = chVoices.filter(function(v){ return v.name === chVoiceName; })[0]; if (vv) u.voice = vv; }
+		u.onend = function(){ if (onDone) onDone(); };
+		u.onerror = function(){ if (onDone) onDone(); };
+		if (chHandsFree) chStatus('Charles is talking…');
 		speechSynthesis.speak(u);
-	} catch (e) {}
+	} catch (e) { if (onDone) onDone(); }
 }
+$('#chVoice').on('click', function(){ chVoiceOn = !chVoiceOn; localStorage.setItem('charlesVoice', chVoiceOn ? '1' : '0'); chUpdVoiceBtn(); if (!chVoiceOn && window.speechSynthesis) speechSynthesis.cancel(); if (chVoiceOn) chSpeak('Okay, I can talk now.'); });
 
-// ── Voice: you speak to Charles (speech-to-text mic) ──
-(function(){
-	var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-	if (!SR) { $('#chMic').prop('disabled', true).attr('title', 'Voice input isn\'t supported in this browser — try Chrome.'); return; }
-	var recog = new SR(); recog.lang = 'en-US'; recog.interimResults = true; recog.maxAlternatives = 1;
-	var listening = false, finalText = '';
-	recog.onstart = function(){ listening = true; $('#chMic').removeClass('btn-outline-secondary').addClass('btn-danger'); };
-	recog.onresult = function(e){ var interim = '', fin = ''; for (var i = e.resultIndex; i < e.results.length; i++){ if (e.results[i].isFinal) fin += e.results[i][0].transcript; else interim += e.results[i][0].transcript; } if (fin) finalText += fin; $('#chInput').val((finalText + ' ' + interim).trim()); };
-	recog.onerror = function(){ listening = false; $('#chMic').removeClass('btn-danger').addClass('btn-outline-secondary'); };
-	recog.onend = function(){ listening = false; $('#chMic').removeClass('btn-danger').addClass('btn-outline-secondary'); var t = $.trim($('#chInput').val()); if (t) chSend(); finalText = ''; };
-	$('#chMic').on('click', function(){ if (listening) { recog.stop(); return; } finalText = ''; $('#chInput').val(''); if (window.speechSynthesis) speechSynthesis.cancel(); try { recog.start(); } catch(_){} });
-})();
+// Mic (speech-to-text).
+if (!chSR) { $('#chMic, #chCall').prop('disabled', true).attr('title', 'Voice needs Chrome or Edge.'); }
+else {
+	chRecog = new chSR(); chRecog.lang = 'en-US'; chRecog.interimResults = true; chRecog.maxAlternatives = 1;
+	chRecog.onstart  = function(){ chListening = true; $('#chMic').removeClass('btn-outline-secondary').addClass('btn-danger'); chStatus(chHandsFree ? 'Listening…' : ''); };
+	chRecog.onresult = function(e){ var interim = '', fin = ''; for (var i = e.resultIndex; i < e.results.length; i++){ if (e.results[i].isFinal) fin += e.results[i][0].transcript; else interim += e.results[i][0].transcript; } if (fin) chFinalText += fin; $('#chInput').val((chFinalText + ' ' + interim).trim()); };
+	chRecog.onerror  = function(ev){ chListening = false; $('#chMic').removeClass('btn-danger').addClass('btn-outline-secondary'); if (chHandsFree && ev.error !== 'aborted') setTimeout(chListen, 900); };
+	chRecog.onend    = function(){ chListening = false; $('#chMic').removeClass('btn-danger').addClass('btn-outline-secondary'); var t = $.trim($('#chInput').val()); chFinalText = ''; if (t) { chSend(); } else if (chHandsFree) { setTimeout(chListen, 700); } };
+}
+function chListen(){ if (!chRecog || chListening || chPending) return; try { chFinalText = ''; $('#chInput').val(''); if (window.speechSynthesis) speechSynthesis.cancel(); chRecog.start(); } catch(_){} }
+$('#chMic').on('click', function(){ if (chListening) { try { chRecog.stop(); } catch(_){} return; } chListen(); });
+
+// Hands-free (continuous back-and-forth "call").
+$('#chCall').on('click', function(){
+	chHandsFree = !chHandsFree;
+	$('#chCall').toggleClass('btn-success', chHandsFree).toggleClass('btn-outline-success', !chHandsFree).html(chHandsFree ? '📞 End call' : '📞 Hands-free');
+	if (chHandsFree) {
+		if (!chVoiceOn) { chVoiceOn = true; localStorage.setItem('charlesVoice', '1'); chUpdVoiceBtn(); }
+		chStatus('Hands-free on — go ahead'); chListen();
+	} else {
+		if (chRecog && chListening) { try { chRecog.abort(); } catch(_){} }
+		chListening = false; if (window.speechSynthesis) speechSynthesis.cancel(); chStatus('');
+	}
+});
 
 // ── Opening: Charles greets with a quick update when you arrive ──
 setTimeout(function(){ if (chMsgs.length === 0 && chChatId === 0 && !window._chOpened) { window._chOpened = true; $('#chInput').val("Give me a brief update — the 1 or 2 most important things right now, then let's talk."); chSend(); } }, 500);
