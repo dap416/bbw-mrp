@@ -33,15 +33,19 @@ function charles_snapshot($db) {
 		$row = [
 			'label' => $c['label'], 'balance' => (float)$c['balance'],
 			'limit' => $lim, 'apr' => ($c['apr'] !== null && $c['apr'] !== '') ? (float)$c['apr'] : null,
-			'min' => ($c['payment'] !== null && $c['payment'] !== '') ? (float)$c['payment'] : null,
+			'monthly_payment' => ($c['payment'] !== null && $c['payment'] !== '') ? (float)$c['payment'] : null,
+			'note' => $c['note'] ?? '',
 			'available' => $lim !== null ? max(0.0, $lim - (float)$c['balance']) : null,
 		];
 		if (($c['type'] ?? '') === 'loc') $locs[] = $row; else $cards[] = $row;
 	}
-	$cardDebt  = array_sum(array_map(fn($x) => $x['balance'], $cards));
-	$locDebt   = array_sum(array_map(fn($x) => $x['balance'], $locs));
-	$cardAvail = array_sum(array_map(fn($x) => (float)($x['available'] ?? 0), $cards));
-	$locAvail  = array_sum(array_map(fn($x) => (float)($x['available'] ?? 0), $locs));
+	// Facility-based figures: the LOC has ONE shared limit across its loan draws.
+	$cardDebt   = (float)($man['card_total']     ?? array_sum(array_map(fn($x) => $x['balance'], $cards)));
+	$locDebt    = (float)($man['loc_total']      ?? array_sum(array_map(fn($x) => $x['balance'], $locs)));
+	$cardAvail  = (float)($man['card_available'] ?? 0);
+	$locAvail   = (float)($man['loc_available']  ?? 0);
+	$locLimitV  = (float)($man['loc_limit']      ?? 0);
+	$locPayment = (float)($man['loc_payment']    ?? 0);
 
 	// Inventory valuation (mirrors includes/header.php).
 	$ohVal   = (float)($db->query("SELECT SUM(`qoh`*`cost`) v FROM `parts`")->fetch()['v'] ?? 0);
@@ -116,6 +120,8 @@ function charles_snapshot($db) {
 		'cards' => $cards, 'locs' => $locs,
 		'card_debt' => round($cardDebt), 'loc_debt' => round($locDebt),
 		'card_available' => round($cardAvail), 'loc_available' => round($locAvail),
+		'loc_limit' => round($locLimitV), 'loc_monthly_payment' => round($locPayment, 2),
+		'loc_note' => 'The line of credit is ONE facility (limit = loc_limit) with these loan draws (locs[]). loc_available = loc_limit − total loan balances. The monthly loan payments are ACTUAL CASH OUT of the bank; each loan pays off after its remaining payments and then that outflow stops and the LOC frees up.',
 		'ar_total' => round((float)($data['ar_total'] ?? 0)),
 		'ap_total' => round((float)($data['ap_total'] ?? 0)),
 		'ap_total_note' => 'ap_total = supplier bills + open MRP purchase orders, modeled as CASH owed (open POs draw down bank cash; the MRP does NOT tag a PO as paid-by-card). It excludes upcoming_card_charges below.',

@@ -195,6 +195,8 @@
 			'bank' => [], 'credit' => [],
 			'bank_total' => 0.0, 'credit_total' => 0.0,
 			'credit_limit_total' => 0.0, 'credit_available' => 0.0,
+			'card_total' => 0.0, 'card_limit_total' => 0.0, 'card_available' => 0.0,
+			'loc_total' => 0.0, 'loc_payment' => 0.0, 'loc_limit' => 0.0, 'loc_available' => 0.0,
 			'oldest_asof' => null, 'due_count' => 0, 'update_days' => 7,
 		];
 		try {
@@ -202,6 +204,7 @@
 			$updDays   = balance_update_days($db);
 			$res['due_count']   = 0;
 			$res['update_days'] = $updDays;
+			$rowLocLimit = 0.0;   // per-row LOC limits (fallback when no facility limit is set)
 			foreach ($db->query("SELECT * FROM cash_balances ORDER BY acct_type, label") as $r) {
 				$daysOld = (!empty($r['as_of']) && $r['as_of'] !== '0000-00-00')
 					? (int)floor((strtotime(date('Y-m-d')) - strtotime($r['as_of'])) / 86400) : null;
@@ -228,13 +231,22 @@
 					$row['kind'] = $r['acct_type'] === 'loc' ? 'Line of Credit' : 'Credit Card';
 					$res['credit'][] = $row;
 					$res['credit_total'] += $row['balance'];
-					if ($row['limit'] !== null) $res['credit_limit_total'] += $row['limit'];
+					if ($r['acct_type'] === 'loc') { $res['loc_total'] += $row['balance']; $res['loc_payment'] += $row['payment']; if ($row['limit'] !== null) $rowLocLimit += $row['limit']; }
+					else { $res['card_total'] += $row['balance']; if ($row['limit'] !== null) $res['card_limit_total'] += $row['limit']; }
 				}
 				if (!empty($r['as_of']) && ($res['oldest_asof'] === null || $r['as_of'] < $res['oldest_asof'])) {
 					$res['oldest_asof'] = $r['as_of'];
 				}
 			}
-			$res['credit_available'] = $res['credit_limit_total'] - $res['credit_total'];
+			// LOC "available to draw" uses the shared facility limit (loc_limit setting)
+			// so two loan draws against one $85k line don't over-count available credit.
+			$locLimit    = loc_limit($db);
+			$effLocLimit = $locLimit > 0 ? $locLimit : $rowLocLimit;
+			$res['loc_limit']          = $locLimit;
+			$res['loc_available']      = max(0.0, $effLocLimit - $res['loc_total']);
+			$res['card_available']     = $res['card_limit_total'] - $res['card_total'];
+			$res['credit_limit_total'] = $res['card_limit_total'] + $effLocLimit;
+			$res['credit_available']   = $res['card_available'] + $res['loc_available'];
 		} catch (Throwable $e) { /* table issue — return empty */ }
 		return $res;
 	}
@@ -560,6 +572,18 @@
 	/** Monthly amount set aside for taxes (accrues, paid at quarter end). Default 0. */
 	function tax_monthly($db) {
 		try { $v = setting_get($db, 'tax_monthly'); if ($v !== null && $v !== '') return max(0.0, (float)$v); }
+		catch (Throwable $e) {}
+		return 0.0;
+	}
+
+	/**
+	 * Total line-of-credit FACILITY limit — the LOC's ceiling, shared across its draws
+	 * (loans). "LOC available to draw" = this limit minus the sum of the loan balances.
+	 * When set (> 0), it overrides per-row LOC limits so multiple loan draws against one
+	 * facility don't over-count available credit. Default 0 (fall back to per-row limits).
+	 */
+	function loc_limit($db) {
+		try { $v = setting_get($db, 'loc_limit'); if ($v !== null && $v !== '') return max(0.0, (float)$v); }
 		catch (Throwable $e) {}
 		return 0.0;
 	}

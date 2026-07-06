@@ -88,28 +88,39 @@
 	</div></div></div>
 	<div class="col-12 col-lg-6"><div class="card h-100"><div class="card-body">
 		<h6 class="fw-bold mb-2">Cards &amp; line of credit</h6>
-		<?php
-		$allDebt = array_merge(
-			array_map(function($c){ $c['kind']='card'; return $c; }, $snap['cards']),
-			array_map(function($c){ $c['kind']='loc';  return $c; }, $snap['locs'])
-		);
-		if (empty($allDebt)): ?>
+		<?php if (empty($snap['cards']) && empty($snap['locs'])): ?>
 			<div class="text-muted small">No cards or line of credit on file. Add them (with APR &amp; limit) on the Cash Flow page so Charles can plan financing.</div>
-		<?php else: foreach ($allDebt as $c):
-			$lim = $c['limit']; $bal = $c['balance'];
-			$pct = ($lim && $lim > 0) ? min(100, round($bal / $lim * 100)) : 0;
-			$col = $c['kind']==='loc' ? '#6f42c1' : ($pct >= 80 ? '#e64545' : '#4680ff'); ?>
-			<div class="mb-2">
-				<div class="d-flex justify-content-between small">
-					<span class="fw-semibold"><?php echo htmlspecialchars($c['label']); ?>
-						<span class="badge <?php echo $c['kind']==='loc'?'bg-info text-dark':'bg-light text-dark'; ?>" style="font-size:0.54rem;"><?php echo $c['kind']==='loc'?'LOC':'CARD'; ?></span>
-						<?php echo $c['apr']!==null ? '<span class="text-muted" style="font-size:0.66rem;">'.rtrim(rtrim(number_format($c['apr'],2),'0'),'.').'% APR</span>' : ''; ?>
-					</span>
-					<span><?php echo c_money0($bal); ?><?php echo $lim!==null ? ' <span class="text-muted">/ '.c_money0($lim).'</span>' : ''; ?></span>
+		<?php else: ?>
+			<?php foreach ($snap['cards'] as $c):
+				$lim = $c['limit']; $bal = $c['balance'];
+				$pct = ($lim && $lim > 0) ? min(100, round($bal / $lim * 100)) : 0;
+				$col = $pct >= 80 ? '#e64545' : '#4680ff'; ?>
+				<div class="mb-2">
+					<div class="d-flex justify-content-between small">
+						<span class="fw-semibold"><?php echo htmlspecialchars($c['label']); ?> <span class="badge bg-light text-dark" style="font-size:0.54rem;">CARD</span> <?php echo $c['apr']!==null ? '<span class="text-muted" style="font-size:0.66rem;">'.rtrim(rtrim(number_format($c['apr'],2),'0'),'.').'% APR</span>' : ''; ?></span>
+						<span><?php echo c_money0($bal); ?><?php echo $lim!==null ? ' <span class="text-muted">/ '.c_money0($lim).'</span>' : ''; ?></span>
+					</div>
+					<div style="height:7px;background:#eef1f5;border-radius:4px;overflow:hidden;"><div style="height:100%;width:<?php echo $pct; ?>%;background:<?php echo $col; ?>;"></div></div>
 				</div>
-				<div style="height:7px;background:#eef1f5;border-radius:4px;overflow:hidden;"><div style="height:100%;width:<?php echo $pct; ?>%;background:<?php echo $col; ?>;"></div></div>
-			</div>
-		<?php endforeach; endif; ?>
+			<?php endforeach; ?>
+
+			<?php if (!empty($snap['locs']) || !empty($snap['loc_limit'])):
+				$loclim = (float)($snap['loc_limit'] ?? 0); $locbal = (float)($snap['loc_debt'] ?? 0);
+				$lpct = ($loclim > 0) ? min(100, round($locbal / $loclim * 100)) : 0; ?>
+				<div class="mt-3 d-flex justify-content-between small">
+					<span class="fw-semibold">Line of Credit <span class="badge bg-info text-dark" style="font-size:0.54rem;">LOC</span></span>
+					<span><?php echo c_money0($locbal); ?><?php echo $loclim > 0 ? ' <span class="text-muted">/ '.c_money0($loclim).'</span>' : ''; ?></span>
+				</div>
+				<div style="height:7px;background:#eef1f5;border-radius:4px;overflow:hidden;"><div style="height:100%;width:<?php echo $lpct; ?>%;background:#6f42c1;"></div></div>
+				<div class="text-muted mt-1" style="font-size:0.68rem;"><strong><?php echo c_money0($snap['loc_available'] ?? 0); ?></strong> available to draw · <?php echo c_money0($snap['loc_monthly_payment'] ?? 0); ?>/mo in loan payments (cash out)</div>
+				<?php foreach ($snap['locs'] as $l): ?>
+					<div class="d-flex justify-content-between small mt-1" style="padding-left:0.5rem;border-left:2px solid #e6e0f5;">
+						<span><?php echo htmlspecialchars($l['label']); ?><?php echo !empty($l['note']) ? '<br><span class="text-muted" style="font-size:0.63rem;">'.htmlspecialchars($l['note']).'</span>' : ''; ?></span>
+						<span class="text-end"><?php echo c_money0($l['balance']); ?><?php echo !empty($l['monthly_payment']) ? '<br><span class="text-muted" style="font-size:0.63rem;">'.c_money0($l['monthly_payment']).'/mo</span>' : ''; ?></span>
+					</div>
+				<?php endforeach; ?>
+			<?php endif; ?>
+		<?php endif; ?>
 	</div></div></div>
 </div>
 

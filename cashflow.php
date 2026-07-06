@@ -225,6 +225,7 @@
 				<div class="col-12"><label class="form-text mb-0">Shopify loan — % of sales to cash out</label><div class="input-group input-group-sm"><input type="text" id="loanPct" class="form-control" value="<?php echo rtrim(rtrim(number_format($loanPct,2),'0'),'.'); ?>" /><span class="input-group-text">%</span></div></div>
 				<div class="col-12"><label class="form-text mb-0">Cash buffer — keep this in the bank all year</label><div class="input-group input-group-sm"><span class="input-group-text">$</span><input type="text" id="cashBuffer" class="form-control" value="<?php echo number_format($monthData['buffer'], 0, '.', ''); ?>" /></div></div>
 				<div class="col-12"><label class="form-text mb-0">Tax set-aside — saved each month, paid each quarter</label><div class="input-group input-group-sm"><span class="input-group-text">$</span><input type="text" id="taxMonthly" class="form-control" value="<?php echo number_format($monthData['tax_monthly'], 0, '.', ''); ?>" /><span class="input-group-text">/mo</span></div></div>
+				<div class="col-12"><label class="form-text mb-0">Line-of-credit total limit — the whole facility's ceiling</label><div class="input-group input-group-sm"><span class="input-group-text">$</span><input type="text" id="locLimit" class="form-control" value="<?php echo number_format(loc_limit($db), 0, '.', ''); ?>" /></div><div class="form-text" style="font-size:0.66rem;">Available to draw = this limit − your LOC loan balances.</div></div>
 				<div class="col-12"><button class="btn btn-sm btn-primary" id="loanSaveBtn">Save settings</button> <span id="loanMsg" class="small"></span></div>
 			</div>
 			<div class="text-muted" style="font-size:0.7rem;">Loan: 25% repays Shopify Capital (set 0 when paid off). Buffer: extra cash above this is thrown at the highest-APR card. Tax: builds a reserve, released each quarter-end.</div>
@@ -540,7 +541,7 @@
 	});
 
 	// ── Planning settings (loan %, cash buffer, monthly tax) ──
-	$('#loanSaveBtn').on('click', function(){ var $btn=$(this).prop('disabled',true); $.post('/ajax/cashflow/save_settings.php', { shopify_loan_pct:$('#loanPct').val(), cash_buffer:$('#cashBuffer').val(), tax_monthly:$('#taxMonthly').val() }, function(resp){ if($.trim(resp)==='ok') location.reload(); else { $('#loanMsg').addClass('text-danger').text(resp); $btn.prop('disabled',false); } }).fail(function(x){ $('#loanMsg').addClass('text-danger').text('Failed'); $btn.prop('disabled',false); }); });
+	$('#loanSaveBtn').on('click', function(){ var $btn=$(this).prop('disabled',true); $.post('/ajax/cashflow/save_settings.php', { shopify_loan_pct:$('#loanPct').val(), cash_buffer:$('#cashBuffer').val(), tax_monthly:$('#taxMonthly').val(), loc_limit:$('#locLimit').val() }, function(resp){ if($.trim(resp)==='ok') location.reload(); else { $('#loanMsg').addClass('text-danger').text(resp); $btn.prop('disabled',false); } }).fail(function(x){ $('#loanMsg').addClass('text-danger').text('Failed'); $btn.prop('disabled',false); }); });
 
 	// ── AI Cash Flow Assistant (saved & resumable) ──
 	var cfMsgs = [], cfChatId = 0, cfHistLoaded = false;

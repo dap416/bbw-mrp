@@ -22,6 +22,9 @@ try {
 	if (isset($_POST['tax_monthly'])) {
 		setting_set($db, 'tax_monthly', (string)max(0.0, (float)$_POST['tax_monthly']));
 	}
+	if (isset($_POST['loc_limit'])) {
+		setting_set($db, 'loc_limit', (string)max(0.0, (float)$_POST['loc_limit']));
+	}
 	if (isset($_POST['cashflow_hide_before'])) {
 		$v = trim($_POST['cashflow_hide_before']);
 		if ($v === '' || $v === 'reset')          { setting_set($db, 'cashflow_hide_before', ''); }
