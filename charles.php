@@ -122,6 +122,42 @@
 <div class="card mb-3"><div class="card-body py-2 text-muted small">Your full P&amp;L / expense history loads when Charles analyzes — hit <strong>Re-analyze</strong> above to pull it from QuickBooks (refreshes weekly).</div></div>
 <?php endif; ?>
 
+<!-- ── TRADESHOW ROI ────────────────────────────────────────────────────────── -->
+<?php $roi = $snap['tradeshow_roi'] ?? []; $roiRows = $roi['rows'] ?? []; ?>
+<?php if (!empty($roiRows)): ?>
+<div class="card mb-3"><div class="card-body">
+	<h6 class="fw-bold mb-1">Tradeshow ROI <span class="text-muted small">— last season's floor sales vs. cost</span></h6>
+	<p class="text-muted small mb-2">Enter each show's <strong>all-in cost</strong> (booth, travel, lodging, labor) and Charles scores its ROI. Under 1.0× means it sold less on the floor than it cost — though a show can still be worth it for the wholesale accounts and exposure it brings.</p>
+	<div class="row g-3">
+		<div class="col-12 col-lg-7">
+			<div class="table-responsive"><table class="table table-sm align-middle mb-1" style="font-size:0.84rem;">
+				<thead><tr><th>Show</th><th class="text-end">Revenue</th><th class="text-end">Your cost</th><th class="text-center">ROI</th></tr></thead>
+				<tbody>
+				<?php foreach ($roiRows as $r):
+					$rv = $r['roi']; $col = $rv===null ? '#adb5bd' : ($rv < 1 ? '#e64545' : ($rv < 1.5 ? '#d9822b' : '#2ca01c')); ?>
+					<tr>
+						<td class="fw-semibold"><?php echo htmlspecialchars($r['show']); ?></td>
+						<td class="text-end"><?php echo c_money0($r['revenue']); ?></td>
+						<td class="text-end">
+							<div class="input-group input-group-sm" style="max-width:120px;margin-left:auto;">
+								<span class="input-group-text">$</span>
+								<input type="number" class="form-control show-cost" data-show="<?php echo htmlspecialchars($r['show'], ENT_QUOTES); ?>" value="<?php echo $r['cost']!==null ? (int)$r['cost'] : ''; ?>" placeholder="cost">
+							</div>
+						</td>
+						<td class="text-center"><?php echo $rv===null ? '<span class="text-muted">—</span>' : '<span class="fw-bold" style="color:'.$col.';">'.number_format($rv,2).'×</span>' . ($rv<1 ? ' <span class="badge bg-danger" style="font-size:0.5rem;vertical-align:middle;">under 1</span>' : ''); ?></td>
+					</tr>
+				<?php endforeach; ?>
+				</tbody>
+			</table></div>
+			<div class="text-muted" style="font-size:0.68rem;">Revenue = POS sales at the show over <?php echo htmlspecialchars($roi['window'] ?? ''); ?>.</div>
+		</div>
+		<div class="col-12 col-lg-5"><canvas id="chartRoi" height="220"></canvas></div>
+	</div>
+</div></div>
+<?php elseif (isset($snap['tradeshow_roi'])): ?>
+<div class="card mb-3"><div class="card-body py-2 text-muted small">Tradeshow ROI loads when Charles analyzes — hit <strong>Re-analyze</strong> above to pull last season's show sales.</div></div>
+<?php endif; ?>
+
 <!-- ── DATA GAPS ────────────────────────────────────────────────────────────── -->
 <?php if (!empty($snap['data_gaps'])): ?>
 <div class="card mb-3" style="border-left:4px solid #d9822b;"><div class="card-body py-2">
@@ -151,7 +187,7 @@
 </div></div>
 
 <script>
-var CH = <?php echo json_encode(['months' => $snap['months'], 'forecast' => $snap['forecast'], 'buffer' => $buffer, 'expense_yoy' => $snap['expense_yoy']], JSON_UNESCAPED_SLASHES); ?>;
+var CH = <?php echo json_encode(['months' => $snap['months'], 'forecast' => $snap['forecast'], 'buffer' => $buffer, 'expense_yoy' => $snap['expense_yoy'], 'tradeshow_roi' => $snap['tradeshow_roi']], JSON_UNESCAPED_SLASHES); ?>;
 (function(){
 	if (typeof Chart === 'undefined') return;
 	var usd = function(v){ return '$' + Number(v||0).toLocaleString(); };
@@ -262,6 +298,26 @@ chLoadHistory();
 		options: { plugins: { legend: { labels: { boxWidth: 12, font: { size: 11 } } } }, scales: { y: { ticks: { callback: function(v){ return '$' + Number(v||0).toLocaleString(); } } }, x: { ticks: { font: { size: 10 } } } } }
 	});
 })();
+
+// ── Tradeshow ROI chart + cost inputs ──
+(function(){
+	var roi = CH.tradeshow_roi;
+	if (typeof Chart === 'undefined' || !roi || !roi.rows) return;
+	var el = document.getElementById('chartRoi'); if (!el) return;
+	var rows = roi.rows.filter(function(r){ return r.roi !== null && r.roi !== undefined; });
+	if (!rows.length) { $(el).replaceWith('<div class="text-muted small">Enter show costs on the left and the ROI chart appears here.</div>'); return; }
+	new Chart(el, {
+		type: 'bar',
+		data: { labels: rows.map(function(r){ return r.show; }), datasets: [{ label: 'ROI (×)', data: rows.map(function(r){ return r.roi; }), backgroundColor: rows.map(function(r){ return r.roi < 1 ? '#e64545' : (r.roi < 1.5 ? '#d9822b' : '#2ca01c'); }) }] },
+		options: { indexAxis: 'y', plugins: { legend: { display: false } }, scales: { x: { title: { display: true, text: 'ROI (revenue per $ spent)' } } } }
+	});
+})();
+$(document).on('change', '.show-cost', function(){
+	var $i = $(this).prop('disabled', true);
+	$.post('/ajax/charles/save_show_cost.php', { show: $i.data('show'), cost: $i.val() || 0 }, function(resp){
+		if (resp && resp.ok) location.reload(); else { alert((resp && resp.error) || 'Save failed'); $i.prop('disabled', false); }
+	}, 'json').fail(function(){ alert('Save failed'); $i.prop('disabled', false); });
+});
 </script>
 
 <?php require_once(__DIR__."/includes/footer.php"); ?>

@@ -86,11 +86,13 @@ function charles_snapshot($db) {
 	// the briefing endpoint refreshes it under its spinner).
 	$deep = charles_qb_deep($db, false);
 	$yoy  = charles_expense_yoy($deep);
+	$roi  = charles_tradeshow_roi($db, false);
 
 	$gaps = [];
 	if (empty($data['qb_connected'])) $gaps[] = 'QuickBooks is not connected — connect it on Integrations so I can see your real P&L, Balance Sheet, bills and full expense history.';
 	if (empty($cards) && empty($locs)) $gaps[] = 'No credit cards or line of credit are on file — add them (with APR + limit) on the Cash Flow page so I can plan financing and payoff.';
 	if (!empty($data['qb_connected']) && empty($deep['years'])) $gaps[] = 'I haven\'t pulled your full P&L/expense history yet — it loads with the briefing (or hit Re-analyze).';
+	if (!empty($roi['missing_costs'])) $gaps[] = 'I don\'t know what ' . (int)$roi['missing_costs'] . ' of your tradeshows cost to attend — enter each show\'s all-in cost below so I can score its true ROI (revenue vs cost).';
 
 	return [
 		'today' => date('Y-m-d'),
@@ -119,6 +121,7 @@ function charles_snapshot($db) {
 		'synced_at' => cf_synced_at($db),
 		'qb_deep' => $deep,
 		'expense_yoy' => $yoy,
+		'tradeshow_roi' => $roi,
 		'data_gaps' => $gaps,
 	];
 }
@@ -314,6 +317,52 @@ function charles_qb_deep($db, $refreshIfStale = false) {
 			'new_activity_since_last' => $newActivity,
 			'prev_current_year_expense' => $prevCur,
 		];
+	}
+	try { $db->prepare("INSERT INTO data_cache (ckey,cval,updated_at) VALUES (?,?,NOW()) ON DUPLICATE KEY UPDATE cval=VALUES(cval), updated_at=NOW()")->execute([$key, json_encode($res)]); } catch (Throwable $e) {}
+	return $res;
+}
+
+/**
+ * Tradeshow ROI: last season's revenue at each show (Shopify POS location) vs the
+ * show's cost (owner-entered in charles_show_costs). Cached ~24h; the briefing
+ * refreshes it. Flags any show with ROI under 1.0 (costs more than it sold).
+ */
+function charles_tradeshow_roi($db, $refreshIfStale = false) {
+	$key = 'charles_tradeshow_roi';
+	$db->exec("CREATE TABLE IF NOT EXISTS data_cache (ckey VARCHAR(64) PRIMARY KEY, cval LONGTEXT, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB");
+	$cached = null; $ageH = null;
+	try {
+		$s = $db->prepare("SELECT cval, updated_at FROM data_cache WHERE ckey = ?"); $s->execute([$key]);
+		if ($row = $s->fetch()) { $cached = json_decode($row['cval'], true); $ageH = (time() - strtotime($row['updated_at'])) / 3600; }
+	} catch (Throwable $e) {}
+	if ($cached !== null && $ageH !== null && $ageH < 24) return $cached;
+	if (!$refreshIfStale) return $cached ?? ['rows' => [], 'loaded' => false];
+
+	if (!shopify_is_configured()) { $res = ['rows' => [], 'loaded' => true, 'error' => 'Shopify not connected']; }
+	else {
+		charles_ensure_tables($db);
+		$costs = [];
+		try { foreach ($db->query("SELECT show_name, cost FROM charles_show_costs") as $r) $costs[strtolower(trim($r['show_name']))] = (float)$r['cost']; } catch (Throwable $e) {}
+		$since = date('Y-m-d', strtotime('-14 months'));
+		$until = date('Y-m-d');
+		$ttl = inventory_cache_ttl($db);
+		$rows = []; $missing = 0;
+		foreach (tradeshow_locations() as $loc) {
+			$name = trim((string)($loc['name'] ?? '')); if ($name === '') continue;
+			$ids = isset($loc['ids']) ? $loc['ids'] : (isset($loc['id']) ? [$loc['id']] : []);
+			$rev = 0.0; $units = 0;
+			foreach ($ids as $lid) {
+				$r = shopify_cache_remember($db, "charlesroi_{$lid}_{$since}_{$until}", $ttl, fn() => shopify_show_sales($lid, $since, $until))['data'];
+				$rev += (float)($r['revenue'] ?? 0); $units += (int)($r['total_units'] ?? 0);
+			}
+			if ($rev <= 0 && $units <= 0) continue;
+			$cost = $costs[strtolower($name)] ?? null;
+			$roi  = ($cost !== null && $cost > 0) ? round($rev / $cost, 2) : null;
+			if ($cost === null) $missing++;
+			$rows[] = ['show' => $name, 'revenue' => round($rev), 'units' => $units, 'cost' => $cost !== null ? round($cost) : null, 'roi' => $roi];
+		}
+		usort($rows, fn($a, $b) => $b['revenue'] <=> $a['revenue']);
+		$res = ['rows' => $rows, 'loaded' => true, 'window' => "$since to $until", 'missing_costs' => $missing];
 	}
 	try { $db->prepare("INSERT INTO data_cache (ckey,cval,updated_at) VALUES (?,?,NOW()) ON DUPLICATE KEY UPDATE cval=VALUES(cval), updated_at=NOW()")->execute([$key, json_encode($res)]); } catch (Throwable $e) {}
 	return $res;

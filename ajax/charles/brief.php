@@ -30,8 +30,9 @@ if (!$force) {
 
 if (!anthropic_is_configured()) { echo json_encode(['error' => 'AI is not configured — add an Anthropic key on Integrations.']); exit; }
 
-@set_time_limit(180);
-charles_qb_deep($db, true);   // refresh the weekly deep-QB pull if it's stale (under this spinner)
+@set_time_limit(240);
+charles_qb_deep($db, true);         // refresh the weekly deep-QB pull if it's stale (under this spinner)
+charles_tradeshow_roi($db, true);   // refresh tradeshow ROI (last season revenue vs show cost)
 $snap   = charles_snapshot($db);
 $system = charles_system_prompt($db, $snap);
 $ask =
@@ -41,6 +42,7 @@ $ask =
 3. The 2-4 most important money moves right now, ranked, each with the dollar impact — explicitly consider using the low-rate line of credit to relieve the highest-APR cards (show the interest saved).
 4. What to build/order next and how to pay for it (which card, or hold).
 5. Expenses vs last year (from the deep QuickBooks data): the categories that moved the most, and where we could trim without hurting sales. If new P&L activity has posted, call it out.
+6. Tradeshows: using tradeshow_roi (last season revenue vs each show's cost), say which shows earn their keep and which don't. Give a clear opinion on dropping the low-ROI shows and what else to do for a strong 2026/27 season. If any show costs are missing, say you need them.
 End with one line: the single most important thing to do this week.
 Do NOT include any JSON or propose tasks here — this is just the written read.";
 
