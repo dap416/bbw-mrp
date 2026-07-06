@@ -114,3 +114,105 @@ function charles_snapshot($db) {
 		'data_gaps' => $gaps,
 	];
 }
+
+/** Self-healing tables for Charles: saved chats, durable memory, per-show costs. */
+function charles_ensure_tables($db) {
+	$db->exec("CREATE TABLE IF NOT EXISTS charles_chats (
+		id INT AUTO_INCREMENT PRIMARY KEY, title VARCHAR(190) NOT NULL DEFAULT 'Chat',
+		messages LONGTEXT, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB");
+	$db->exec("CREATE TABLE IF NOT EXISTS charles_memory (
+		id INT AUTO_INCREMENT PRIMARY KEY, kind VARCHAR(24) NOT NULL DEFAULT 'note',
+		content TEXT NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		INDEX (created_at)) ENGINE=InnoDB");
+	$db->exec("CREATE TABLE IF NOT EXISTS charles_show_costs (
+		id INT AUTO_INCREMENT PRIMARY KEY, show_name VARCHAR(190) NOT NULL UNIQUE,
+		cost DECIMAL(12,2) NOT NULL DEFAULT 0, note VARCHAR(255) NULL,
+		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB");
+}
+
+/** Durable memory as a plain-text block (most recent last), bounded for the prompt. */
+function charles_memory_load($db, $limit = 120) {
+	try {
+		charles_ensure_tables($db);
+		$rows = $db->query("SELECT kind, content, created_at FROM charles_memory ORDER BY id DESC LIMIT " . (int)$limit)->fetchAll();
+		$rows = array_reverse($rows);
+		$out = [];
+		foreach ($rows as $r) $out[] = '- [' . date('Y-m-d', strtotime($r['created_at'])) . '] (' . $r['kind'] . ') ' . $r['content'];
+		return implode("\n", $out);
+	} catch (Throwable $e) { return ''; }
+}
+
+/** Record a durable memory entry (a decision, action taken, or fact worth keeping). */
+function charles_memory_append($db, $kind, $content) {
+	$content = trim((string)$content);
+	if ($content === '') return;
+	try {
+		charles_ensure_tables($db);
+		$db->prepare("INSERT INTO charles_memory (kind, content) VALUES (?, ?)")->execute([substr($kind, 0, 24), $content]);
+	} catch (Throwable $e) {}
+}
+
+/** The full system prompt: persona/rules + durable memory + the live snapshot JSON. */
+function charles_system_prompt($db, $snapshot) {
+	$persona = @file_get_contents(__DIR__ . '/charles_memory.md') ?: 'You are Charles, a CPA advising the owner in plain English.';
+	$mem = charles_memory_load($db);
+	return $persona
+		. "\n\n## Durable memory — everything we've decided and done (oldest first)\n" . ($mem !== '' ? $mem : '(nothing recorded yet)')
+		. "\n\n## Live snapshot — today's numbers (authoritative; cite these)\n" . json_encode($snapshot, JSON_UNESCAPED_SLASHES);
+}
+
+/**
+ * Apply ONE book-update action to the cash-flow model. Called when George marks a
+ * Charles-created task complete (i.e., he's actually done the real-world move). Never
+ * called by the AI directly. Returns a short human result string.
+ */
+function charles_apply_action($db, $a) {
+	$type = $a['type'] ?? '';
+	$uid  = (int)($_SESSION['user_id'] ?? 0) ?: null;
+	switch ($type) {
+		case 'update_balance': {
+			$label = trim((string)($a['label'] ?? ''));
+			if ($label === '') return 'skip update_balance: no label';
+			ensure_cash_balances_table($db);
+			$sets = ['balance = ?', 'as_of = CURDATE()', 'updated_at = NOW()'];
+			$vals = [round((float)($a['balance'] ?? 0), 2)];
+			if (isset($a['apr']) && $a['apr'] !== null && $a['apr'] !== '') { $sets[] = 'apr = ?'; $vals[] = (float)$a['apr']; }
+			if (isset($a['min']) && $a['min'] !== null && $a['min'] !== '') { $sets[] = 'monthly_payment = ?'; $vals[] = (float)$a['min']; }
+			$vals[] = $label;
+			$st = $db->prepare("UPDATE cash_balances SET " . implode(', ', $sets) . " WHERE label = ?");
+			$st->execute($vals);
+			return $st->rowCount() ? "Updated balance for '$label'" : "No account named '$label'";
+		}
+		case 'add_cash_event': {
+			$etype  = (($a['etype'] ?? 'out') === 'in') ? 'in' : 'out';
+			$label  = trim((string)($a['label'] ?? ''));
+			$amount = round((float)($a['amount'] ?? 0), 2);
+			$ym     = trim((string)($a['ym'] ?? date('Y-m')));
+			if ($label === '' || $amount <= 0 || !preg_match('/^\d{4}-\d{2}$/', $ym)) return 'skip add_cash_event: bad fields';
+			$paidby = ($etype === 'out' && ($a['paidby'] ?? 'cash') === 'card') ? 'card' : 'cash';
+			ensure_cash_events_table($db);
+			$db->prepare("INSERT INTO cash_events (etype,label,amount,ym,week,paidby,user_id) VALUES (?,?,?,?,?,?,?)")
+			   ->execute([$etype, $label, $amount, $ym, 1, $paidby, $uid]);
+			return "Added $etype '$label' \$$amount to $ym" . ($paidby === 'card' ? ' (on card)' : '');
+		}
+		case 'set_setting': {
+			$key = $a['key'] ?? '';
+			if (!in_array($key, ['cash_buffer', 'tax_monthly', 'shopify_loan_pct'], true)) return 'skip set_setting: bad key';
+			setting_set($db, $key, (string)($a['value'] ?? 0));
+			return "Set $key = " . $a['value'];
+		}
+		case 'add_recurring_expense': {
+			$label  = trim((string)($a['label'] ?? ''));
+			$amount = round((float)($a['amount'] ?? 0), 2);
+			if ($label === '' || $amount <= 0) return 'skip add_recurring_expense: bad fields';
+			ensure_cash_expenses_table($db);
+			$db->prepare("INSERT INTO cash_expenses (label, amount, active) VALUES (?,?,1)")->execute([$label, $amount]);
+			return "Added recurring expense '$label' \$$amount/mo";
+		}
+		case 'note':
+			return 'Noted (no book change)';
+		default:
+			return "skip: unknown action '$type'";
+	}
+}

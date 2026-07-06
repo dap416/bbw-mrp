@@ -62,12 +62,13 @@
 	</div>
 </div>
 
-<!-- ── CHARLES'S BRIEFING (Phase 3) ─────────────────────────────────────────── -->
-<div class="card mb-3"><div class="card-body">
-	<div class="d-flex align-items-center justify-content-between mb-1">
+<!-- ── CHARLES'S BRIEFING ───────────────────────────────────────────────────── -->
+<div class="card mb-3" style="border-top:3px solid #2ca01c;"><div class="card-body">
+	<div class="d-flex align-items-center justify-content-between mb-2 flex-wrap gap-2">
 		<h6 class="fw-bold mb-0"><i class="ti ti-report-analytics me-1"></i>Charles's briefing</h6>
+		<div class="d-flex align-items-center gap-2"><span id="chBriefAsOf" class="text-muted small"></span><button id="chBriefRefresh" class="btn btn-sm btn-light-primary"><i class="ti ti-refresh me-1"></i>Re-analyze</button></div>
 	</div>
-	<div class="text-muted small">The written analysis, plan, and chat are being wired in next. The numbers and charts below are live now.</div>
+	<div id="chBrief" class="charles-brief" style="font-size:0.9rem;line-height:1.5;"><div class="text-muted small"><span class="spinner-border spinner-border-sm me-1"></span>Charles is reading your numbers…</div></div>
 </div></div>
 
 <!-- ── CHARTS ───────────────────────────────────────────────────────────────── -->
@@ -119,10 +120,24 @@
 </div></div>
 <?php endif; ?>
 
-<!-- ── TALK TO CHARLES (Phase 4) ────────────────────────────────────────────── -->
+<!-- ── TALK TO CHARLES ──────────────────────────────────────────────────────── -->
 <div class="card"><div class="card-body">
-	<h6 class="fw-bold mb-2"><i class="ti ti-message-2 me-1"></i>Talk to Charles</h6>
-	<div class="text-muted small">The conversation (with permanent memory and one-click "add to my tasks") is coming in the next phase.</div>
+	<div class="d-flex align-items-center justify-content-between mb-2 flex-wrap gap-2">
+		<h6 class="fw-bold mb-0"><i class="ti ti-message-2 me-1"></i>Talk to Charles</h6>
+		<div class="d-flex gap-2 align-items-center">
+			<select id="chHistory" class="form-select form-select-sm" style="width:170px;"><option value="">History…</option></select>
+			<button id="chNew" class="btn btn-sm btn-light">+ New</button>
+			<a href="#" id="chDelete" class="small text-danger hidden">delete</a>
+		</div>
+	</div>
+	<div id="chMsgs" style="max-height:440px;overflow-y:auto;background:#f7f9fc;border:1px solid #e6e9f0;border-radius:8px;padding:10px;font-size:0.9rem;">
+		<div class="text-muted small">Ask Charles anything — “Are we going to be okay this fall?”, “Should I pay down the highest card with the LOC?”, “What should I build next and how do I pay for it?”</div>
+	</div>
+	<div id="chActions" class="mt-2 hidden"></div>
+	<div class="mt-2 d-flex gap-2">
+		<input type="text" id="chInput" class="form-control" placeholder="Talk to Charles…">
+		<button id="chSend" class="btn btn-primary">Send</button>
+	</div>
 </div></div>
 
 <script>
@@ -161,6 +176,68 @@ var CH = <?php echo json_encode(['months' => $snap['months'], 'forecast' => $sna
 		options: { plugins: { legend: { labels: { boxWidth: 12, font: { size: 11 } } } }, scales: { y: money } }
 	});
 })();
+
+// ── light markdown for Charles's prose ──
+function chMd(t){
+	t = $('<div>').text(t||'').html();
+	t = t.replace(/^\s*#{1,4}\s?(.*)$/gm, '<div class="fw-bold mt-2 mb-1" style="color:#1e4620;">$1</div>');
+	t = t.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+	t = t.replace(/^\s*[-•]\s+(.*)$/gm, '<div style="padding-left:1rem;text-indent:-0.65rem;">• $1</div>');
+	t = t.replace(/\n{2,}/g, '<br><br>').replace(/\n/g, '<br>');
+	return t;
+}
+
+// ── Charles's briefing ──
+function chLoadBrief(refresh){
+	if (refresh) $('#chBrief').html('<div class="text-muted small"><span class="spinner-border spinner-border-sm me-1"></span>Re-analyzing…</div>');
+	$.post('/ajax/charles/brief.php', refresh ? {refresh:1} : {}, function(d){
+		if (d && d.ok){ $('#chBrief').html(chMd(d.text)); try { $('#chBriefAsOf').text('as of ' + new Date((d.as_of||'').replace(' ','T')).toLocaleString() + (d.cached ? '' : ' · fresh')); } catch(_){ $('#chBriefAsOf').text(d.cached?'':'fresh'); } }
+		else $('#chBrief').html('<div class="text-danger small">' + $('<div>').text((d&&d.error)||'Could not generate the briefing.').html() + '</div>');
+	}, 'json').fail(function(){ $('#chBrief').html('<div class="text-danger small">Request failed — try Re-analyze.</div>'); });
+}
+$('#chBriefRefresh').on('click', function(){ chLoadBrief(true); });
+chLoadBrief(false);
+
+// ── Chat ──
+var chMsgs=[], chChatId=0, chPending=false;
+function chEsc(s){ return $('<div>').text(s==null?'':String(s)).html(); }
+function chRender(){
+	var h='';
+	chMsgs.forEach(function(m){
+		if(m.role==='user') h+='<div class="text-end mb-2"><span style="display:inline-block;background:#2ca01c;color:#fff;padding:5px 10px;border-radius:12px;max-width:85%;text-align:left;">'+chEsc(m.content)+'</span></div>';
+		else h+='<div class="mb-2"><span style="display:inline-block;background:#fff;border:1px solid #e6e9f0;padding:6px 11px;border-radius:12px;max-width:93%;">'+chMd(m.content)+'</span></div>';
+	});
+	if(chPending) h+='<div class="text-muted small"><span class="spinner-border spinner-border-sm me-1"></span>Charles is thinking…</div>';
+	var $m=$('#chMsgs').html(h||'<div class="text-muted small">Ask Charles anything.</div>');
+	if($m[0]) $m.scrollTop($m[0].scrollHeight);
+	$('#chDelete').toggleClass('hidden', chChatId<=0);
+}
+function chSend(){
+	var t=$.trim($('#chInput').val()); if(!t||chPending) return;
+	$('#chInput').val(''); chMsgs.push({role:'user',content:t}); $('#chActions').addClass('hidden').html(''); window._chTasks=null;
+	chPending=true; chRender();
+	$.ajax({url:'/ajax/charles/chat.php',method:'POST',dataType:'json',timeout:180000,data:{messages:JSON.stringify(chMsgs), chat_id:chChatId}})
+	.done(function(d){ chPending=false; if(!d||d.error){ chMsgs.push({role:'assistant',content:'⚠ '+((d&&d.error)||'failed')}); chRender(); return; } chMsgs.push({role:'assistant',content:d.reply||'(no reply)'}); if(d.chat_id) chChatId=d.chat_id; chRender(); chLoadHistory(); if(d.tasks&&d.tasks.length) chShowTasks(d.tasks); })
+	.fail(function(x,s){ chPending=false; chMsgs.push({role:'assistant',content:'⚠ '+(s==='timeout'?'timed out — try again':'request failed')}); chRender(); });
+}
+$('#chSend').on('click', chSend);
+$('#chInput').on('keypress', function(e){ if(e.which===13) chSend(); });
+
+function chShowTasks(tasks){
+	window._chTasks=tasks;
+	var h='<div class="p-2 rounded" style="background:#f2fbf4;border:1px solid #bfe6c8;"><div class="fw-semibold small mb-1">📋 Charles suggests adding these to your tasks:</div>';
+	tasks.forEach(function(t){ var acts=(t.actions||[]).length; var due=t.due?(' · by '+chEsc(t.due)):''; h+='<div class="mb-1"><strong>'+chEsc(t.title)+'</strong>'+due+(t.why?' <span class="text-muted">— '+chEsc(t.why)+'</span>':'')+(acts?' <span class="badge bg-light text-dark" style="font-size:0.6rem;">updates books when done</span>':'')+'</div>'; });
+	h+='<div class="d-flex gap-2 mt-2"><button class="btn btn-sm btn-success" id="chApply">Add to my tasks</button><button class="btn btn-sm btn-secondary" id="chCancelTasks">Not now</button><span id="chApplyMsg" class="small ms-1"></span></div><div class="text-muted mt-1" style="font-size:0.68rem;">Nothing changes in your books until you complete the task (after you\'ve actually done it).</div></div>';
+	$('#chActions').html(h).removeClass('hidden');
+}
+$(document).on('click','#chApply',function(){ var $b=$(this).prop('disabled',true).text('Adding…'); $.ajax({url:'/ajax/charles/apply.php',method:'POST',dataType:'json',data:{tasks:JSON.stringify(window._chTasks||[])}}).done(function(d){ if(d&&d.ok){ $('#chApplyMsg').removeClass('text-danger').text('Added '+d.created+' task(s) to your list ✓'); $('#chApply,#chCancelTasks').prop('disabled',true); } else { $('#chApplyMsg').addClass('text-danger').text((d&&d.error)||'failed'); $b.prop('disabled',false).text('Add to my tasks'); } }).fail(function(){ $('#chApplyMsg').addClass('text-danger').text('failed'); $b.prop('disabled',false).text('Add to my tasks'); }); });
+$(document).on('click','#chCancelTasks',function(){ $('#chActions').addClass('hidden').html(''); window._chTasks=null; });
+
+function chLoadHistory(){ $.getJSON('/ajax/charles/chat_list.php', function(d){ var o='<option value="">History…</option>'; (d.chats||[]).forEach(function(c){ o+='<option value="'+c.id+'"'+(c.id==chChatId?' selected':'')+'>'+chEsc(c.title)+'</option>'; }); $('#chHistory').html(o); }); }
+$('#chHistory').on('change', function(){ var id=parseInt($(this).val(),10); if(!id) return; $.post('/ajax/charles/chat_get.php',{id:id},function(d){ if(d.error){ alert(d.error); return; } chChatId=d.id; chMsgs=d.messages||[]; $('#chActions').addClass('hidden').html(''); chRender(); },'json'); });
+$('#chNew').on('click', function(){ chChatId=0; chMsgs=[]; $('#chHistory').val(''); $('#chActions').addClass('hidden').html(''); chRender(); $('#chInput').focus(); });
+$('#chDelete').on('click', function(e){ e.preventDefault(); if(!chChatId||!confirm('Delete this chat?')) return; $.post('/ajax/charles/chat_delete.php',{id:chChatId},function(){ chChatId=0; chMsgs=[]; chRender(); chLoadHistory(); }); });
+chLoadHistory();
 </script>
 
 <?php require_once(__DIR__."/includes/footer.php"); ?>
