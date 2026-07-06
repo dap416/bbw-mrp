@@ -112,6 +112,16 @@
 	</div></div></div>
 </div>
 
+<!-- ── EXPENSES YEAR OVER YEAR ──────────────────────────────────────────────── -->
+<?php if (!empty($snap['expense_yoy']['categories'])): ?>
+<div class="card mb-3"><div class="card-body">
+	<h6 class="fw-bold mb-2">Expenses — year over year <span class="text-muted small">(top categories, from QuickBooks)</span></h6>
+	<canvas id="chartExpYoY" height="130"></canvas>
+</div></div>
+<?php elseif (!empty($snap['qb_connected'])): ?>
+<div class="card mb-3"><div class="card-body py-2 text-muted small">Your full P&amp;L / expense history loads when Charles analyzes — hit <strong>Re-analyze</strong> above to pull it from QuickBooks (refreshes weekly).</div></div>
+<?php endif; ?>
+
 <!-- ── DATA GAPS ────────────────────────────────────────────────────────────── -->
 <?php if (!empty($snap['data_gaps'])): ?>
 <div class="card mb-3" style="border-left:4px solid #d9822b;"><div class="card-body py-2">
@@ -141,7 +151,7 @@
 </div></div>
 
 <script>
-var CH = <?php echo json_encode(['months' => $snap['months'], 'forecast' => $snap['forecast'], 'buffer' => $buffer], JSON_UNESCAPED_SLASHES); ?>;
+var CH = <?php echo json_encode(['months' => $snap['months'], 'forecast' => $snap['forecast'], 'buffer' => $buffer, 'expense_yoy' => $snap['expense_yoy']], JSON_UNESCAPED_SLASHES); ?>;
 (function(){
 	if (typeof Chart === 'undefined') return;
 	var usd = function(v){ return '$' + Number(v||0).toLocaleString(); };
@@ -238,6 +248,20 @@ $('#chHistory').on('change', function(){ var id=parseInt($(this).val(),10); if(!
 $('#chNew').on('click', function(){ chChatId=0; chMsgs=[]; $('#chHistory').val(''); $('#chActions').addClass('hidden').html(''); chRender(); $('#chInput').focus(); });
 $('#chDelete').on('click', function(e){ e.preventDefault(); if(!chChatId||!confirm('Delete this chat?')) return; $.post('/ajax/charles/chat_delete.php',{id:chChatId},function(){ chChatId=0; chMsgs=[]; chRender(); chLoadHistory(); }); });
 chLoadHistory();
+
+// ── Expenses year over year ──
+(function(){
+	var yoy = CH.expense_yoy;
+	if (typeof Chart === 'undefined' || !yoy || !yoy.categories || !yoy.categories.length) return;
+	var el = document.getElementById('chartExpYoY'); if (!el) return;
+	var palette = ['#c7d2fe', '#8f7ae6', '#2ca01c'];
+	var ds = (yoy.years || []).map(function(y, i){ return { label: String(y), data: yoy.categories.map(function(c){ return (c.by_year && c.by_year[y]) || 0; }), backgroundColor: palette[i % palette.length] }; });
+	new Chart(el, {
+		type: 'bar',
+		data: { labels: yoy.categories.map(function(c){ return c.category; }), datasets: ds },
+		options: { plugins: { legend: { labels: { boxWidth: 12, font: { size: 11 } } } }, scales: { y: { ticks: { callback: function(v){ return '$' + Number(v||0).toLocaleString(); } } }, x: { ticks: { font: { size: 10 } } } } }
+	});
+})();
 </script>
 
 <?php require_once(__DIR__."/includes/footer.php"); ?>

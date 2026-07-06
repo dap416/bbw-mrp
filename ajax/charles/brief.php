@@ -30,6 +30,8 @@ if (!$force) {
 
 if (!anthropic_is_configured()) { echo json_encode(['error' => 'AI is not configured — add an Anthropic key on Integrations.']); exit; }
 
+@set_time_limit(180);
+charles_qb_deep($db, true);   // refresh the weekly deep-QB pull if it's stale (under this spinner)
 $snap   = charles_snapshot($db);
 $system = charles_system_prompt($db, $snap);
 $ask =
@@ -38,6 +40,7 @@ $ask =
 2. Cash runway — are we safe? If not, which month gets tight and why, and the fix.
 3. The 2-4 most important money moves right now, ranked, each with the dollar impact — explicitly consider using the low-rate line of credit to relieve the highest-APR cards (show the interest saved).
 4. What to build/order next and how to pay for it (which card, or hold).
+5. Expenses vs last year (from the deep QuickBooks data): the categories that moved the most, and where we could trim without hurting sales. If new P&L activity has posted, call it out.
 End with one line: the single most important thing to do this week.
 Do NOT include any JSON or propose tasks here — this is just the written read.";
 

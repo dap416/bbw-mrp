@@ -82,9 +82,15 @@ function charles_snapshot($db) {
 	}
 
 	// Data gaps Charles should flag / ask for (expanded in later phases).
+	// Deep QuickBooks (weekly-cached; read cache only here so the page renders fast —
+	// the briefing endpoint refreshes it under its spinner).
+	$deep = charles_qb_deep($db, false);
+	$yoy  = charles_expense_yoy($deep);
+
 	$gaps = [];
 	if (empty($data['qb_connected'])) $gaps[] = 'QuickBooks is not connected — connect it on Integrations so I can see your real P&L, Balance Sheet, bills and full expense history.';
 	if (empty($cards) && empty($locs)) $gaps[] = 'No credit cards or line of credit are on file — add them (with APR + limit) on the Cash Flow page so I can plan financing and payoff.';
+	if (!empty($data['qb_connected']) && empty($deep['years'])) $gaps[] = 'I haven\'t pulled your full P&L/expense history yet — it loads with the briefing (or hit Re-analyze).';
 
 	return [
 		'today' => date('Y-m-d'),
@@ -111,6 +117,8 @@ function charles_snapshot($db) {
 		'runway_months' => $runwayMonths,
 		'low_point' => $lowPoint,
 		'synced_at' => cf_synced_at($db),
+		'qb_deep' => $deep,
+		'expense_yoy' => $yoy,
 		'data_gaps' => $gaps,
 	];
 }
@@ -215,4 +223,118 @@ function charles_apply_action($db, $a) {
 		default:
 			return "skip: unknown action '$type'";
 	}
+}
+
+// ── Deep QuickBooks (weekly): multi-year P&L, expenses by category, Balance Sheet,
+//    Aged Payables/Receivables. Cached 7 days; the briefing refreshes it if stale. ──
+
+function charles_qb_num($v) {
+	if (is_numeric($v)) return (float)$v;
+	$s = preg_replace('/[^0-9.\-]/', '', (string)$v);
+	return $s === '' || $s === '-' ? 0.0 : (float)$s;
+}
+function charles_qb_last_amt($colData) {
+	if (!is_array($colData) || !count($colData)) return 0.0;
+	$c = $colData[count($colData) - 1];
+	return charles_qb_num($c['value'] ?? 0);
+}
+/** Collect leaf Data rows (account => amount) recursively. */
+function charles_qb_leaves($rows, &$flat) {
+	foreach ((array)$rows as $r) {
+		if (($r['type'] ?? '') === 'Data' && isset($r['ColData'])) {
+			$name = $r['ColData'][0]['value'] ?? '';
+			if ($name !== '') $flat[$name] = ($flat[$name] ?? 0) + charles_qb_last_amt($r['ColData']);
+		}
+		if (isset($r['Rows']['Row'])) charles_qb_leaves($r['Rows']['Row'], $flat);
+	}
+}
+/** Collect every section Summary total (name => amount) recursively. */
+function charles_qb_summaries($rows, &$out) {
+	foreach ((array)$rows as $r) {
+		if (isset($r['Summary']['ColData'][0]['value'])) $out[$r['Summary']['ColData'][0]['value']] = charles_qb_last_amt($r['Summary']['ColData']);
+		if (isset($r['Rows']['Row'])) charles_qb_summaries($r['Rows']['Row'], $out);
+	}
+}
+/** Parse a single-period ProfitAndLoss into income / expenses-by-category / totals. */
+function charles_pl_parse($report) {
+	$out = ['income' => 0.0, 'expenses' => [], 'expense_total' => 0.0, 'net' => 0.0];
+	if (!is_array($report) || empty($report['Rows']['Row'])) return $out;
+	foreach ($report['Rows']['Row'] as $sec) {
+		$group = $sec['group'] ?? '';
+		$sum = isset($sec['Summary']['ColData']) ? charles_qb_last_amt($sec['Summary']['ColData']) : 0.0;
+		if ($group === 'Income') $out['income'] = $sum;
+		elseif ($group === 'Expenses') { $out['expense_total'] = $sum; $flat = []; if (!empty($sec['Rows']['Row'])) charles_qb_leaves($sec['Rows']['Row'], $flat); arsort($flat); $out['expenses'] = $flat; }
+		elseif ($group === 'NetIncome') $out['net'] = $sum;
+	}
+	return $out;
+}
+
+/**
+ * Deep QB pull, cached 7 days. $refreshIfStale=true (used by the briefing) pulls live
+ * when the cache is missing or older than a week; otherwise returns whatever is cached.
+ */
+function charles_qb_deep($db, $refreshIfStale = false) {
+	$key = 'charles_qb_deep';
+	$db->exec("CREATE TABLE IF NOT EXISTS data_cache (ckey VARCHAR(64) PRIMARY KEY, cval LONGTEXT, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB");
+	$cached = null; $ageDays = null;
+	try {
+		$s = $db->prepare("SELECT cval, updated_at FROM data_cache WHERE ckey = ?"); $s->execute([$key]);
+		if ($row = $s->fetch()) { $cached = json_decode($row['cval'], true); $ageDays = (time() - strtotime($row['updated_at'])) / 86400; }
+	} catch (Throwable $e) {}
+
+	if ($cached !== null && $ageDays !== null && $ageDays < 7) return $cached;              // fresh
+	if (!$refreshIfStale) return $cached ?? ['connected' => null, 'loaded' => false];        // don't block a page render
+
+	if (!qb_is_connected()) { $res = ['connected' => false, 'as_of' => date('Y-m-d H:i:s')]; }
+	else {
+		$thisYear = (int)date('Y');
+		$byYear = [];
+		foreach ([$thisYear - 2, $thisYear - 1, $thisYear] as $y) {
+			$end = ($y === $thisYear) ? date('Y-m-d') : "$y-12-31";
+			$rep = qb_report('ProfitAndLoss', ['start_date' => "$y-01-01", 'end_date' => $end, 'accounting_method' => 'Accrual']);
+			$byYear[$y] = !empty($rep['error']) ? ['error' => $rep['error']] : charles_pl_parse($rep);
+		}
+		$bs = qb_report('BalanceSheet', ['end_date' => date('Y-m-d'), 'accounting_method' => 'Accrual']);
+		$bsSum = []; if (empty($bs['error']) && !empty($bs['Rows']['Row'])) charles_qb_summaries($bs['Rows']['Row'], $bsSum);
+		$ap = qb_report('AgedPayables', ['report_date' => date('Y-m-d')]);
+		$ar = qb_report('AgedReceivables', ['report_date' => date('Y-m-d')]);
+		$apSum = []; if (empty($ap['error']) && !empty($ap['Rows']['Row'])) charles_qb_summaries($ap['Rows']['Row'], $apSum);
+		$arSum = []; if (empty($ar['error']) && !empty($ar['Rows']['Row'])) charles_qb_summaries($ar['Rows']['Row'], $arSum);
+
+		// New-activity signal: did this year's expense total move since last pull?
+		$prevCur = $cached['years'][$thisYear]['expense_total'] ?? null;
+		$curNow  = $byYear[$thisYear]['expense_total'] ?? null;
+		$newActivity = ($prevCur !== null && $curNow !== null && abs((float)$curNow - (float)$prevCur) > 1.0);
+
+		$res = [
+			'connected' => true, 'as_of' => date('Y-m-d H:i:s'),
+			'years' => $byYear,
+			'balance_sheet' => $bsSum,
+			'aged_payables' => $apSum, 'aged_receivables' => $arSum,
+			'new_activity_since_last' => $newActivity,
+			'prev_current_year_expense' => $prevCur,
+		];
+	}
+	try { $db->prepare("INSERT INTO data_cache (ckey,cval,updated_at) VALUES (?,?,NOW()) ON DUPLICATE KEY UPDATE cval=VALUES(cval), updated_at=NOW()")->execute([$key, json_encode($res)]); } catch (Throwable $e) {}
+	return $res;
+}
+
+/** Compact expense year-over-year table for the chart + AI: top categories across years. */
+function charles_expense_yoy($deep) {
+	if (empty($deep['years'])) return ['years' => [], 'categories' => []];
+	$years = array_keys($deep['years']); sort($years);
+	$totByCat = [];
+	foreach ($years as $y) foreach (($deep['years'][$y]['expenses'] ?? []) as $cat => $amt) $totByCat[$cat] = ($totByCat[$cat] ?? 0) + $amt;
+	arsort($totByCat);
+	$top = array_slice(array_keys($totByCat), 0, 10);
+	$cats = [];
+	foreach ($top as $cat) {
+		$vals = [];
+		foreach ($years as $y) $vals[$y] = round($deep['years'][$y]['expenses'][$cat] ?? 0);
+		$cats[] = ['category' => $cat, 'by_year' => $vals];
+	}
+	return ['years' => $years, 'categories' => $cats,
+	        'income_by_year' => array_map(fn($y) => round($deep['years'][$y]['income'] ?? 0), array_combine($years, $years)),
+	        'expense_by_year' => array_map(fn($y) => round($deep['years'][$y]['expense_total'] ?? 0), array_combine($years, $years)),
+	        'net_by_year' => array_map(fn($y) => round($deep['years'][$y]['net'] ?? 0), array_combine($years, $years))];
 }
