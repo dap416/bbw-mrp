@@ -588,6 +588,24 @@
 		return 0.0;
 	}
 
+	/**
+	 * Credit-CARD minimum payment as a % of the current balance — recalculated as
+	 * balances change (so you never enter card payments by hand). LOC loans are
+	 * unaffected (they keep their fixed scheduled payment). Default 4%.
+	 */
+	function card_min_pct($db) {
+		try { $v = setting_get($db, 'card_min_pct'); if ($v !== null && $v !== '') return max(0.0, (float)$v); }
+		catch (Throwable $e) {}
+		return 4.0;
+	}
+
+	/** Floor for a card's minimum (pay the greater of the % or this dollar amount). Default $25. */
+	function card_min_floor($db) {
+		try { $v = setting_get($db, 'card_min_floor'); if ($v !== null && $v !== '') return max(0.0, (float)$v); }
+		catch (Throwable $e) {}
+		return 25.0;
+	}
+
 	/** Months (YYYY-MM) whose card payments are already made — skip the avalanche there. */
 	function cardpay_done_months($db) {
 		try { $v = setting_get($db, 'cardpay_done_months'); if ($v) { $j = json_decode($v, true); if (is_array($j)) return $j; } }
@@ -751,6 +769,8 @@
 		$loanPct = shopify_loan_pct($db);
 		$buffer  = cash_buffer($db);
 		$taxMo   = tax_monthly($db);
+		$cardMinPct   = card_min_pct($db);    // card minimums = % of the CURRENT balance
+		$cardMinFloor = card_min_floor($db);
 
 		// Card balances we simulate paying down (avalanche = highest APR first).
 		$cards = [];
@@ -846,7 +866,12 @@
 			$minTotal = 0.0;
 			$targetIdx = null;
 			if (!$cardsDone) {
-				foreach ($cards as $k => $c) { $m = min($c['min'], $c['bal']); $pay[$k] = $m; $minTotal += $m; }
+				foreach ($cards as $k => $c) {
+					// LOC loans keep their fixed scheduled payment; cards use % of the current balance.
+					if (($c['type'] ?? 'credit') === 'loc') $m = min($c['min'], $c['bal']);
+					else $m = ($c['bal'] > 0.005) ? min($c['bal'], max($cardMinFloor, round($c['bal'] * $cardMinPct / 100, 2))) : 0.0;
+					$pay[$k] = $m; $minTotal += $m;
+				}
 				$extraPool = max(0.0, $cashBeforeCards - $buffer - $minTotal);
 				foreach ($order as $k) {
 					if ($extraPool <= 0) break;

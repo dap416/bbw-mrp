@@ -16,9 +16,9 @@ $type    = ($_POST['acct_type'] ?? 'bank');
 $type    = in_array($type, ['bank','credit','loc'], true) ? $type : 'bank';
 $balance = round((float)($_POST['balance'] ?? 0), 2);
 $limit   = trim($_POST['credit_limit'] ?? '');
-$limit   = ($limit === '' || $type === 'bank') ? null : round((float)$limit, 2);
+$limit   = ($limit === '' || $type !== 'credit') ? null : round((float)$limit, 2);   // only cards carry a credit limit
 $payment = trim($_POST['monthly_payment'] ?? '');
-$payment = ($payment === '' || $type === 'bank') ? null : round((float)$payment, 2);
+$payment = ($payment === '' || $type !== 'loc') ? null : round((float)$payment, 2);   // only LOC loans have a fixed payment (cards auto-calc)
 $apr     = trim($_POST['apr'] ?? '');
 $apr     = ($apr === '' || $type === 'bank') ? null : round((float)$apr, 2);
 $asOf    = trim($_POST['as_of'] ?? '');

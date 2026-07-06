@@ -145,7 +145,7 @@
 					<div class="col-6"><select id="balType" class="form-select form-select-sm"><option value="bank">Bank / Cash</option><option value="credit">Credit Card</option><option value="loc">Line of Credit</option></select></div>
 					<div class="col-6"><div class="input-group input-group-sm"><span class="input-group-text">$</span><input type="text" id="balAmount" class="form-control" placeholder="Balance" /></div></div>
 					<div class="col-6" id="balLimitWrap" style="display:none;"><div class="input-group input-group-sm"><span class="input-group-text">Limit $</span><input type="text" id="balLimit" class="form-control" placeholder="Credit limit" /></div></div>
-					<div class="col-6" id="balPayWrap" style="display:none;"><div class="input-group input-group-sm"><span class="input-group-text">Pay/mo $</span><input type="text" id="balPayment" class="form-control" placeholder="Monthly payment" /></div></div>
+					<div class="col-6" id="balPayWrap" style="display:none;"><div class="input-group input-group-sm"><span class="input-group-text">Loan pay/mo $</span><input type="text" id="balPayment" class="form-control" placeholder="Fixed loan payment" /></div><div class="form-text" style="font-size:0.62rem;">Cards don't need this — minimums auto-calc.</div></div>
 					<div class="col-6" id="balAprWrap" style="display:none;"><div class="input-group input-group-sm"><span class="input-group-text">APR %</span><input type="text" id="balApr" class="form-control" placeholder="e.g. 24.99" /></div></div>
 					<div class="col-6"><input type="date" id="balAsOf" class="form-control form-control-sm" value="<?php echo date('Y-m-d'); ?>" title="Date accurate as of" /></div>
 					<div class="col-12"><input type="text" id="balNote" class="form-control form-control-sm" placeholder="Note (optional)" /></div>
@@ -226,6 +226,7 @@
 				<div class="col-12"><label class="form-text mb-0">Cash buffer — keep this in the bank all year</label><div class="input-group input-group-sm"><span class="input-group-text">$</span><input type="text" id="cashBuffer" class="form-control" value="<?php echo number_format($monthData['buffer'], 0, '.', ''); ?>" /></div></div>
 				<div class="col-12"><label class="form-text mb-0">Tax set-aside — saved each month, paid each quarter</label><div class="input-group input-group-sm"><span class="input-group-text">$</span><input type="text" id="taxMonthly" class="form-control" value="<?php echo number_format($monthData['tax_monthly'], 0, '.', ''); ?>" /><span class="input-group-text">/mo</span></div></div>
 				<div class="col-12"><label class="form-text mb-0">Line-of-credit total limit — the whole facility's ceiling</label><div class="input-group input-group-sm"><span class="input-group-text">$</span><input type="text" id="locLimit" class="form-control" value="<?php echo number_format(loc_limit($db), 0, '.', ''); ?>" /></div><div class="form-text" style="font-size:0.66rem;">Available to draw = this limit − your LOC loan balances.</div></div>
+				<div class="col-12"><label class="form-text mb-0">Credit-card minimum payment — auto-calculated each month</label><div class="d-flex gap-2"><div class="input-group input-group-sm"><input type="text" id="cardMinPct" class="form-control" value="<?php echo rtrim(rtrim(number_format(card_min_pct($db),2),'0'),'.'); ?>" style="max-width:70px;" /><span class="input-group-text">% of balance</span></div><div class="input-group input-group-sm"><span class="input-group-text">min $</span><input type="text" id="cardMinFloor" class="form-control" value="<?php echo number_format(card_min_floor($db), 0, '.', ''); ?>" style="max-width:80px;" /></div></div><div class="form-text" style="font-size:0.66rem;">Cards pay the greater of this % of the current balance or the floor; recalculates as balances change.</div></div>
 				<div class="col-12"><button class="btn btn-sm btn-primary" id="loanSaveBtn">Save settings</button> <span id="loanMsg" class="small"></span></div>
 			</div>
 			<div class="text-muted" style="font-size:0.7rem;">Loan: 25% repays Shopify Capital (set 0 when paid off). Buffer: extra cash above this is thrown at the highest-APR card. Tax: builds a reserve, released each quarter-end.</div>
@@ -479,7 +480,7 @@
 <script>
 	// ── Balances ──
 	function balShowForm(s){ $('#balForm').toggleClass('hidden', !s); }
-	$('#balType').on('change', function(){ var c = $(this).val() !== 'bank'; $('#balLimitWrap,#balPayWrap,#balAprWrap').toggle(c); });
+	$('#balType').on('change', function(){ var t=$(this).val(); $('#balAprWrap').toggle(t!=='bank'); $('#balLimitWrap').toggle(t==='credit'); $('#balPayWrap').toggle(t==='loc'); });
 	$('#balQbAccount').on('change', function(){ var v=$(this).val(), $o=$(this).find('option:selected'); if(v==='')return; if(v==='__manual__'){ $('#balQbId').val(''); $('#balLabel').val('').focus(); return; } $('#balQbId').val(v); $('#balLabel').val($o.data('name')); $('#balType').val($o.data('type')).trigger('change'); if(!$('#balAmount').val()) $('#balAmount').val(Math.abs(parseFloat($o.data('balance'))||0).toFixed(2)); });
 	$('#addBalBtn').on('click', function(){ $('#balId,#balQbId,#balLabel,#balAmount,#balLimit,#balPayment,#balApr,#balNote').val(''); $('#balQbAccount').val(''); $('#balType').val('bank').trigger('change'); $('#balAsOf').val('<?php echo date('Y-m-d'); ?>'); $('#balMsg').text(''); balShowForm(true); });
 	$('#balCancelBtn').on('click', function(){ balShowForm(false); });
@@ -542,7 +543,7 @@
 	});
 
 	// ── Planning settings (loan %, cash buffer, monthly tax) ──
-	$('#loanSaveBtn').on('click', function(){ var $btn=$(this).prop('disabled',true); $.post('/ajax/cashflow/save_settings.php', { shopify_loan_pct:$('#loanPct').val(), cash_buffer:$('#cashBuffer').val(), tax_monthly:$('#taxMonthly').val(), loc_limit:$('#locLimit').val() }, function(resp){ if($.trim(resp)==='ok') location.reload(); else { $('#loanMsg').addClass('text-danger').text(resp); $btn.prop('disabled',false); } }).fail(function(x){ $('#loanMsg').addClass('text-danger').text('Failed'); $btn.prop('disabled',false); }); });
+	$('#loanSaveBtn').on('click', function(){ var $btn=$(this).prop('disabled',true); $.post('/ajax/cashflow/save_settings.php', { shopify_loan_pct:$('#loanPct').val(), cash_buffer:$('#cashBuffer').val(), tax_monthly:$('#taxMonthly').val(), loc_limit:$('#locLimit').val(), card_min_pct:$('#cardMinPct').val(), card_min_floor:$('#cardMinFloor').val() }, function(resp){ if($.trim(resp)==='ok') location.reload(); else { $('#loanMsg').addClass('text-danger').text(resp); $btn.prop('disabled',false); } }).fail(function(x){ $('#loanMsg').addClass('text-danger').text('Failed'); $btn.prop('disabled',false); }); });
 
 	// ── AI Cash Flow Assistant (saved & resumable) ──
 	var cfMsgs = [], cfChatId = 0, cfHistLoaded = false;

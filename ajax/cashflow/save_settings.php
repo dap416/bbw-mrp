@@ -25,6 +25,12 @@ try {
 	if (isset($_POST['loc_limit'])) {
 		setting_set($db, 'loc_limit', (string)max(0.0, (float)$_POST['loc_limit']));
 	}
+	if (isset($_POST['card_min_pct'])) {
+		setting_set($db, 'card_min_pct', (string)max(0.0, min(100.0, (float)$_POST['card_min_pct'])));
+	}
+	if (isset($_POST['card_min_floor'])) {
+		setting_set($db, 'card_min_floor', (string)max(0.0, (float)$_POST['card_min_floor']));
+	}
 	if (isset($_POST['cashflow_hide_before'])) {
 		$v = trim($_POST['cashflow_hide_before']);
 		if ($v === '' || $v === 'reset')          { setting_set($db, 'cashflow_hide_before', ''); }
