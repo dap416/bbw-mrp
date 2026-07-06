@@ -317,7 +317,7 @@ function chSend(){
 	$('#chInput').val(''); chMsgs.push({role:'user',content:t}); $('#chActions').addClass('hidden').html(''); window._chTasks=null;
 	chPending=true; chRender();
 	$.ajax({url:'/ajax/charles/chat.php',method:'POST',dataType:'json',timeout:180000,data:{messages:JSON.stringify(chMsgs), chat_id:chChatId}})
-	.done(function(d){ chPending=false; if(!d||d.error){ chMsgs.push({role:'assistant',content:'⚠ '+((d&&d.error)||'failed')}); chRender(); return; } chMsgs.push({role:'assistant',content:d.reply||'(no reply)'}); if(d.chat_id) chChatId=d.chat_id; chRender(); chLoadHistory(); if(typeof chSpeak==='function') chSpeak(d.reply||'', function(){ if(typeof chHandsFree!=='undefined' && chHandsFree){ chStatus('Your turn…'); setTimeout(chListen, 300); } }); if(d.tasks&&d.tasks.length) chShowTasks(d.tasks); })
+	.done(function(d){ chPending=false; if(!d||d.error){ chMsgs.push({role:'assistant',content:'⚠ '+((d&&d.error)||'failed')}); chRender(); return; } chMsgs.push({role:'assistant',content:d.reply||'(no reply)'}); if(d.chat_id) chChatId=d.chat_id; if(typeof chSaveSession==='function') chSaveSession(); chRender(); chLoadHistory(); if(typeof chSpeak==='function') chSpeak(d.reply||'', function(){ if(typeof chHandsFree!=='undefined' && chHandsFree){ chStatus('Your turn…'); setTimeout(chListen, 300); } }); if(d.tasks&&d.tasks.length) chShowTasks(d.tasks); })
 	.fail(function(x,s){ chPending=false; chMsgs.push({role:'assistant',content:'⚠ '+(s==='timeout'?'timed out — try again':'request failed')}); chRender(); if(typeof chHandsFree!=='undefined' && chHandsFree){ chStatus('Your turn…'); setTimeout(chListen, 500); } });
 }
 $('#chSend').on('click', chSend);
@@ -334,9 +334,9 @@ $(document).on('click','#chApply',function(){ var $b=$(this).prop('disabled',tru
 $(document).on('click','#chCancelTasks',function(){ $('#chActions').addClass('hidden').html(''); window._chTasks=null; });
 
 function chLoadHistory(){ $.getJSON('/ajax/charles/chat_list.php', function(d){ var o='<option value="">History…</option>'; (d.chats||[]).forEach(function(c){ o+='<option value="'+c.id+'"'+(c.id==chChatId?' selected':'')+'>'+chEsc(c.title)+'</option>'; }); $('#chHistory').html(o); }); }
-$('#chHistory').on('change', function(){ var id=parseInt($(this).val(),10); if(!id) return; $.post('/ajax/charles/chat_get.php',{id:id},function(d){ if(d.error){ alert(d.error); return; } chChatId=d.id; chMsgs=d.messages||[]; $('#chActions').addClass('hidden').html(''); chRender(); },'json'); });
-$('#chNew').on('click', function(){ chChatId=0; chMsgs=[]; $('#chHistory').val(''); $('#chActions').addClass('hidden').html(''); chRender(); $('#chInput').focus(); });
-$('#chDelete').on('click', function(e){ e.preventDefault(); if(!chChatId||!confirm('Delete this chat?')) return; $.post('/ajax/charles/chat_delete.php',{id:chChatId},function(){ chChatId=0; chMsgs=[]; chRender(); chLoadHistory(); }); });
+$('#chHistory').on('change', function(){ var id=parseInt($(this).val(),10); if(!id) return; $.post('/ajax/charles/chat_get.php',{id:id},function(d){ if(d.error){ alert(d.error); return; } chChatId=d.id; chMsgs=d.messages||[]; $('#chActions').addClass('hidden').html(''); chSaveSession(); chRender(); },'json'); });
+$('#chNew').on('click', function(){ chChatId=0; chMsgs=[]; $('#chHistory').val(''); $('#chActions').addClass('hidden').html(''); chSaveSession(); window._chOpened=true; chRender(); $('#chInput').focus(); });
+$('#chDelete').on('click', function(e){ e.preventDefault(); if(!chChatId||!confirm('Delete this chat?')) return; $.post('/ajax/charles/chat_delete.php',{id:chChatId},function(){ chChatId=0; chMsgs=[]; try{ localStorage.removeItem('charlesSession'); }catch(_){} chRender(); chLoadHistory(); }); });
 chLoadHistory();
 
 // ── Expenses year over year ──
@@ -449,8 +449,27 @@ $('#chCall').on('click', function(){
 	}
 });
 
-// ── Opening: Charles greets with a quick update when you arrive ──
-setTimeout(function(){ if (chMsgs.length === 0 && chChatId === 0 && !window._chOpened) { window._chOpened = true; $('#chInput').val("Give me a brief update — the 1 or 2 most important things right now, then let's talk."); chSend(); } }, 500);
+// ── Session persistence ──
+// One chat stays active per "day", where a day runs until ~2am (so a late night
+// carries over), then resets to a fresh chat. It's resumed across page navigations
+// so moving around the app doesn't restart your conversation. Charles's durable
+// memory carries context into the new chat after the 2am reset.
+function chSessionDate(){ var d = new Date(); if (d.getHours() < 2) d.setDate(d.getDate() - 1); return d.getFullYear() + '-' + ('0'+(d.getMonth()+1)).slice(-2) + '-' + ('0'+d.getDate()).slice(-2); }
+function chSaveSession(){ try { localStorage.setItem('charlesSession', JSON.stringify({ date: chSessionDate(), chatId: chChatId })); } catch(_){} }
+function chReadSession(){ try { var s = JSON.parse(localStorage.getItem('charlesSession') || 'null'); if (s && s.date === chSessionDate() && s.chatId > 0) return s; } catch(_){} return null; }
+function chAutoOpen(){ if (window._chOpened) return; window._chOpened = true; if (chMsgs.length === 0 && chChatId === 0) { $('#chInput').val("Give me a brief update — the 1 or 2 most important things right now, then let's talk."); chSend(); } }
+setTimeout(function(){
+	var s = chReadSession();
+	if (s) {   // resume today's chat
+		chChatId = s.chatId; window._chOpened = true;
+		$.post('/ajax/charles/chat_get.php', { id: chChatId }, function(d){
+			if (d && !d.error && d.messages && d.messages.length) { chMsgs = d.messages; chRender(); }
+			else { chChatId = 0; window._chOpened = false; chAutoOpen(); }
+		}, 'json').fail(function(){ chChatId = 0; window._chOpened = false; chAutoOpen(); });
+	} else {   // new day / after the 2am reset → fresh chat with a greeting
+		chAutoOpen();
+	}
+}, 500);
 </script>
 
 <?php require_once(__DIR__."/includes/footer.php"); ?>
