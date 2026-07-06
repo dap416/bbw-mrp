@@ -207,13 +207,14 @@
 					<div class="col-8"><select id="evMonth" class="form-select form-select-sm"><?php echo $monthOpts; ?></select></div>
 					<div class="col-4"><select id="evWeek" class="form-select form-select-sm"><option value="1">Wk 1</option><option value="2">Wk 2</option><option value="3">Wk 3</option><option value="4">Wk 4</option></select></div>
 					<div class="col-12" id="evCardWrap"><label class="small mb-0" style="cursor:pointer;"><input type="checkbox" id="evCard" /> 💳 Goes on a credit card <span class="text-muted">— tracked, but not counted as cash out of the bank</span></label></div>
+					<div class="col-12" id="evPaidWrap" style="display:none;"><label class="small mb-0" style="cursor:pointer;"><input type="checkbox" id="evPaid" /> ✅ Already paid / on the card balance <span class="text-muted">— drops it from the upcoming credit-out total</span></label></div>
 					<div class="col-12 d-flex gap-2"><button class="btn btn-sm btn-primary" id="evSaveBtn">Save</button><button class="btn btn-sm btn-secondary" id="evCancelBtn">Cancel</button><span id="evMsg" class="small ms-1"></span></div>
 				</div>
 			</div>
 			<?php if (empty($events['all'])): ?><div class="text-muted small mb-2">No cash events yet.</div>
 			<?php else: foreach ($events['all'] as $e): ?>
 				<div class="d-flex justify-content-between align-items-center border-bottom py-1 small ev-row" data-id="<?php echo $e['id']; ?>" data-etype="<?php echo $e['etype']; ?>" data-label="<?php echo htmlspecialchars($e['label'], ENT_QUOTES); ?>" data-amount="<?php echo $e['amount']; ?>" data-ym="<?php echo $e['ym']; ?>" data-week="<?php echo $e['week']; ?>" data-paidby="<?php echo ($e['paidby'] ?? 'cash'); ?>">
-					<span><span class="badge <?php echo $e['etype']==='in'?'bg-success':'bg-warning text-dark'; ?>" style="font-size:0.6rem;"><?php echo $e['etype']==='in'?'IN':'OUT'; ?></span> <?php if (($e['paidby'] ?? 'cash')==='card'): ?><span class="badge bg-info text-dark" style="font-size:0.6rem;">💳 CARD</span> <?php endif; ?><?php echo htmlspecialchars($e['label']); ?> <span class="text-muted" style="font-size:0.7rem;">· <?php echo date('M Y', strtotime($e['ym'].'-01')); ?> wk<?php echo $e['week']; ?></span></span>
+					<span><span class="badge <?php echo $e['etype']==='in'?'bg-success':'bg-warning text-dark'; ?>" style="font-size:0.6rem;"><?php echo $e['etype']==='in'?'IN':'OUT'; ?></span> <?php if (($e['paidby'] ?? 'cash')==='card'): ?><span class="badge bg-info text-dark" style="font-size:0.6rem;">💳 CARD</span> <?php if (!empty($e['paid'])): ?><span class="badge bg-success" style="font-size:0.6rem;">PAID</span> <?php endif; ?><?php endif; ?><?php echo htmlspecialchars($e['label']); ?> <span class="text-muted" style="font-size:0.7rem;">· <?php echo date('M Y', strtotime($e['ym'].'-01')); ?> wk<?php echo $e['week']; ?></span></span>
 					<span><span class="fw-semibold"><?php echo money($e['amount']); ?></span> <a href="#" class="ev-edit ms-1" style="font-size:0.7rem;">edit</a> <a href="#" class="ev-del ms-1 text-danger" style="font-size:0.7rem;">×</a></span>
 				</div>
 			<?php endforeach; endif; ?>
@@ -393,13 +394,13 @@
 
 		<?php if (!empty($b['credit_out'])): ?>
 		<div class="fw-semibold text-uppercase mb-1 mt-2" style="font-size:0.66rem;letter-spacing:.04em;color:#3ea5c9;">On Credit Card <span class="text-muted" style="text-transform:none;letter-spacing:0;font-weight:400;">(tracked, not cash)</span></div>
-		<?php foreach ($b['credit_out'] as $it): ?>
-			<div class="d-flex justify-content-between small py-1 cf-drag" draggable="true" data-event-id="<?php echo $it['id']; ?>" style="border-bottom:1px solid #f1f3f5;cursor:grab;" title="Drag to another month">
-				<span>💳 <?php echo htmlspecialchars($it['label']); ?><?php echo $it['week'] ? ' <span class="text-muted" style="font-size:0.68rem;">wk'.$it['week'].'</span>' : ''; ?></span>
-				<span><span class="fw-semibold" style="color:#3ea5c9;"><?php echo money0($it['amount']); ?></span> <a href="#" class="ev-edit-id ms-1 text-muted" data-id="<?php echo $it['id']; ?>" style="font-size:0.66rem;">edit</a></span>
+		<?php foreach ($b['credit_out'] as $it): $isPaid = !empty($it['paid']); ?>
+			<div class="d-flex justify-content-between small py-1<?php echo $isPaid ? '' : ' cf-drag'; ?>"<?php echo $isPaid ? '' : ' draggable="true" title="Drag to another month"'; ?> data-event-id="<?php echo $it['id']; ?>" style="border-bottom:1px solid #f1f3f5;<?php echo $isPaid ? 'opacity:.6;' : 'cursor:grab;'; ?>">
+				<span><input type="checkbox" class="credit-paid" data-id="<?php echo $it['id']; ?>"<?php echo $isPaid ? ' checked' : ''; ?> title="Mark paid (already on the card balance)" style="vertical-align:middle;"> 💳 <span<?php echo $isPaid ? ' style="text-decoration:line-through;"' : ''; ?>><?php echo htmlspecialchars($it['label']); ?></span><?php echo $it['week'] ? ' <span class="text-muted" style="font-size:0.68rem;">wk'.$it['week'].'</span>' : ''; ?><?php echo $isPaid ? ' <span class="badge bg-success" style="font-size:0.54rem;">PAID</span>' : ''; ?></span>
+				<span><span class="fw-semibold" style="color:<?php echo $isPaid ? '#9aa7b0' : '#3ea5c9'; ?>;<?php echo $isPaid ? 'text-decoration:line-through;' : ''; ?>"><?php echo money0($it['amount']); ?></span> <a href="#" class="ev-edit-id ms-1 text-muted" data-id="<?php echo $it['id']; ?>" style="font-size:0.66rem;">edit</a></span>
 			</div>
 		<?php endforeach; ?>
-		<div class="text-muted" style="font-size:0.66rem;"><?php echo money0($b['credit_out_total']); ?> on card — doesn't reduce cash.</div>
+		<div class="text-muted" style="font-size:0.66rem;"><?php echo money0($b['credit_out_total']); ?> on card (unpaid) — doesn't reduce cash.</div>
 		<?php endif; ?>
 
 		<?php if (!empty($b['card_payments'])): ?>
@@ -498,15 +499,18 @@
 	// ── Cash events ──
 	var EVENTS = <?php echo json_encode($events['all']); ?>;
 	function evShowForm(s){ $('#evForm').toggleClass('hidden', !s); if(s){ $('details').first().attr('open','open'); } }
-	$('#evType').on('change', function(){ $('#evCardWrap').toggle($(this).val()==='out'); });
-	$('#addEvBtn').on('click', function(){ $('#evId,#evLabel,#evAmount').val(''); $('#evType').val('out'); $('#evWeek').val('1'); $('#evCard').prop('checked', false); $('#evCardWrap').show(); $('#evMsg').text(''); evShowForm(true); });
+	$('#evType').on('change', function(){ var isOut=$(this).val()==='out'; $('#evCardWrap').toggle(isOut); $('#evPaidWrap').toggle(isOut && $('#evCard').is(':checked')); });
+	$('#evCard').on('change', function(){ $('#evPaidWrap').toggle($('#evType').val()==='out' && $(this).is(':checked')); });
+	$('#addEvBtn').on('click', function(){ $('#evId,#evLabel,#evAmount').val(''); $('#evType').val('out'); $('#evWeek').val('1'); $('#evCard').prop('checked', false); $('#evPaid').prop('checked', false); $('#evCardWrap').show(); $('#evPaidWrap').hide(); $('#evMsg').text(''); evShowForm(true); });
 	$('#evCancelBtn').on('click', function(){ evShowForm(false); });
-	function evEdit(id){ var e=EVENTS.filter(function(x){return x.id==id;})[0]; if(!e)return; $('#evId').val(e.id); $('#evType').val(e.etype); $('#evLabel').val(e.label); $('#evAmount').val(e.amount); $('#evMonth').val(e.ym); $('#evWeek').val(e.week); $('#evCard').prop('checked', e.paidby==='card'); $('#evCardWrap').toggle(e.etype==='out'); $('#evMsg').text(''); evShowForm(true); $('html,body').animate({scrollTop:$('#evForm').offset().top-90},200); }
+	function evEdit(id){ var e=EVENTS.filter(function(x){return x.id==id;})[0]; if(!e)return; $('#evId').val(e.id); $('#evType').val(e.etype); $('#evLabel').val(e.label); $('#evAmount').val(e.amount); $('#evMonth').val(e.ym); $('#evWeek').val(e.week); $('#evCard').prop('checked', e.paidby==='card'); $('#evPaid').prop('checked', e.paid==1); $('#evCardWrap').toggle(e.etype==='out'); $('#evPaidWrap').toggle(e.etype==='out' && e.paidby==='card'); $('#evMsg').text(''); evShowForm(true); $('html,body').animate({scrollTop:$('#evForm').offset().top-90},200); }
 	$(document).on('click', '.ev-edit', function(e){ e.preventDefault(); evEdit($(this).closest('.ev-row').data('id')); });
 	$(document).on('click', '.ev-edit-id', function(e){ e.preventDefault(); evEdit($(this).data('id')); });
 	$(document).on('click', '.add-event-for', function(){ $('#addEvBtn').click(); $('#evMonth').val($(this).data('ym')); $('html,body').animate({scrollTop:$('#evForm').offset().top-90},200); $('#evLabel').focus(); });
-	$('#evSaveBtn').on('click', function(){ var $btn=$(this).prop('disabled',true); $.post('/ajax/cashflow/save_event.php', { id:$('#evId').val(), etype:$('#evType').val(), label:$('#evLabel').val(), amount:$('#evAmount').val(), ym:$('#evMonth').val(), week:$('#evWeek').val(), paidby:(($('#evType').val()==='out' && $('#evCard').is(':checked'))?'card':'cash') }, function(resp){ if($.trim(resp)==='ok') location.reload(); else { $('#evMsg').addClass('text-danger').text(resp); $btn.prop('disabled',false); } }).fail(function(x){ $('#evMsg').addClass('text-danger').text('Save failed: '+(x.responseText||x.status)); $btn.prop('disabled',false); }); });
+	$('#evSaveBtn').on('click', function(){ var $btn=$(this).prop('disabled',true); $.post('/ajax/cashflow/save_event.php', { id:$('#evId').val(), etype:$('#evType').val(), label:$('#evLabel').val(), amount:$('#evAmount').val(), ym:$('#evMonth').val(), week:$('#evWeek').val(), paidby:(($('#evType').val()==='out' && $('#evCard').is(':checked'))?'card':'cash'), paid:(($('#evCard').is(':checked') && $('#evPaid').is(':checked'))?1:0) }, function(resp){ if($.trim(resp)==='ok') location.reload(); else { $('#evMsg').addClass('text-danger').text(resp); $btn.prop('disabled',false); } }).fail(function(x){ $('#evMsg').addClass('text-danger').text('Save failed: '+(x.responseText||x.status)); $btn.prop('disabled',false); }); });
 	$(document).on('click', '.ev-del', function(e){ e.preventDefault(); if(!confirm('Remove this cash event?'))return; $.post('/ajax/cashflow/delete_event.php', { id:$(this).closest('.ev-row').data('id') }, function(resp){ if($.trim(resp)==='ok') location.reload(); else alert(resp); }); });
+	// Mark a credit-card item paid (already reflected in the weekly card balance).
+	$(document).on('change', '.credit-paid', function(){ var $c=$(this); $c.prop('disabled',true); $.post('/ajax/cashflow/set_event_paid.php', { id:$c.data('id'), paid:$c.is(':checked')?1:0 }, function(resp){ if($.trim(resp)==='ok') location.reload(); else { alert(resp); $c.prop('disabled',false); } }).fail(function(){ alert('Save failed'); $c.prop('disabled',false); }); });
 
 	// ── Hide / show prior month(s) ──
 	$(document).on('click', '.hide-month', function(e){ e.preventDefault(); $.post('/ajax/cashflow/save_settings.php', { cashflow_hide_before: $(this).data('ym') }, function(){ location.reload(); }); });

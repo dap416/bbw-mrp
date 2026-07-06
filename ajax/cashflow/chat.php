@@ -54,7 +54,7 @@ foreach ($md['blocks'] as $b) {
 		'cash_in_items' => $inItems, 'cash_out_items' => $outItems, 'card_payments' => $cards, 'tax_reserve' => round($b['tax_reserve']),
 	];
 }
-$evList = [];   foreach ($events['all'] as $e) $evList[] = ['id' => $e['id'], 'etype' => $e['etype'], 'label' => $e['label'], 'amount' => $e['amount'], 'ym' => $e['ym'], 'week' => $e['week'], 'paidby' => $e['paidby'] ?? 'cash'];
+$evList = [];   foreach ($events['all'] as $e) $evList[] = ['id' => $e['id'], 'etype' => $e['etype'], 'label' => $e['label'], 'amount' => $e['amount'], 'ym' => $e['ym'], 'week' => $e['week'], 'paidby' => $e['paidby'] ?? 'cash', 'paid' => (int)($e['paid'] ?? 0)];
 $arList = [];   foreach (($data['ar']['items'] ?? []) as $a) $arList[] = ['order' => $a['name'], 'customer' => $a['customer'], 'amount' => $a['amount'], 'expected' => $a['expected'] ?? null];
 $poList = [];   foreach (($data['pos']['items'] ?? []) as $p) $poList[] = ['ref' => $p['ref'], 'supplier' => $p['supplier'], 'part' => $p['part'], 'balance' => $p['balance'], 'pay_by' => $p['pay_by'] ?? null];
 $billList = []; foreach (($data['bills']['items'] ?? []) as $bb) $billList[] = ['vendor' => $bb['vendor'], 'balance' => $bb['balance'], 'due' => $bb['due']];

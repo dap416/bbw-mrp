@@ -628,6 +628,9 @@
 		) ENGINE=InnoDB");
 		// 'cash' (reduces the bank balance) | 'card' (goes on a credit card — tracked, not cash out).
 		try { $db->exec("ALTER TABLE cash_events ADD COLUMN paidby VARCHAR(8) NOT NULL DEFAULT 'cash'"); } catch (Throwable $e) {}
+		// Card events: once actually charged, they show up in the weekly card balance,
+		// so 'paid' drops them from the upcoming credit-out total (no double-count).
+		try { $db->exec("ALTER TABLE cash_events ADD COLUMN paid TINYINT NOT NULL DEFAULT 0"); } catch (Throwable $e) {}
 	}
 
 	function load_cash_events($db) {
@@ -639,7 +642,8 @@
 				$ev = ['id' => (int)$r['id'], 'etype' => $r['etype'] === 'in' ? 'in' : 'out',
 				       'label' => $r['label'], 'amount' => (float)$r['amount'],
 				       'ym' => $r['ym'], 'week' => max(1, min(4, (int)$r['week'])),
-				       'paidby' => (($r['paidby'] ?? 'cash') === 'card') ? 'card' : 'cash'];
+				       'paidby' => (($r['paidby'] ?? 'cash') === 'card') ? 'card' : 'cash',
+				       'paid' => (int)($r['paid'] ?? 0)];
 				$res['all'][] = $ev;
 				$res['by_ym'][$ev['ym']][$ev['etype']][] = $ev;
 				if ($ev['etype'] === 'in') $li[$ev['label']] = true; else $lo[$ev['label']] = true;
@@ -781,11 +785,12 @@
 			// tracked/displayed but must NOT reduce the bank balance or the cash-out total.
 			$creditOut = [];
 			foreach (($events['by_ym'][$ym]['out'] ?? []) as $e) {
-				$item = ['label' => $e['label'], 'amount' => $e['amount'], 'week' => $e['week'], 'source' => 'manual', 'id' => $e['id'], 'paidby' => ($e['paidby'] ?? 'cash')];
+				$item = ['label' => $e['label'], 'amount' => $e['amount'], 'week' => $e['week'], 'source' => 'manual', 'id' => $e['id'], 'paidby' => ($e['paidby'] ?? 'cash'), 'paid' => (int)($e['paid'] ?? 0)];
 				if (($e['paidby'] ?? 'cash') === 'card') $creditOut[] = $item;
 				else                                     $out[] = $item;
 			}
-			$creditOutTotal = array_sum(array_map(fn($x) => $x['amount'], $creditOut));
+			// Paid card items are already in the weekly card balance — exclude from the upcoming total.
+			$creditOutTotal = array_sum(array_map(fn($x) => $x['paid'] ? 0 : $x['amount'], $creditOut));
 
 			$outBeforeCards = array_sum(array_map(fn($x) => $x['amount'], $out));
 
