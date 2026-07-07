@@ -47,7 +47,21 @@ it off. Allowed actions:
 - `{"type":"add_cash_event","etype":"in"|"out","label":"...","amount":1234,"ym":"YYYY-MM","paidby":"cash"|"card"}` — model a LOC draw (`in`), a planned card purchase (`out`,`card`), or a one-off cash outflow (`out`,`cash`).
 - `{"type":"set_setting","key":"cash_buffer"|"tax_monthly"|"shopify_loan_pct","value":30000}`
 - `{"type":"add_recurring_expense","label":"...","amount":1234}` — a new monthly expense.
+- `{"type":"add_fp_purchase","item":"...","qty":1000,"total_cost":30000,"order_ym":"YYYY-MM","card_label":"exact card name"} — record a finished-product import (FP WINGZ, cases from China) that rides a card that month. It raises that card's projected balance in order_ym.
 - `{"type":"note"}` — a reminder/checklist task with no book change (e.g. "call the bank", "order X on card Y").
+
+## Planning the future (do this right — it's where you add the most value)
+- **Credit room GROWS over the season.** `card_available` / `loc_available` are TODAY only.
+  Every month in `months[]` carries `card_room` and `loc_room` — the projected room after
+  that month's paydown. Cards pay down and the LOC loans finish, so buying power later is far
+  bigger than today. When you size a purchase for a future month, quote THAT month's room —
+  never today's. There's a `credit_projection` with the peak room and when it happens.
+- **Finished-product buys (FP WINGZ, cases) are imports from China**, not built from raw
+  materials — they never appear in parts/orders/reorder. They live in `fp_purchases` and each
+  already raises its card's projected balance in its month. If a known order isn't in the
+  list, ask George for item, quantity, total cost, month, and card — then offer to record it
+  with `add_fp_purchase` (or point him to "Finished-product purchases" on the Reports tab).
+- Fund big buys on the lowest-APR card that has room in that month; never on a LOC.
 
 Rules for the JSON: only use exact account names from the snapshot; never invent accounts; a
 purchase order is `paidby":"card"` or a `note`, **never** charged to a LOC; keep amounts as

@@ -74,6 +74,8 @@ function charles_snapshot($db) {
 			'in' => round($b['in_total']), 'out' => round($b['out_total']), 'net' => round($b['net']),
 			'end_cash' => $b['end_cash'] === null ? null : round($b['end_cash']),
 			'end_debt' => round($b['end_debt']),
+			'card_room' => round($b['card_room'] ?? 0),
+			'loc_room' => round($b['loc_room'] ?? 0),
 			'credit_out' => round($b['credit_out_total'] ?? 0),
 			'tax_reserve' => round($b['tax_reserve'] ?? 0),
 			'card_payments' => array_map(fn($c) => ['label' => $c['label'], 'amount' => round($c['amount']), 'apr' => $c['apr'], 'balance' => round($c['balance']), 'type' => $c['type'] ?? 'credit'], $b['card_payments'] ?? []),
@@ -103,6 +105,18 @@ function charles_snapshot($db) {
 		}
 	}
 
+	// Peak projected credit room (cards pay down + LOC frees up) — so future buys are
+	// planned against future buying power, not today's much-smaller number.
+	$peakCardRoom  = ['amount' => (float)($man['card_available'] ?? 0), 'ym' => date('Y-m')];
+	$peakTotalRoom = ['amount' => (float)($man['card_available'] ?? 0) + (float)($man['loc_available'] ?? 0), 'ym' => date('Y-m')];
+	foreach ($months as $m) {
+		if ((float)($m['card_room'] ?? 0) > $peakCardRoom['amount']) $peakCardRoom = ['amount' => (float)$m['card_room'], 'ym' => $m['ym']];
+		$tot = (float)($m['card_room'] ?? 0) + (float)($m['loc_room'] ?? 0);
+		if ($tot > $peakTotalRoom['amount']) $peakTotalRoom = ['amount' => $tot, 'ym' => $m['ym']];
+	}
+	$fpPurch = load_fp_purchases($db);
+	$fpPurchTotal = array_sum(array_map(fn($x) => (float)$x['total'], $fpPurch));
+
 	$gaps = [];
 	if (empty($data['qb_connected'])) $gaps[] = 'QuickBooks is not connected — connect it on Integrations so I can see your real P&L, Balance Sheet, bills and full expense history.';
 	if (empty($cards) && empty($locs)) $gaps[] = 'No credit cards or line of credit are on file — add them (with APR + limit) on the Cash Flow page so I can plan financing and payoff.';
@@ -120,6 +134,11 @@ function charles_snapshot($db) {
 		'cards' => $cards, 'locs' => $locs,
 		'card_debt' => round($cardDebt), 'loc_debt' => round($locDebt),
 		'card_available' => round($cardAvail), 'loc_available' => round($locAvail),
+		'credit_projection' => ['peak_card_room' => ['amount' => round($peakCardRoom['amount']), 'ym' => $peakCardRoom['ym']], 'peak_total_room' => ['amount' => round($peakTotalRoom['amount']), 'ym' => $peakTotalRoom['ym']]],
+		'credit_projection_note' => 'card_available/loc_available are TODAY only. Each entry in months[] has card_room and loc_room — the projected room AFTER that month\'s paydown. Cards pay down and LOC loans finish over the season, so future buying power is FAR higher than today (peak card room ~$' . number_format($peakCardRoom['amount']) . ' around ' . $peakCardRoom['ym'] . '). When sizing a purchase for a future month, use THAT month\'s card_room/loc_room — never today\'s number.',
+		'fp_purchases' => $fpPurch,
+		'fp_purchases_total' => round($fpPurchTotal),
+		'fp_purchases_note' => 'fp_purchases are finished-product imports (FP WINGZ, cases, etc.) bought directly from China — NOT built from raw materials, so they never appear in parts/orders/reorder. Each rides a credit card in its order_ym and already raises that card\'s balance in the projection (using that month\'s card_room, then paying down). If a known order is missing from the list, ask George for item, quantity, cost, month and card, and offer to record it as a task.',
 		'loc_limit' => round($locLimitV), 'loc_monthly_payment' => round($locPayment, 2),
 		'loc_note' => 'The line of credit is ONE facility (limit = loc_limit) with these loan draws (locs[]). loc_available = loc_limit − total loan balances. The monthly loan payments are ACTUAL CASH OUT of the bank; each loan pays off after its remaining payments and then that outflow stops and the LOC frees up.',
 		'ar_total' => round((float)($data['ar_total'] ?? 0)),
@@ -246,6 +265,20 @@ function charles_apply_action($db, $a) {
 			ensure_cash_expenses_table($db);
 			$db->prepare("INSERT INTO cash_expenses (label, amount, active) VALUES (?,?,1)")->execute([$label, $amount]);
 			return "Added recurring expense '$label' \$$amount/mo";
+		}
+		case 'add_fp_purchase': {
+			$item  = trim((string)($a['item'] ?? ''));
+			$ym    = trim((string)($a['order_ym'] ?? ''));
+			$qty   = (int)($a['qty'] ?? 0);
+			$unit  = round((float)($a['unit_cost'] ?? 0), 2);
+			$total = round((float)($a['total_cost'] ?? 0), 2);
+			if ($total <= 0) $total = $qty * $unit;
+			$card  = trim((string)($a['card_label'] ?? ''));
+			if ($item === '' || $total <= 0 || !preg_match('/^\d{4}-\d{2}$/', $ym)) return 'skip add_fp_purchase: bad fields';
+			ensure_fp_purchases_table($db);
+			$db->prepare("INSERT INTO fp_purchases (item,qty,unit_cost,total_cost,order_ym,card_label,user_id) VALUES (?,?,?,?,?,?,?)")
+			   ->execute([$item, $qty, $unit, $total, $ym, $card, $uid]);
+			return "Recorded FP purchase '$item' \$$total in $ym" . ($card ? " on $card" : '');
 		}
 		case 'note':
 			return 'Noted (no book change)';

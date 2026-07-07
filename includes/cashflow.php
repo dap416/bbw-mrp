@@ -760,6 +760,38 @@
 	}
 
 	/**
+	 * Finished-product PURCHASES — e.g. FP WINGZ and cases imported directly from China
+	 * (not built from raw materials, so they never appear in parts/orders). They're bought
+	 * on a credit card in a chosen month; the projection raises that card's balance then.
+	 */
+	function ensure_fp_purchases_table($db) {
+		$db->exec("CREATE TABLE IF NOT EXISTS fp_purchases (
+			id INT AUTO_INCREMENT PRIMARY KEY,
+			item VARCHAR(160) NOT NULL,
+			qty INT NOT NULL DEFAULT 0,
+			unit_cost DECIMAL(12,2) NOT NULL DEFAULT 0,
+			total_cost DECIMAL(12,2) NOT NULL DEFAULT 0,
+			order_ym VARCHAR(7) NOT NULL,
+			card_label VARCHAR(120) NULL,
+			note VARCHAR(255) NULL,
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			user_id INT NULL
+		) ENGINE=InnoDB");
+	}
+	function load_fp_purchases($db) {
+		$out = [];
+		try {
+			ensure_fp_purchases_table($db);
+			foreach ($db->query("SELECT * FROM fp_purchases ORDER BY order_ym ASC, id ASC") as $r) {
+				$total = (float)$r['total_cost'] > 0 ? (float)$r['total_cost'] : (float)$r['qty'] * (float)$r['unit_cost'];
+				$out[] = ['id' => (int)$r['id'], 'item' => $r['item'], 'qty' => (int)$r['qty'], 'unit_cost' => (float)$r['unit_cost'],
+				          'total' => round($total, 2), 'order_ym' => $r['order_ym'], 'card_label' => $r['card_label'] ?: '', 'note' => $r['note'] ?: ''];
+			}
+		} catch (Throwable $e) {}
+		return $out;
+	}
+
+	/**
 	 * Assemble 12 rolling month blocks (current month → +11). Each block merges
 	 * automatic flows (projected sales, the Shopify-loan % cash-out, recurring
 	 * expenses, planned debt payments, bills/POs due) with the user's manual
@@ -771,6 +803,8 @@
 		$taxMo   = tax_monthly($db);
 		$cardMinPct   = card_min_pct($db);    // card minimums = % of the CURRENT balance
 		$cardMinFloor = card_min_floor($db);
+		$fpPurchases  = load_fp_purchases($db);   // FP WINGZ/cases imports bought on a card
+		$locLimitAll  = loc_limit($db);           // LOC facility ceiling (for projected room)
 
 		// Card balances we simulate paying down (avalanche = highest APR first).
 		$cards = [];
@@ -832,6 +866,18 @@
 				$item = ['label' => $e['label'], 'amount' => $e['amount'], 'week' => $e['week'], 'source' => 'manual', 'id' => $e['id'], 'paidby' => ($e['paidby'] ?? 'cash'), 'paid' => (int)($e['paid'] ?? 0)];
 				if (($e['paidby'] ?? 'cash') === 'card') $creditOut[] = $item;
 				else                                     $out[] = $item;
+			}
+			// Finished-product imports (WINGZ/cases from China) bought on a card THIS month:
+			// raise the matching card's balance (this uses up card room) and show it on-card.
+			// Only for future months — a past month's purchases are already in today's balance.
+			if (!$isPast) {
+				foreach ($fpPurchases as $fp) {
+					if ($fp['order_ym'] !== $ym || (float)$fp['total'] <= 0) continue;
+					$amt = (float)$fp['total'];
+					foreach ($cards as $ci => &$cc) { if ($fp['card_label'] !== '' && strcasecmp($cc['label'], $fp['card_label']) === 0) { $cc['bal'] += $amt; break; } }
+					unset($cc);
+					$creditOut[] = ['label' => 'FP purchase: ' . $fp['item'] . ($fp['qty'] ? ' (' . number_format($fp['qty']) . ')' : ''), 'amount' => round($amt, 2), 'week' => 0, 'source' => 'auto', 'paidby' => 'card', 'paid' => 0, 'id' => 0];
+				}
 			}
 			// Paid card items are already in the weekly card balance — exclude from the upcoming total.
 			$creditOutTotal = array_sum(array_map(fn($x) => $x['paid'] ? 0 : $x['amount'], $creditOut));
@@ -904,6 +950,15 @@
 			$cash     = $cashBeforeCards - $cardTotal;
 			$endDebt  = array_sum(array_map(fn($c) => $c['bal'], $cards));
 
+			// Projected credit room at the END of this month — cards pay down and the LOC
+			// frees up over the season, so future buys have far more room than today.
+			$cardRoomM = 0.0; $locBalM = 0.0;
+			foreach ($cards as $c) {
+				if (($c['type'] ?? 'credit') === 'loc') $locBalM += (float)$c['bal'];
+				elseif ($c['limit'] !== null)           $cardRoomM += max(0.0, (float)$c['limit'] - (float)$c['bal']);
+			}
+			$locRoomM = ($locLimitAll > 0) ? max(0.0, $locLimitAll - $locBalM) : 0.0;
+
 			// ── Advice ──
 			$advice = [];
 			if ($cash < 0)            $advice[] = ['kind' => 'warn', 'text' => 'Cash goes negative (ending $' . number_format($cash, 0) . '). Reduce card extra or pull income forward.'];
@@ -932,6 +987,7 @@
 				'credit_out' => $creditOut, 'credit_out_total' => $creditOutTotal,
 				'in_total' => $inTotal, 'out_total' => $outTotal, 'net' => $net,
 				'end_cash' => $cash, 'end_debt' => $endDebt,
+				'card_room' => round($cardRoomM), 'loc_room' => round($locRoomM),
 				'card_payments' => $cardPayments,
 				'tax_setaside' => $taxSet, 'tax_payment' => $taxPayment, 'tax_reserve' => $reserve,
 				'advice' => $advice,

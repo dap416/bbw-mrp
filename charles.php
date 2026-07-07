@@ -191,6 +191,37 @@
 <div class="card mb-3"><div class="card-body py-2 text-muted small">Tradeshow ROI loads when Charles analyzes — hit <strong>Re-analyze</strong> above to pull last season's show sales.</div></div>
 <?php endif; ?>
 
+<!-- ── FINISHED-PRODUCT PURCHASES (China imports) ───────────────────────────── -->
+<div class="card mb-3"><div class="card-body">
+	<h6 class="fw-bold mb-1">Finished-product purchases <span class="text-muted small">— WINGZ, cases &amp; other imports (on cards)</span></h6>
+	<p class="text-muted small mb-2">These are finished goods you buy directly from China — not built from raw materials, so Charles can't see them anywhere else. Log them here (item, cost, month, card) and he factors them into cash flow and card room.</p>
+	<?php if (!empty($snap['fp_purchases'])): ?>
+	<div class="table-responsive"><table class="table table-sm align-middle mb-2" style="font-size:0.84rem;">
+		<thead><tr><th>Item</th><th class="text-end">Qty</th><th class="text-end">Total</th><th>Month</th><th>Card</th><th></th></tr></thead>
+		<tbody>
+		<?php foreach ($snap['fp_purchases'] as $p): ?>
+			<tr>
+				<td class="fw-semibold"><?php echo htmlspecialchars($p['item']); ?><?php echo $p['note'] ? ' <span class="text-muted small">— '.htmlspecialchars($p['note']).'</span>' : ''; ?></td>
+				<td class="text-end"><?php echo $p['qty'] ? number_format($p['qty']) : '—'; ?></td>
+				<td class="text-end fw-semibold"><?php echo c_money0($p['total']); ?></td>
+				<td><?php echo htmlspecialchars(date('M Y', strtotime($p['order_ym'].'-01'))); ?></td>
+				<td><?php echo htmlspecialchars($p['card_label'] ?: '—'); ?></td>
+				<td class="text-end"><a href="#" class="fp-del text-danger" data-id="<?php echo $p['id']; ?>" title="Remove">×</a></td>
+			</tr>
+		<?php endforeach; ?>
+		</tbody>
+	</table></div>
+	<?php endif; ?>
+	<div class="row g-2 align-items-end" style="max-width:860px;">
+		<div class="col-12 col-md-3"><input type="text" id="fpItem" class="form-control form-control-sm" placeholder="Item (e.g. FP WINGZ)"></div>
+		<div class="col-6 col-md-2"><input type="number" id="fpQty" class="form-control form-control-sm" placeholder="Qty"></div>
+		<div class="col-6 col-md-2"><div class="input-group input-group-sm"><span class="input-group-text">$</span><input type="number" id="fpTotal" class="form-control" placeholder="Total cost"></div></div>
+		<div class="col-6 col-md-2"><input type="month" id="fpMonth" class="form-control form-control-sm"></div>
+		<div class="col-6 col-md-3"><input type="text" id="fpCard" class="form-control form-control-sm" list="fpCards" placeholder="Which card"><datalist id="fpCards"><?php foreach ($snap['cards'] as $c): ?><option value="<?php echo htmlspecialchars($c['label'], ENT_QUOTES); ?>"></option><?php endforeach; ?></datalist></div>
+		<div class="col-12"><button id="fpAdd" class="btn btn-sm btn-primary">Add purchase</button> <span id="fpMsg" class="small ms-1"></span></div>
+	</div>
+</div></div>
+
 <!-- ── DATA GAPS ────────────────────────────────────────────────────────────── -->
 <?php if (!empty($snap['data_gaps'])): ?>
 <div class="card mb-3" style="border-left:4px solid #d9822b;"><div class="card-body py-2">
@@ -380,6 +411,15 @@ $(document).on('change', '.show-cost', function(){
 		if (resp && resp.ok) location.reload(); else { alert((resp && resp.error) || 'Save failed'); $i.prop('disabled', false); }
 	}, 'json').fail(function(){ alert('Save failed'); $i.prop('disabled', false); });
 });
+
+// ── Finished-product purchases (China imports) ──
+$('#fpAdd').on('click', function(){
+	var $b = $(this).prop('disabled', true);
+	$.post('/ajax/charles/save_fp_purchase.php', { item: $('#fpItem').val(), qty: $('#fpQty').val() || 0, total_cost: $('#fpTotal').val() || 0, order_ym: $('#fpMonth').val(), card_label: $('#fpCard').val() }, function(r){
+		if (r && r.ok) location.reload(); else { $('#fpMsg').addClass('text-danger').text((r && r.error) || 'Save failed'); $b.prop('disabled', false); }
+	}, 'json').fail(function(){ $('#fpMsg').addClass('text-danger').text('Save failed'); $b.prop('disabled', false); });
+});
+$(document).on('click', '.fp-del', function(e){ e.preventDefault(); if (!confirm('Remove this purchase?')) return; $.post('/ajax/charles/save_fp_purchase.php', { id: $(this).data('id'), delete: 1 }, function(r){ if (r && r.ok) location.reload(); }, 'json'); });
 
 // ── Tabs ──
 $('#charlesTabs a').on('click', function(e){
