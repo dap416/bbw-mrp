@@ -117,6 +117,33 @@ function charles_snapshot($db) {
 	$fpPurch = load_fp_purchases($db);
 	$fpPurchTotal = array_sum(array_map(fn($x) => (float)$x['total'], $fpPurch));
 
+	// Per-product margins: Shopify selling price − true build cost (SUM parts.cost * build.qty).
+	$margins = [];
+	try {
+		if (shopify_is_configured()) {
+			$prices = shopify_cache_remember($db, 'charles_prices', inventory_cache_ttl($db), fn() => shopify_product_prices())['data']['skus'] ?? [];
+			$hasSku = column_exists($db, 'products', 'shopify_sku');
+			$cols   = 'id, name' . ($hasSku ? ', shopify_sku' : '');
+			$bom    = [];
+			foreach ($db->query("SELECT b.prodid, b.qty, p.cost FROM build b JOIN parts p ON p.id = b.partid") as $r) {
+				$bom[$r['prodid']] = ($bom[$r['prodid']] ?? 0) + (float)$r['qty'] * (float)$r['cost'];
+			}
+			foreach ($db->query("SELECT $cols FROM products") as $p) {
+				$cost = round($bom[$p['id']] ?? 0, 2);
+				if ($cost <= 0) continue;                       // only products built from a BOM
+				$sku   = $hasSku ? trim((string)($p['shopify_sku'] ?? '')) : '';
+				$price = ($sku !== '' && isset($prices[$sku])) ? round((float)$prices[$sku], 2) : 0;
+				$margins[] = [
+					'product' => $p['name'], 'sku' => $sku, 'build_cost' => $cost,
+					'price' => $price ?: null,
+					'margin' => $price > 0 ? round($price - $cost, 2) : null,
+					'margin_pct' => $price > 0 ? round(($price - $cost) / $price * 100) : null,
+				];
+			}
+			usort($margins, fn($a, $b) => ($b['margin'] ?? -1) <=> ($a['margin'] ?? -1));
+		}
+	} catch (Throwable $e) {}
+
 	$gaps = [];
 	if (empty($data['qb_connected'])) $gaps[] = 'QuickBooks is not connected — connect it on Integrations so I can see your real P&L, Balance Sheet, bills and full expense history.';
 	if (empty($cards) && empty($locs)) $gaps[] = 'No credit cards or line of credit are on file — add them (with APR + limit) on the Cash Flow page so I can plan financing and payoff.';
@@ -138,6 +165,9 @@ function charles_snapshot($db) {
 		'credit_projection_note' => 'card_available/loc_available are TODAY only. Each entry in months[] has card_room and loc_room — the projected room AFTER that month\'s paydown. Cards pay down and LOC loans finish over the season, so future buying power is FAR higher than today (peak card room ~$' . number_format($peakCardRoom['amount']) . ' around ' . $peakCardRoom['ym'] . '). When sizing a purchase for a future month, use THAT month\'s card_room/loc_room — never today\'s number.',
 		'fp_purchases' => $fpPurch,
 		'fp_purchases_total' => round($fpPurchTotal),
+		'product_margins' => $margins,
+		'margins_note' => 'product_margins = Shopify selling price − true build cost (sum of parts.cost * BOM qty) per animator built from raw materials. Use these to reason about which products earn the most per unit and where to put build/marketing effort. FP imports (WINGZ/cases) are bought finished — their margin is their Shopify price minus the import cost in fp_purchases, not a BOM.',
+		'raw_material_terms' => 'Raw-material supplier terms: ~30% deposit up front at order, then the remaining ~70% PLUS shipping fees due WHEN THE GOODS SHIP. Air-shipped items (the 45-day-turnaround products) arrive ~10 days after shipping, so the balance+shipping lands ~35 days after the order is placed. Sea-shipped items take ~30 days transit. So an order today = a 30% cash/card hit now and a larger balance+shipping hit ~35 days later (air). Factor this timing into which month the money actually leaves.',
 		'fp_purchases_note' => 'fp_purchases are finished-product imports (FP WINGZ, cases, etc.) bought directly from China — NOT built from raw materials, so they never appear in parts/orders/reorder. Each rides a credit card in its order_ym and already raises that card\'s balance in the projection (using that month\'s card_room, then paying down). If a known order is missing from the list, ask George for item, quantity, cost, month and card, and offer to record it as a task.',
 		'loc_limit' => round($locLimitV), 'loc_monthly_payment' => round($locPayment, 2),
 		'loc_note' => 'The line of credit is ONE facility (limit = loc_limit) with these loan draws (locs[]). loc_available = loc_limit − total loan balances. The monthly loan payments are ACTUAL CASH OUT of the bank; each loan pays off after its remaining payments and then that outflow stops and the LOC frees up.',

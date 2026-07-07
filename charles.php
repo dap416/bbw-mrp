@@ -191,6 +191,28 @@
 <div class="card mb-3"><div class="card-body py-2 text-muted small">Tradeshow ROI loads when Charles analyzes — hit <strong>Re-analyze</strong> above to pull last season's show sales.</div></div>
 <?php endif; ?>
 
+<!-- ── PRODUCT MARGINS ──────────────────────────────────────────────────────── -->
+<?php if (!empty($snap['product_margins'])): ?>
+<div class="card mb-3"><div class="card-body">
+	<h6 class="fw-bold mb-1">Product margins <span class="text-muted small">— Shopify price − true build cost (BOM × part cost)</span></h6>
+	<div class="table-responsive"><table class="table table-sm align-middle mb-0" style="font-size:0.84rem;">
+		<thead><tr><th>Product</th><th class="text-end">Build cost</th><th class="text-end">Price</th><th class="text-end">Margin</th><th class="text-end">%</th></tr></thead>
+		<tbody>
+		<?php foreach (array_slice($snap['product_margins'], 0, 30) as $m): $mc = $m['margin']===null ? '#adb5bd' : ($m['margin']<0 ? '#e64545' : '#2ca01c'); ?>
+			<tr>
+				<td class="fw-semibold"><?php echo htmlspecialchars($m['product']); ?><?php echo $m['sku'] ? ' <span class="text-muted small">· '.htmlspecialchars($m['sku']).'</span>' : ''; ?></td>
+				<td class="text-end"><?php echo c_money0($m['build_cost']); ?></td>
+				<td class="text-end"><?php echo $m['price']!==null ? c_money0($m['price']) : '<span class="text-muted">—</span>'; ?></td>
+				<td class="text-end fw-semibold" style="color:<?php echo $mc; ?>;"><?php echo $m['margin']!==null ? c_money0($m['margin']) : '—'; ?></td>
+				<td class="text-end"><?php echo $m['margin_pct']!==null ? $m['margin_pct'].'%' : '—'; ?></td>
+			</tr>
+		<?php endforeach; ?>
+		</tbody>
+	</table></div>
+	<?php $noPrice = array_filter($snap['product_margins'], fn($m)=>$m['price']===null); if ($noPrice): ?><div class="text-muted small mt-1"><?php echo count($noPrice); ?> product(s) have a build cost but no matching Shopify price — check the SKU on the product.</div><?php endif; ?>
+</div></div>
+<?php endif; ?>
+
 <!-- ── FINISHED-PRODUCT PURCHASES (China imports) ───────────────────────────── -->
 <div class="card mb-3"><div class="card-body">
 	<h6 class="fw-bold mb-1">Finished-product purchases <span class="text-muted small">— WINGZ, cases &amp; other imports (on cards)</span></h6>

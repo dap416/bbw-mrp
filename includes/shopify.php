@@ -891,6 +891,33 @@
 		return ['error' => null, 'skus' => $bySku, 'oregon_location' => $oregonId];
 	}
 
+	/** Current Shopify selling price per SKU: [sku => price]. Shopify is the only sales channel. */
+	function shopify_product_prices() {
+		$query = '
+		query($cursor: String) {
+		  productVariants(first: 100, after: $cursor) {
+		    pageInfo { hasNextPage endCursor }
+		    edges { node { sku price } }
+		  }
+		}';
+		$bySku = []; $cursor = null; $pages = 0;
+		do {
+			$res = shopify_graphql($query, ['cursor' => $cursor]);
+			if (!empty($res['error'])) return ['error' => $res['error'], 'skus' => []];
+			$pv = $res['data']['productVariants'] ?? null;
+			if ($pv === null) return ['error' => 'Malformed Shopify response.', 'skus' => []];
+			foreach ($pv['edges'] as $ve) {
+				$v = $ve['node']; $sku = trim((string)($v['sku'] ?? ''));
+				if ($sku === '') continue;
+				$bySku[$sku] = (float)($v['price'] ?? 0);
+			}
+			$cursor  = $pv['pageInfo']['endCursor']  ?? null;
+			$hasNext = $pv['pageInfo']['hasNextPage'] ?? false;
+			$pages++;
+		} while ($hasNext && $pages < 40);
+		return ['error' => null, 'skus' => $bySku];
+	}
+
 	/**
 	 * Categorize a finished product for the warehouse-stock display, or return
 	 * NULL to exclude it (apparel, gift cards). Uses Shopify productType, with

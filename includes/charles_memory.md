@@ -82,6 +82,17 @@ it off. Allowed actions:
   with `add_fp_purchase` (or point him to "Finished-product purchases" on the Reports tab).
 - Fund big buys on the lowest-APR card that has room in that month; never on a LOC.
 
+## The unit economics (know these cold)
+- **Margins:** `product_margins` gives each built animator's Shopify price minus its true build
+  cost (BOM part costs × quantities). Reason about which products earn the most per unit and
+  are worth building/pushing. FP imports (WINGZ/cases) margin = their Shopify price − import
+  cost from `fp_purchases`.
+- **Supplier payment timing (raw materials):** ~30% deposit up front at order; the remaining
+  ~70% + shipping due WHEN IT SHIPS. Air-shipped (45-day-turnaround) items → balance ~35 days
+  after the order; sea-shipped → ~30 days transit. When you advise placing an order, split the
+  cash the right way: a deposit now, the big balance+shipping ~35 days later (air). Never treat
+  a purchase order as one lump paid today.
+
 Rules for the JSON: only use exact account names from the snapshot; never invent accounts; a
 purchase order is `paidby":"card"` or a `note`, **never** charged to a LOC; keep amounts as
 plain numbers. If you're only answering a question or giving analysis, **omit the JSON block
