@@ -252,15 +252,26 @@ function tsRenderPrep(d, names) {
 	}
 	if (d.unmapped && d.unmapped.length) {
 		var meta = window._tsSkuMeta || {};
-		var un = d.unmapped.slice().sort(function(a,b){ return Number(b.units||0) - Number(a.units||0); });
 		html += '<div class="mt-3"><div class="fw-bold small mb-1">Also bring — bought, not built here</div>';
 		html += '<div class="text-muted small mb-2">These sold at the show but have no bill of materials (WINGZ, accessories, bags &amp; cases, batteries, hats). Stock or order them separately — they are not part of the packaging build.</div>';
-		html += '<div class="table-responsive"><table class="table table-sm align-middle" style="font-size:0.88rem;"><thead><tr><th>SKU</th><th>Product</th><th class="text-center">Bring</th></tr></thead><tbody>';
-		un.forEach(function(u){
-			var m = meta[u.sku] || {};
-			html += '<tr><td class="fw-semibold" style="width:120px;">' + $('<div>').text(u.sku).html() + '</td>' +
-				'<td class="text-muted">' + $('<div>').text(m.title || '').html() + (m.category ? ' <span class="badge bg-light text-dark" style="font-size:0.6rem;">' + $('<div>').text(m.category).html() + '</span>' : '') + '</td>' +
-				'<td class="text-center fw-bold">' + tsNum(u.units) + '</td></tr>';
+		// Group by category, in the owner's preferred order.
+		var ubOrder = ['Animators','WINGZ','Accessories','Bags & Cases','Batteries','Hats'];
+		var ubGroups = {};
+		d.unmapped.forEach(function(u){ var c = (meta[u.sku] && meta[u.sku].category) || 'Other'; (ubGroups[c] = ubGroups[c] || []).push(u); });
+		var ubCats = ubOrder.filter(function(c){ return ubGroups[c]; });
+		Object.keys(ubGroups).sort().forEach(function(c){ if (ubOrder.indexOf(c) === -1 && c !== 'Other') ubCats.push(c); });
+		if (ubGroups['Other']) ubCats.push('Other');
+		html += '<div class="table-responsive"><table class="table table-sm align-middle" style="font-size:0.88rem;"><tbody>';
+		ubCats.forEach(function(c){
+			var arr = ubGroups[c].slice().sort(function(a,b){ return Number(b.units||0) - Number(a.units||0); });
+			var sub = arr.reduce(function(a,x){ return a + Number(x.units||0); }, 0);
+			html += '<tr style="background:#eef1f5;"><td colspan="3" class="fw-bold" style="text-transform:uppercase;letter-spacing:.03em;font-size:0.72rem;">' + $('<div>').text(c).html() + ' <span class="text-muted">· ' + tsNum(sub) + ' units</span></td></tr>';
+			arr.forEach(function(u){
+				var m = meta[u.sku] || {};
+				html += '<tr><td class="fw-semibold" style="width:120px;">' + $('<div>').text(u.sku).html() + '</td>' +
+					'<td class="text-muted">' + $('<div>').text(m.title || '').html() + '</td>' +
+					'<td class="text-center fw-bold">' + tsNum(u.units) + '</td></tr>';
+			});
 		});
 		html += '</tbody></table></div></div>';
 	}
