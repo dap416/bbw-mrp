@@ -110,10 +110,10 @@ function tsRender(d) {
 		else if (!s.items || !s.items.length) { html += '<div class="text-muted small">No sales in this window.</div>'; }
 		else {
 			html += '<div class="row g-4">';
-			html += '<div class="col-12 col-lg-7"><div class="small fw-semibold text-uppercase text-muted mb-1" style="letter-spacing:.04em;">Bring List (units sold)</div>';
+			html += '<div class="col-12 col-lg-7"><div class="small fw-semibold text-uppercase text-muted mb-1" style="letter-spacing:.04em;">Everything sold (units) — bring list</div>';
 			html += '<table class="table table-sm table-hover mb-0" style="font-size:0.85rem;"><thead><tr style="background:#f1f3f5;"><th>SKU</th><th>Product</th><th class="text-end">Units</th></tr></thead><tbody>';
 			s.items.forEach(function(it) {
-				html += '<tr><td class="fw-semibold" style="width:90px;">' + $('<div>').text(it.sku).html() + '</td>' +
+				html += '<tr><td class="fw-semibold" style="width:90px;">' + (it.sku ? $('<div>').text(it.sku).html() : '<span class="text-muted">—</span>') + '</td>' +
 					'<td class="text-muted">' + $('<div>').text(it.title).html() + '</td>' +
 					'<td class="text-end fw-bold">' + tsNum(it.units) + '</td></tr>';
 			});

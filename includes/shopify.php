@@ -1129,7 +1129,7 @@
 		  }
 		}';
 		$q = "location_id:$locationId created_at:>=$since created_at:<=$until";
-		$bySku = []; $titles = []; $byDate = []; $totalUnits = 0; $revenue = 0.0;
+		$bySku = []; $titles = []; $byDate = []; $byItem = []; $totalUnits = 0; $revenue = 0.0;
 		$cursor = null; $pages = 0; $orders = 0;
 		$bundles = shopify_bundle_map();
 
@@ -1151,21 +1151,29 @@
 					$sku = trim((string)($li['sku'] ?? ''));
 					$qty = (int)($li['quantity'] ?? 0);
 					if ($qty <= 0) continue;
+					$title = trim((string)($li['title'] ?? ''));
+					if (preg_match('/clearance/i', $title . ' ' . $sku)) continue;   // exclude clearance (e.g. clearance animators)
 					$vid = $li['variant']['id'] ?? '';
+
+					// EVERYTHING sold (accessories, hats, bags, batteries, WINGZ…) — includes
+					// items with no SKU, keyed by title so nothing is dropped from the show list.
+					$ikey = $sku !== '' ? $sku : ('~' . strtolower($title));
+					if (!isset($byItem[$ikey])) $byItem[$ikey] = ['sku' => $sku, 'title' => $title, 'units' => 0];
+					$byItem[$ikey]['units'] += $qty;
+
 					if ($sku === '' && $vid && isset($bundles[$vid])) {
 						foreach ($bundles[$vid] as $c) {
 							$add = $qty * (int)$c['qty'];
 							$bySku[$c['sku']] = ($bySku[$c['sku']] ?? 0) + $add;
-							$byDate[$date]    = ($byDate[$date] ?? 0) + $add;
-							$totalUnits      += $add;
 						}
+						$byDate[$date] = ($byDate[$date] ?? 0) + $qty; $totalUnits += $qty;
 						continue;
 					}
-					if ($sku === '') continue;
+					if ($sku === '') { $byDate[$date] = ($byDate[$date] ?? 0) + $qty; $totalUnits += $qty; continue; }   // no-SKU item still counts
 					$bySku[$sku]  = ($bySku[$sku] ?? 0) + $qty;
 					$byDate[$date]= ($byDate[$date] ?? 0) + $qty;
 					$totalUnits  += $qty;
-					if (!isset($titles[$sku])) $titles[$sku] = trim((string)($li['title'] ?? ''));
+					if (!isset($titles[$sku])) $titles[$sku] = $title;
 				}
 			}
 
@@ -1176,7 +1184,9 @@
 
 		arsort($bySku);
 		ksort($byDate);
+		uasort($byItem, fn($a, $b) => $b['units'] <=> $a['units']);
 		return ['error' => null, 'by_sku' => $bySku, 'titles' => $titles, 'by_date' => $byDate,
+		        'by_item' => array_values($byItem),
 		        'total_units' => $totalUnits, 'revenue' => $revenue, 'orders' => $orders];
 	}
 

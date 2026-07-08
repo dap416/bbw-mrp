@@ -21,12 +21,16 @@ foreach (tradeshow_locations() as $loc) {
 
 	// A show can span multiple Shopify location ids (e.g. a new one each year);
 	// merge them so the show is complete regardless of which year's id holds the data.
-	$bySku = []; $titles = []; $byDate = []; $total = 0; $rev = 0.0; $orders = 0; $err = null;
+	$byItem = []; $byDate = []; $total = 0; $rev = 0.0; $orders = 0; $err = null;
 	foreach ($ids as $id) {
 		$r = shopify_show_sales($id, $from, $to);
 		if (!empty($r['error'])) { $err = $r['error']; continue; }
-		foreach (($r['by_sku'] ?? []) as $sku => $u) $bySku[$sku] = ($bySku[$sku] ?? 0) + $u;
-		foreach (($r['titles'] ?? []) as $sku => $t) if (empty($titles[$sku])) $titles[$sku] = $t;
+		// EVERYTHING sold at the show (incl. items with no SKU; clearance excluded upstream).
+		foreach (($r['by_item'] ?? []) as $it) {
+			$k = $it['sku'] !== '' ? $it['sku'] : ('~' . strtolower($it['title']));
+			if (!isset($byItem[$k])) $byItem[$k] = ['sku' => $it['sku'], 'title' => $it['title'], 'units' => 0];
+			$byItem[$k]['units'] += (int)$it['units'];
+		}
 		foreach (($r['by_date'] ?? []) as $d => $u) $byDate[$d] = ($byDate[$d] ?? 0) + $u;
 		$total  += $r['total_units'] ?? 0;
 		$rev    += $r['revenue'] ?? 0;
@@ -36,11 +40,10 @@ foreach (tradeshow_locations() as $loc) {
 	// Only surface shows that actually had sales in this window (keeps it focused).
 	if ($total <= 0 && !$err) continue;
 
-	arsort($bySku);
 	ksort($byDate);
+	uasort($byItem, fn($a, $b) => $b['units'] <=> $a['units']);
 	$dates = array_keys($byDate);
-	$items = [];
-	foreach ($bySku as $sku => $u) $items[] = ['sku' => $sku, 'title' => $titles[$sku] ?? '', 'units' => $u];
+	$items = array_values($byItem);
 	$byDateArr = [];
 	foreach ($byDate as $d => $u) $byDateArr[] = ['date' => $d, 'units' => $u];
 
