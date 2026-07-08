@@ -121,7 +121,10 @@ function charles_snapshot($db) {
 	$margins = [];
 	try {
 		if (shopify_is_configured()) {
-			$prices = shopify_cache_remember($db, 'charles_prices', inventory_cache_ttl($db), fn() => shopify_product_prices())['data']['skus'] ?? [];
+			$since = date('Y-m-d', strtotime('-12 months')); $until = date('Y-m-d');
+			$ttl   = inventory_cache_ttl($db);
+			$avg   = shopify_cache_remember($db, "charles_avg_$since", $ttl, fn() => shopify_avg_prices($since, $until))['data']['skus'] ?? [];
+			$list  = shopify_cache_remember($db, 'charles_prices', $ttl, fn() => shopify_product_prices())['data']['skus'] ?? [];
 			$hasSku = column_exists($db, 'products', 'shopify_sku');
 			$cols   = 'id, name' . ($hasSku ? ', shopify_sku' : '');
 			$bom    = [];
@@ -132,10 +135,13 @@ function charles_snapshot($db) {
 				$cost = round($bom[$p['id']] ?? 0, 2);
 				if ($cost <= 0) continue;                       // only products built from a BOM
 				$sku   = $hasSku ? trim((string)($p['shopify_sku'] ?? '')) : '';
-				$price = ($sku !== '' && isset($prices[$sku])) ? round((float)$prices[$sku], 2) : 0;
+				$avgP  = ($sku !== '' && isset($avg[$sku]))  ? round((float)$avg[$sku], 2)  : 0;   // actual avg selling price
+				$listP = ($sku !== '' && isset($list[$sku])) ? round((float)$list[$sku], 2) : 0;
+				$price = $avgP > 0 ? $avgP : $listP;            // prefer what it actually sells for
+				$basis = $avgP > 0 ? 'avg' : ($listP > 0 ? 'list' : null);
 				$margins[] = [
 					'product' => $p['name'], 'sku' => $sku, 'build_cost' => $cost,
-					'price' => $price ?: null,
+					'price' => $price ?: null, 'price_basis' => $basis,
 					'margin' => $price > 0 ? round($price - $cost, 2) : null,
 					'margin_pct' => $price > 0 ? round(($price - $cost) / $price * 100) : null,
 				];
@@ -166,7 +172,7 @@ function charles_snapshot($db) {
 		'fp_purchases' => $fpPurch,
 		'fp_purchases_total' => round($fpPurchTotal),
 		'product_margins' => $margins,
-		'margins_note' => 'product_margins = Shopify selling price − true build cost (sum of parts.cost * BOM qty) per animator built from raw materials. Use these to reason about which products earn the most per unit and where to put build/marketing effort. FP imports (WINGZ/cases) are bought finished — their margin is their Shopify price minus the import cost in fp_purchases, not a BOM.',
+		'margins_note' => 'product_margins = the ACTUAL average selling price (revenue ÷ units over the last 12 months, discounts/wholesale included; price_basis="avg") minus the true build cost (sum of parts.cost * BOM qty) per animator built from raw materials. For products with no sales in the window it falls back to the Shopify list price (price_basis="list"). Use these to reason about which products actually earn the most per unit and where to put build/marketing effort. FP imports (WINGZ/cases) are bought finished — their margin is selling price minus the import cost in fp_purchases, not a BOM.',
 		'raw_material_terms' => 'Raw-material supplier terms: ~30% deposit up front at order, then the remaining ~70% PLUS shipping fees due WHEN THE GOODS SHIP. Air-shipped items (the 45-day-turnaround products) arrive ~10 days after shipping, so the balance+shipping lands ~35 days after the order is placed. Sea-shipped items take ~30 days transit. So an order today = a 30% cash/card hit now and a larger balance+shipping hit ~35 days later (air). Factor this timing into which month the money actually leaves.',
 		'fp_purchases_note' => 'fp_purchases are finished-product imports (FP WINGZ, cases, etc.) bought directly from China — NOT built from raw materials, so they never appear in parts/orders/reorder. Each rides a credit card in its order_ym and already raises that card\'s balance in the projection (using that month\'s card_room, then paying down). If a known order is missing from the list, ask George for item, quantity, cost, month and card, and offer to record it as a task.',
 		'loc_limit' => round($locLimitV), 'loc_monthly_payment' => round($locPayment, 2),

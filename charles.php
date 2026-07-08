@@ -194,15 +194,15 @@
 <!-- ── PRODUCT MARGINS ──────────────────────────────────────────────────────── -->
 <?php if (!empty($snap['product_margins'])): ?>
 <div class="card mb-3"><div class="card-body">
-	<h6 class="fw-bold mb-1">Product margins <span class="text-muted small">— Shopify price − true build cost (BOM × part cost)</span></h6>
+	<h6 class="fw-bold mb-1">Product margins <span class="text-muted small">— avg selling price (last 12 mo) − true build cost (BOM × part cost)</span></h6>
 	<div class="table-responsive"><table class="table table-sm align-middle mb-0" style="font-size:0.84rem;">
-		<thead><tr><th>Product</th><th class="text-end">Build cost</th><th class="text-end">Price</th><th class="text-end">Margin</th><th class="text-end">%</th></tr></thead>
+		<thead><tr><th>Product</th><th class="text-end">Build cost</th><th class="text-end">Avg price</th><th class="text-end">Margin</th><th class="text-end">%</th></tr></thead>
 		<tbody>
 		<?php foreach (array_slice($snap['product_margins'], 0, 30) as $m): $mc = $m['margin']===null ? '#adb5bd' : ($m['margin']<0 ? '#e64545' : '#2ca01c'); ?>
 			<tr>
 				<td class="fw-semibold"><?php echo htmlspecialchars($m['product']); ?><?php echo $m['sku'] ? ' <span class="text-muted small">· '.htmlspecialchars($m['sku']).'</span>' : ''; ?></td>
 				<td class="text-end"><?php echo c_money0($m['build_cost']); ?></td>
-				<td class="text-end"><?php echo $m['price']!==null ? c_money0($m['price']) : '<span class="text-muted">—</span>'; ?></td>
+				<td class="text-end"><?php echo $m['price']!==null ? c_money0($m['price']).(($m['price_basis'] ?? '')==='list' ? ' <span class="text-muted" style="font-size:0.62rem;">list</span>' : '') : '<span class="text-muted">—</span>'; ?></td>
 				<td class="text-end fw-semibold" style="color:<?php echo $mc; ?>;"><?php echo $m['margin']!==null ? c_money0($m['margin']) : '—'; ?></td>
 				<td class="text-end"><?php echo $m['margin_pct']!==null ? $m['margin_pct'].'%' : '—'; ?></td>
 			</tr>

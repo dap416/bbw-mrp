@@ -891,7 +891,46 @@
 		return ['error' => null, 'skus' => $bySku, 'oregon_location' => $oregonId];
 	}
 
-	/** Current Shopify selling price per SKU: [sku => price]. Shopify is the only sales channel. */
+	/**
+	 * Actual AVERAGE selling price per SKU over a window = revenue ÷ units, using the
+	 * real per-unit price paid (after line discounts). Reflects what things really sold
+	 * for (wholesale/discounts included), not the list price. [sku => avg_price].
+	 */
+	function shopify_avg_prices($since, $until) {
+		$query = '
+		query($cursor: String, $q: String!) {
+		  orders(first: 100, after: $cursor, query: $q, sortKey: CREATED_AT) {
+		    pageInfo { hasNextPage endCursor }
+		    edges { node { cancelledAt lineItems(first: 50) { edges { node { quantity sku discountedUnitPriceSet { shopMoney { amount } } } } } } }
+		  }
+		}';
+		$q = "created_at:>=$since created_at:<=$until";
+		$rev = []; $units = []; $cursor = null; $pages = 0;
+		do {
+			$res = shopify_graphql($query, ['cursor' => $cursor, 'q' => $q]);
+			if (!empty($res['error'])) return ['error' => $res['error'], 'skus' => []];
+			$o = $res['data']['orders'] ?? null;
+			if ($o === null) return ['error' => 'Malformed Shopify orders response.', 'skus' => []];
+			foreach ($o['edges'] as $oe) {
+				$n = $oe['node']; if (!empty($n['cancelledAt'])) continue;
+				foreach ($n['lineItems']['edges'] as $le) {
+					$li = $le['node']; $sku = trim((string)($li['sku'] ?? '')); $qty = (int)($li['quantity'] ?? 0);
+					if ($sku === '' || $qty <= 0) continue;
+					$price = (float)($li['discountedUnitPriceSet']['shopMoney']['amount'] ?? 0);
+					$rev[$sku]   = ($rev[$sku] ?? 0) + $price * $qty;
+					$units[$sku] = ($units[$sku] ?? 0) + $qty;
+				}
+			}
+			$cursor  = $o['pageInfo']['endCursor']  ?? null;
+			$hasNext = $o['pageInfo']['hasNextPage'] ?? false;
+			$pages++;
+		} while ($hasNext && $pages < 60);
+		$avg = [];
+		foreach ($units as $sku => $u) if ($u > 0) $avg[$sku] = round($rev[$sku] / $u, 2);
+		return ['error' => null, 'skus' => $avg, 'units' => $units];
+	}
+
+	/** Current Shopify LIST price per SKU: [sku => price]. */
 	function shopify_product_prices() {
 		$query = '
 		query($cursor: String) {
