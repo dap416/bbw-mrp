@@ -110,12 +110,24 @@ function tsRender(d) {
 		else if (!s.items || !s.items.length) { html += '<div class="text-muted small">No sales in this window.</div>'; }
 		else {
 			html += '<div class="row g-4">';
-			html += '<div class="col-12 col-lg-7"><div class="small fw-semibold text-uppercase text-muted mb-1" style="letter-spacing:.04em;">Everything sold (units) — bring list</div>';
-			html += '<table class="table table-sm table-hover mb-0" style="font-size:0.85rem;"><thead><tr style="background:#f1f3f5;"><th>SKU</th><th>Product</th><th class="text-end">Units</th></tr></thead><tbody>';
-			s.items.forEach(function(it) {
-				html += '<tr><td class="fw-semibold" style="width:90px;">' + (it.sku ? $('<div>').text(it.sku).html() : '<span class="text-muted">—</span>') + '</td>' +
-					'<td class="text-muted">' + $('<div>').text(it.title).html() + '</td>' +
-					'<td class="text-end fw-bold">' + tsNum(it.units) + '</td></tr>';
+			html += '<div class="col-12 col-lg-7"><div class="small fw-semibold text-uppercase text-muted mb-1" style="letter-spacing:.04em;">Everything sold (units) — by category</div>';
+			// Group by category, in the owner's preferred order.
+			var catOrder = ['Animators','WINGZ','Accessories','Bags & Cases','Batteries','Hats'];
+			var groups = {};
+			s.items.forEach(function(it){ var c = it.category || 'Other'; (groups[c] = groups[c] || []).push(it); });
+			var cats = catOrder.filter(function(c){ return groups[c]; });
+			Object.keys(groups).sort().forEach(function(c){ if (catOrder.indexOf(c) === -1 && c !== 'Other') cats.push(c); });
+			if (groups['Other']) cats.push('Other');
+			html += '<table class="table table-sm table-hover mb-0" style="font-size:0.85rem;"><tbody>';
+			cats.forEach(function(c){
+				var arr = groups[c];
+				var sub = arr.reduce(function(a,x){ return a + Number(x.units||0); }, 0);
+				html += '<tr style="background:#eef1f5;"><td colspan="3" class="fw-bold" style="text-transform:uppercase;letter-spacing:.03em;font-size:0.72rem;">' + $('<div>').text(c).html() + ' <span class="text-muted">· ' + tsNum(sub) + ' units</span></td></tr>';
+				arr.forEach(function(it){
+					html += '<tr><td class="fw-semibold" style="width:90px;">' + (it.sku ? $('<div>').text(it.sku).html() : '<span class="text-muted">—</span>') + '</td>' +
+						'<td class="text-muted">' + $('<div>').text(it.title).html() + '</td>' +
+						'<td class="text-end fw-bold">' + tsNum(it.units) + '</td></tr>';
+				});
 			});
 			html += '</tbody></table></div>';
 			html += '<div class="col-12 col-lg-5"><div class="small fw-semibold text-uppercase text-muted mb-1" style="letter-spacing:.04em;">By Day</div>';

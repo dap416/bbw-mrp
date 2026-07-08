@@ -1163,7 +1163,7 @@
 		    edges { node {
 		      createdAt cancelledAt
 		      currentSubtotalPriceSet { shopMoney { amount } }
-		      lineItems(first: 50) { edges { node { quantity sku title variant { id } } } }
+		      lineItems(first: 50) { edges { node { quantity sku title variant { id } product { productType } } } }
 		    } }
 		  }
 		}';
@@ -1193,11 +1193,12 @@
 					$title = trim((string)($li['title'] ?? ''));
 					if (preg_match('/clearance/i', $title . ' ' . $sku)) continue;   // exclude clearance (e.g. clearance animators)
 					$vid = $li['variant']['id'] ?? '';
+					$ptype = trim((string)($li['product']['productType'] ?? ''));
 
 					// EVERYTHING sold (accessories, hats, bags, batteries, WINGZ…) — includes
 					// items with no SKU, keyed by title so nothing is dropped from the show list.
 					$ikey = $sku !== '' ? $sku : ('~' . strtolower($title));
-					if (!isset($byItem[$ikey])) $byItem[$ikey] = ['sku' => $sku, 'title' => $title, 'units' => 0];
+					if (!isset($byItem[$ikey])) $byItem[$ikey] = ['sku' => $sku, 'title' => $title, 'units' => 0, 'ptype' => $ptype];
 					$byItem[$ikey]['units'] += $qty;
 
 					if ($sku === '' && $vid && isset($bundles[$vid])) {
