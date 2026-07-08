@@ -188,13 +188,14 @@ $(document).on('click', '#tsBuildSel', function() {
 	var idxs = tsSelectedIdxs();
 	if (!idxs.length) return;
 	var shows = (window._tsData && window._tsData.shows) || [];
-	var combined = {}; var names = [];
+	var combined = {}; var names = []; window._tsSkuMeta = {};
 	idxs.forEach(function(i) {
 		var s = shows[i]; if (!s) return;
 		names.push(s.name);
 		(s.items || []).forEach(function(it) {
 			if (!it.sku) return;
 			combined[it.sku] = (combined[it.sku] || 0) + Number(it.units || 0);
+			window._tsSkuMeta[it.sku] = { title: it.title, category: it.category };
 		});
 	});
 	if (!Object.keys(combined).length) { alert('The selected shows have no SKU-level sales to build from.'); return; }
@@ -250,8 +251,18 @@ function tsRenderPrep(d, names) {
 		html += '</tbody></table></div></div>';
 	}
 	if (d.unmapped && d.unmapped.length) {
-		var un = d.unmapped.map(function(u){ return $('<div>').text(u.sku).html() + ' (' + tsNum(u.units) + ')'; }).join(', ');
-		html += '<div class="text-muted small mt-1"><i class="ti ti-info-circle"></i> Not auto-built (no product/BOM match): ' + un + '</div>';
+		var meta = window._tsSkuMeta || {};
+		var un = d.unmapped.slice().sort(function(a,b){ return Number(b.units||0) - Number(a.units||0); });
+		html += '<div class="mt-3"><div class="fw-bold small mb-1">Also bring — bought, not built here</div>';
+		html += '<div class="text-muted small mb-2">These sold at the show but have no bill of materials (WINGZ, accessories, bags &amp; cases, batteries, hats). Stock or order them separately — they are not part of the packaging build.</div>';
+		html += '<div class="table-responsive"><table class="table table-sm align-middle" style="font-size:0.88rem;"><thead><tr><th>SKU</th><th>Product</th><th class="text-center">Bring</th></tr></thead><tbody>';
+		un.forEach(function(u){
+			var m = meta[u.sku] || {};
+			html += '<tr><td class="fw-semibold" style="width:120px;">' + $('<div>').text(u.sku).html() + '</td>' +
+				'<td class="text-muted">' + $('<div>').text(m.title || '').html() + (m.category ? ' <span class="badge bg-light text-dark" style="font-size:0.6rem;">' + $('<div>').text(m.category).html() + '</span>' : '') + '</td>' +
+				'<td class="text-center fw-bold">' + tsNum(u.units) + '</td></tr>';
+		});
+		html += '</tbody></table></div></div>';
 	}
 	html += '<div id="tsCreateMsg" class="small mt-2"></div>';
 	html += '</div></div>';
