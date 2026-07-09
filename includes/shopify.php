@@ -1155,6 +1155,18 @@
 	 * ['error'=>..., 'by_sku'=>[sku=>units desc], 'titles'=>[sku=>title],
 	 *  'by_date'=>[YYYY-MM-DD=>units], 'total_units'=>, 'revenue'=>, 'orders'=>].
 	 */
+	/** The store's IANA timezone (e.g. America/Chicago), cached for the request. */
+	function shopify_shop_timezone() {
+		static $tz = null;
+		if ($tz !== null) return $tz;
+		$tz = 'America/Chicago';
+		try {
+			$res = shopify_graphql('{ shop { ianaTimezone } }', []);
+			if (empty($res['error']) && !empty($res['data']['shop']['ianaTimezone'])) $tz = $res['data']['shop']['ianaTimezone'];
+		} catch (Throwable $e) {}
+		return $tz;
+	}
+
 	function shopify_show_sales($locationId, $since, $until) {
 		$query = '
 		query($cursor: String, $q: String!) {
@@ -1167,7 +1179,15 @@
 		    } }
 		  }
 		}';
-		$q = "location_id:$locationId created_at:>=$since created_at:<=$until";
+		// Capture the FULL selected days regardless of the store's timezone. Shopify reads a
+		// bare "created_at:<=DATE" as midnight UTC, which drops the last day (and evening
+		// sales) for a US store — so a 3-day show can look like 1 day. Pad the window a day
+		// on each side with explicit UTC end-of-day times; there are no POS sales outside a
+		// show, so the empty padding days add nothing.
+		$startQ = date('Y-m-d', strtotime($since . ' -1 day')) . 'T00:00:00Z';
+		$endQ   = date('Y-m-d', strtotime($until . ' +1 day')) . 'T23:59:59Z';
+		$q = "location_id:$locationId created_at:>=$startQ created_at:<=$endQ";
+		try { $storeTz = new DateTimeZone(shopify_shop_timezone()); } catch (Throwable $e) { $storeTz = new DateTimeZone('America/Chicago'); }
 		$bySku = []; $titles = []; $byDate = []; $byItem = []; $totalUnits = 0; $revenue = 0.0;
 		$cursor = null; $pages = 0; $orders = 0;
 		$bundles = shopify_bundle_map();
@@ -1182,7 +1202,8 @@
 				$n = $oe['node'];
 				if (!empty($n['cancelledAt'])) continue;
 				$orders++;
-				$date = substr((string)($n['createdAt'] ?? ''), 0, 10);
+				$created = (string)($n['createdAt'] ?? '');
+				try { $dt = new DateTime($created); $dt->setTimezone($storeTz); $date = $dt->format('Y-m-d'); } catch (Throwable $e) { $date = substr($created, 0, 10); }
 				$revenue += (float)($n['currentSubtotalPriceSet']['shopMoney']['amount'] ?? 0);
 
 				foreach ($n['lineItems']['edges'] as $le) {
