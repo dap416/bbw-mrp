@@ -79,6 +79,16 @@ function charles_snapshot($db) {
 			'credit_out' => round($b['credit_out_total'] ?? 0),
 			'tax_reserve' => round($b['tax_reserve'] ?? 0),
 			'card_payments' => array_map(fn($c) => ['label' => $c['label'], 'amount' => round($c['amount']), 'apr' => $c['apr'], 'balance' => round($c['balance']), 'type' => $c['type'] ?? 'credit'], $b['card_payments'] ?? []),
+			// Every cash-out line exactly as shown on the page, incl. the "already paid this month" checkmark.
+			'cash_out_lines' => array_map(fn($it) => [
+				'label'   => $it['label'],
+				'amount'  => round($it['amount']),
+				'source'  => $it['source'] ?? '',
+				'payable' => !empty($it['payable']),
+				'paid'    => !empty($it['paid']),
+			], $b['cash_out'] ?? []),
+			'cash_out_paid_total'   => round(array_sum(array_map(fn($it) => !empty($it['paid']) ? $it['amount'] : 0, $b['cash_out'] ?? []))),
+			'cash_out_unpaid_total' => round(array_sum(array_map(fn($it) => empty($it['paid']) ? $it['amount'] : 0, $b['cash_out'] ?? []))),
 		];
 	}
 
@@ -196,6 +206,7 @@ function charles_snapshot($db) {
 		'reorder' => cashflow_reorder_suggestions($db, 8),
 		'po_card_plan' => $monthData['po_card_plan'] ?? [],
 		'months' => $months,
+		'cash_out_lines_note' => 'Each month\'s cash_out_lines mirrors the Cash Out list on the Cash Flow page line-for-line, including the "already paid" checkbox: paid=true means the owner has ticked that line as already paid this month (the money has left the bank), so it is EXCLUDED from that month\'s remaining cash-out and from the running end_cash. cash_out_paid_total / cash_out_unpaid_total summarize how much of the month is settled vs still owed. Use these to answer "what have I already paid this month" and "what is still left to pay".',
 		'forecast' => $fc,
 		'recurring' => $recur,
 		'runway_months' => $runwayMonths,

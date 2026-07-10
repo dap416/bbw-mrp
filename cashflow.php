@@ -417,10 +417,10 @@
 
 		<div class="fw-semibold text-uppercase mb-1 mt-2" style="font-size:0.66rem;letter-spacing:.04em;color:#d9822b;">Cash Out</div>
 		<?php if (empty($b['cash_out'])): ?><div class="text-muted small mb-1">—</div>
-		<?php else: foreach ($b['cash_out'] as $it): ?>
-			<div class="d-flex justify-content-between small py-1<?php echo $it['source']==='manual' ? ' cf-drag' : ''; ?>"<?php echo $it['source']==='manual' ? ' draggable="true" data-event-id="'.$it['id'].'" style="border-bottom:1px solid #f1f3f5;cursor:grab;" title="Drag to another month"' : ' style="border-bottom:1px solid #f1f3f5;"'; ?>>
-				<span><?php echo htmlspecialchars($it['label']); ?><?php echo ($it['source']==='manual' && $it['week']) ? ' <span class="text-muted" style="font-size:0.68rem;">wk'.$it['week'].'</span>' : ''; ?></span>
-				<span><span class="fw-semibold" style="color:#d9822b;"><?php echo money0($it['amount']); ?></span><?php echo $it['source']==='manual' ? ' <a href="#" class="ev-edit-id ms-1 text-muted" data-id="'.$it['id'].'" style="font-size:0.66rem;">edit</a>' : ''; ?></span>
+		<?php else: foreach ($b['cash_out'] as $it): $isPaid = !empty($it['paid']); ?>
+			<div class="d-flex justify-content-between small py-1<?php echo $it['source']==='manual' ? ' cf-drag' : ''; ?>"<?php echo $it['source']==='manual' ? ' draggable="true" data-event-id="'.$it['id'].'" title="Drag to another month"' : ''; ?> style="border-bottom:1px solid #f1f3f5;<?php echo $it['source']==='manual' ? 'cursor:grab;' : ''; ?><?php echo $isPaid ? 'opacity:.55;' : ''; ?>">
+				<span><?php if (!empty($it['payable'])): ?><input type="checkbox" class="cashout-paid" data-ym="<?php echo $b['ym']; ?>" data-key="<?php echo htmlspecialchars($it['key'], ENT_QUOTES); ?>"<?php echo $isPaid ? ' checked' : ''; ?> title="Mark as already paid this month" style="vertical-align:middle;margin-right:4px;"><?php endif; ?><span<?php echo $isPaid ? ' style="text-decoration:line-through;"' : ''; ?>><?php echo htmlspecialchars($it['label']); ?></span><?php echo ($it['source']==='manual' && $it['week']) ? ' <span class="text-muted" style="font-size:0.68rem;">wk'.$it['week'].'</span>' : ''; ?><?php echo $isPaid ? ' <span class="badge bg-success" style="font-size:0.5rem;vertical-align:middle;">PAID</span>' : ''; ?></span>
+				<span><span class="fw-semibold" style="color:<?php echo $isPaid ? '#9aa7b0' : '#d9822b'; ?>;<?php echo $isPaid ? 'text-decoration:line-through;' : ''; ?>"><?php echo money0($it['amount']); ?></span><?php echo $it['source']==='manual' ? ' <a href="#" class="ev-edit-id ms-1 text-muted" data-id="'.$it['id'].'" style="font-size:0.66rem;">edit</a>' : ''; ?></span>
 			</div>
 		<?php endforeach; endif; ?>
 
@@ -544,6 +544,8 @@
 	$(document).on('click', '.ev-del', function(e){ e.preventDefault(); if(!confirm('Remove this cash event?'))return; $.post('/ajax/cashflow/delete_event.php', { id:$(this).closest('.ev-row').data('id') }, function(resp){ if($.trim(resp)==='ok') location.reload(); else alert(resp); }); });
 	// Mark a credit-card item paid (already reflected in the weekly card balance).
 	$(document).on('change', '.credit-paid', function(){ var $c=$(this); $c.prop('disabled',true); $.post('/ajax/cashflow/set_event_paid.php', { id:$c.data('id'), paid:$c.is(':checked')?1:0 }, function(resp){ if($.trim(resp)==='ok') location.reload(); else { alert(resp); $c.prop('disabled',false); } }).fail(function(){ alert('Save failed'); $c.prop('disabled',false); }); });
+	// Mark a monthly cash-out line already paid (money has left the bank this month).
+	$(document).on('change', '.cashout-paid', function(){ var $c=$(this); $c.prop('disabled',true); $.post('/ajax/cashflow/toggle_cashout_paid.php', { ym:$c.data('ym'), line_key:$c.data('key'), paid:$c.is(':checked')?1:0 }, function(resp){ if(resp&&resp.ok) location.reload(); else { alert((resp&&resp.error)||'Save failed'); $c.prop('disabled',false); } }, 'json').fail(function(){ alert('Save failed'); $c.prop('disabled',false); }); });
 
 	// ── Hide / show prior month(s) ──
 	$(document).on('click', '.hide-month', function(e){ e.preventDefault(); $.post('/ajax/cashflow/save_settings.php', { cashflow_hide_before: $(this).data('ym') }, function(){ location.reload(); }); });

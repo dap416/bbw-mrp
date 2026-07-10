@@ -835,6 +835,22 @@
 		return $out;
 	}
 
+	/** Per-month cash-out lines the user has ticked as already paid. */
+	function ensure_cashout_paid_table($db) {
+		$db->exec("CREATE TABLE IF NOT EXISTS cashout_paid (
+			ym VARCHAR(7) NOT NULL,
+			line_key VARCHAR(80) NOT NULL,
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (ym, line_key)
+		) ENGINE=InnoDB");
+	}
+	function load_cashout_paid($db) {
+		$res = [];
+		try { ensure_cashout_paid_table($db); foreach ($db->query("SELECT ym, line_key FROM cashout_paid") as $r) $res[$r['ym']][$r['line_key']] = true; }
+		catch (Throwable $e) {}
+		return $res;
+	}
+
 	/**
 	 * Assemble 12 rolling month blocks (current month → +11). Each block merges
 	 * automatic flows (projected sales, the Shopify-loan % cash-out, recurring
@@ -868,6 +884,7 @@
 		$reorder  = cashflow_reorder_suggestions($db);
 		$cardDone = cardpay_done_months($db);
 		$expDone  = expenses_done_months($db);
+		$paidLines = load_cashout_paid($db);   // per-month cash-out lines already paid
 		$cash     = (float)$data['eff_cash'];
 		$reserve  = 0.0;                // tax reserve, accrues monthly, paid at quarter end
 		$firstFutureDone = false;       // PO advice shows on the current month, not the prior
@@ -899,17 +916,17 @@
 			$expensesDone = in_array($ym, $expDone, true);
 			$loan    = $expensesDone ? 0.0 : round((float)$row['income'] * $loanPct / 100, 2);
 			$taxSet  = $expensesDone ? 0.0 : $taxMo;
-			if ($loan > 0)                              $out[] = ['label' => 'Shopify Capital (' . rtrim(rtrim(number_format($loanPct, 2), '0'), '.') . '% of sales)', 'amount' => $loan, 'week' => 0, 'source' => 'auto'];
-			if (!$expensesDone && $row['recurring'] > 0)$out[] = ['label' => 'Recurring expenses', 'amount' => (float)$row['recurring'], 'week' => 0, 'source' => 'auto'];
-			if ($row['onetime'] > 0)                    $out[] = ['label' => 'Bills & POs due', 'amount' => (float)$row['onetime'], 'week' => 0, 'source' => 'auto'];
-			if ($taxSet > 0)            $out[] = ['label' => 'Tax reserve set-aside', 'amount' => $taxSet, 'week' => 0, 'source' => 'auto'];
+			if ($loan > 0)                              $out[] = ['label' => 'Shopify Capital (' . rtrim(rtrim(number_format($loanPct, 2), '0'), '.') . '% of sales)', 'amount' => $loan, 'week' => 0, 'source' => 'auto', 'key' => 'loan', 'payable' => true];
+			if (!$expensesDone && $row['recurring'] > 0)$out[] = ['label' => 'Recurring expenses', 'amount' => (float)$row['recurring'], 'week' => 0, 'source' => 'auto', 'key' => 'recurring', 'payable' => true];
+			if ($row['onetime'] > 0)                    $out[] = ['label' => 'Bills & POs due', 'amount' => (float)$row['onetime'], 'week' => 0, 'source' => 'auto', 'key' => 'bills', 'payable' => true];
+			if ($taxSet > 0)            $out[] = ['label' => 'Tax reserve set-aside', 'amount' => $taxSet, 'week' => 0, 'source' => 'auto', 'key' => 'tax', 'payable' => true];
 			// Split manual cash-out events: 'card' ones go on a credit card, so they are
 			// tracked/displayed but must NOT reduce the bank balance or the cash-out total.
 			$creditOut = [];
 			foreach (($events['by_ym'][$ym]['out'] ?? []) as $e) {
 				$item = ['label' => $e['label'], 'amount' => $e['amount'], 'week' => $e['week'], 'source' => 'manual', 'id' => $e['id'], 'paidby' => ($e['paidby'] ?? 'cash'), 'paid' => (int)($e['paid'] ?? 0)];
 				if (($e['paidby'] ?? 'cash') === 'card') $creditOut[] = $item;
-				else                                     $out[] = $item;
+				else { $item['key'] = 'ev' . $e['id']; $item['payable'] = true; $out[] = $item; }
 			}
 			// Finished-product imports (WINGZ/cases from China) bought on a card THIS month:
 			// raise the matching card's balance (this uses up card room) and show it on-card.
@@ -926,7 +943,11 @@
 			// Paid card items are already in the weekly card balance — exclude from the upcoming total.
 			$creditOutTotal = array_sum(array_map(fn($x) => $x['paid'] ? 0 : $x['amount'], $creditOut));
 
-			$outBeforeCards = array_sum(array_map(fn($x) => $x['amount'], $out));
+			// A cash-out line ticked as already paid this month is already out of the bank —
+			// mark it and exclude it from the total so it isn't subtracted from cash again.
+			foreach ($out as &$_o) { if (!empty($_o['payable'])) $_o['paid'] = !empty($paidLines[$ym][$_o['key']]); }
+			unset($_o);
+			$outBeforeCards = array_sum(array_map(fn($x) => !empty($x['paid']) ? 0 : $x['amount'], $out));
 
 			// Prior month: shown for entering actuals only — no avalanche, no running carry.
 			if ($isPast) {
