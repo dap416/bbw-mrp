@@ -116,19 +116,30 @@
 				</div>
 			<?php endforeach; ?>
 
-			<?php if (!empty($snap['locs']) || !empty($snap['loc_limit'])):
-				$loclim = (float)($snap['loc_limit'] ?? 0); $locbal = (float)($snap['loc_debt'] ?? 0);
-				$lpct = ($loclim > 0) ? min(100, round($locbal / $loclim * 100)) : 0; ?>
+			<?php $locFacs = $snap['loc_facilities'] ?? []; foreach ($locFacs as $f):
+				$lpct = $f['ceiling'] > 0 ? min(100, round($f['drawn'] / $f['ceiling'] * 100)) : 0; ?>
 				<div class="mt-3 d-flex justify-content-between small">
-					<span class="fw-semibold">Line of Credit <span class="badge bg-info text-dark" style="font-size:0.54rem;">LOC</span></span>
-					<span><?php echo c_money0($locbal); ?><?php echo $loclim > 0 ? ' <span class="text-muted">/ '.c_money0($loclim).'</span>' : ''; ?></span>
+					<span class="fw-semibold"><?php echo htmlspecialchars($f['name']); ?> <span class="badge bg-info text-dark" style="font-size:0.54rem;">LOC</span></span>
+					<span><?php echo c_money0($f['drawn']); ?><?php echo $f['ceiling'] > 0 ? ' <span class="text-muted">/ '.c_money0($f['ceiling']).'</span>' : ''; ?></span>
 				</div>
 				<div style="height:7px;background:#eef1f5;border-radius:4px;overflow:hidden;"><div style="height:100%;width:<?php echo $lpct; ?>%;background:#6f42c1;"></div></div>
-				<div class="text-muted mt-1" style="font-size:0.68rem;"><strong><?php echo c_money0($snap['loc_available'] ?? 0); ?></strong> available to draw · <?php echo c_money0($snap['loc_monthly_payment'] ?? 0); ?>/mo in loan payments (cash out)</div>
-				<?php foreach ($snap['locs'] as $l): ?>
+				<div class="text-muted mt-1" style="font-size:0.68rem;"><strong><?php echo c_money0($f['available']); ?></strong> available to draw</div>
+				<?php foreach ($snap['locs'] as $l): if (trim((string)($l['loc_name'] ?? '')) !== $f['name']) continue; ?>
 					<div class="d-flex justify-content-between small mt-1" style="padding-left:0.5rem;border-left:2px solid #e6e0f5;">
 						<span><?php echo htmlspecialchars($l['label']); ?><?php echo !empty($l['note']) ? '<br><span class="text-muted" style="font-size:0.63rem;">'.htmlspecialchars($l['note']).'</span>' : ''; ?></span>
 						<span class="text-end"><?php echo c_money0($l['balance']); ?><?php echo !empty($l['monthly_payment']) ? '<br><span class="text-muted" style="font-size:0.63rem;">'.c_money0($l['monthly_payment']).'/mo</span>' : ''; ?></span>
+					</div>
+				<?php endforeach; ?>
+			<?php endforeach; ?>
+			<?php
+			// Loans not assigned to any listed facility.
+			$unassigned = array_filter($snap['locs'] ?? [], function($l) use ($locFacs) { $n = trim((string)($l['loc_name'] ?? '')); if ($n === '') return true; foreach ($locFacs as $f) if ($f['name'] === $n) return false; return true; });
+			if (!empty($unassigned)): ?>
+				<div class="mt-3 small fw-semibold text-muted">Unassigned loans <span class="text-muted fw-normal">(assign to a LOC on the Cash Flow page)</span></div>
+				<?php foreach ($unassigned as $l): ?>
+					<div class="d-flex justify-content-between small mt-1" style="padding-left:0.5rem;border-left:2px solid #f1d0d0;">
+						<span><?php echo htmlspecialchars($l['label']); ?></span>
+						<span class="text-end"><?php echo c_money0($l['balance']); ?></span>
 					</div>
 				<?php endforeach; ?>
 			<?php endif; ?>

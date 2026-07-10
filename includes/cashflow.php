@@ -182,6 +182,8 @@
 		catch (Throwable $e) { /* already there */ }
 		try { $db->exec("ALTER TABLE cash_balances ADD COLUMN apr DECIMAL(5,2) NULL"); }
 		catch (Throwable $e) { /* already there */ }
+		try { $db->exec("ALTER TABLE cash_balances ADD COLUMN loc_name VARCHAR(80) NULL"); }   // which LOC facility a loc draw belongs to
+		catch (Throwable $e) { /* already there */ }
 	}
 
 	/**
@@ -196,7 +198,7 @@
 			'bank_total' => 0.0, 'credit_total' => 0.0,
 			'credit_limit_total' => 0.0, 'credit_available' => 0.0,
 			'card_total' => 0.0, 'card_limit_total' => 0.0, 'card_available' => 0.0,
-			'loc_total' => 0.0, 'loc_payment' => 0.0, 'loc_limit' => 0.0, 'loc_available' => 0.0,
+			'loc_total' => 0.0, 'loc_payment' => 0.0, 'loc_limit' => 0.0, 'loc_available' => 0.0, 'loc_facilities' => [],
 			'oldest_asof' => null, 'due_count' => 0, 'update_days' => 7,
 		];
 		try {
@@ -223,6 +225,7 @@
 					'due'     => $due,
 					'note'    => $r['note'],
 					'type'    => $r['acct_type'],
+					'loc_name'=> $r['loc_name'] ?? '',
 				];
 				if ($r['acct_type'] === 'bank') {
 					$res['bank'][] = $row;
@@ -238,14 +241,30 @@
 					$res['oldest_asof'] = $r['as_of'];
 				}
 			}
-			// LOC "available to draw" uses the shared facility limit (loc_limit setting)
-			// so two loan draws against one $85k line don't over-count available credit.
-			$locLimit    = loc_limit($db);
-			$effLocLimit = $locLimit > 0 ? $locLimit : $rowLocLimit;
-			$res['loc_limit']          = $locLimit;
-			$res['loc_available']      = max(0.0, $effLocLimit - $res['loc_total']);
+			// Each line of credit is its OWN facility with its OWN ceiling — track what's
+			// available per LOC (e.g. Shopify $49k vs QuickBooks $85k), not one shared cap.
+			$facilities = [];
+			foreach (loc_ceilings($db) as $c) $facilities[$c['name']] = ['name' => $c['name'], 'ceiling' => (float)$c['ceiling'], 'drawn' => 0.0, 'payment' => 0.0];
+			foreach ($res['credit'] as $row) {
+				if (($row['type'] ?? '') !== 'loc') continue;
+				$ln = trim((string)($row['loc_name'] ?? ''));
+				if ($ln !== '' && isset($facilities[$ln])) { $facilities[$ln]['drawn'] += $row['balance']; $facilities[$ln]['payment'] += $row['payment']; }
+				elseif ($ln !== '') { $facilities[$ln] = ['name' => $ln, 'ceiling' => 0.0, 'drawn' => $row['balance'], 'payment' => $row['payment']]; }
+				elseif (count($facilities) === 1) { $k = array_key_first($facilities); $facilities[$k]['drawn'] += $row['balance']; $facilities[$k]['payment'] += $row['payment']; }
+				else { if (!isset($facilities['Unassigned'])) $facilities['Unassigned'] = ['name' => 'Unassigned', 'ceiling' => 0.0, 'drawn' => 0.0, 'payment' => 0.0]; $facilities['Unassigned']['drawn'] += $row['balance']; $facilities['Unassigned']['payment'] += $row['payment']; }
+			}
+			$locFac = []; $locLimitTotal = 0.0; $locAvailTotal = 0.0;
+			foreach ($facilities as $f) {
+				$f['available'] = max(0.0, $f['ceiling'] - $f['drawn']);
+				$locFac[] = $f;
+				$locLimitTotal += $f['ceiling'];
+				$locAvailTotal += $f['available'];
+			}
+			$res['loc_facilities']     = $locFac;
+			$res['loc_limit']          = $locLimitTotal;                 // sum of all LOC ceilings
+			$res['loc_available']      = $locAvailTotal;                 // sum of per-LOC available
 			$res['card_available']     = $res['card_limit_total'] - $res['card_total'];
-			$res['credit_limit_total'] = $res['card_limit_total'] + $effLocLimit;
+			$res['credit_limit_total'] = $res['card_limit_total'] + $locLimitTotal;
 			$res['credit_available']   = $res['card_available'] + $res['loc_available'];
 		} catch (Throwable $e) { /* table issue — return empty */ }
 		return $res;
@@ -589,6 +608,31 @@
 	}
 
 	/**
+	 * The active lines of credit, each with its OWN ceiling: [['name'=>, 'ceiling'=>], ...].
+	 * Stored as JSON in the 'loc_ceilings' setting. Falls back to a single "Line of Credit"
+	 * from the legacy loc_limit setting so existing installs keep working.
+	 */
+	function loc_ceilings($db) {
+		try {
+			$v = setting_get($db, 'loc_ceilings');
+			if ($v) {
+				$j = json_decode($v, true);
+				if (is_array($j)) {
+					$out = [];
+					foreach ($j as $c) {
+						$name = trim((string)($c['name'] ?? ''));
+						$ceil = max(0.0, (float)($c['ceiling'] ?? 0));
+						if ($name !== '') $out[] = ['name' => $name, 'ceiling' => $ceil];
+					}
+					if ($out) return $out;
+				}
+			}
+		} catch (Throwable $e) {}
+		$ll = loc_limit($db);
+		return $ll > 0 ? [['name' => 'Line of Credit', 'ceiling' => $ll]] : [];
+	}
+
+	/**
 	 * Credit-CARD minimum payment as a % of the current balance — recalculated as
 	 * balances change (so you never enter card payments by hand). LOC loans are
 	 * unaffected (they keep their fixed scheduled payment). Default 4%.
@@ -804,7 +848,7 @@
 		$cardMinPct   = card_min_pct($db);    // card minimums = % of the CURRENT balance
 		$cardMinFloor = card_min_floor($db);
 		$fpPurchases  = load_fp_purchases($db);   // FP WINGZ/cases imports bought on a card
-		$locLimitAll  = loc_limit($db);           // LOC facility ceiling (for projected room)
+		$locLimitAll  = array_sum(array_map(fn($c) => (float)$c['ceiling'], loc_ceilings($db)));   // all LOC ceilings (for projected room)
 
 		// Card balances we simulate paying down (avalanche = highest APR first).
 		$cards = [];

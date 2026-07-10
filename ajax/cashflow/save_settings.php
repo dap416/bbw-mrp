@@ -25,6 +25,16 @@ try {
 	if (isset($_POST['loc_limit'])) {
 		setting_set($db, 'loc_limit', (string)max(0.0, (float)$_POST['loc_limit']));
 	}
+	if (isset($_POST['loc_ceilings'])) {
+		$j = json_decode($_POST['loc_ceilings'], true);
+		$clean = [];
+		if (is_array($j)) foreach ($j as $c) {
+			$name = trim((string)($c['name'] ?? ''));
+			$ceil = max(0.0, (float)($c['ceiling'] ?? 0));
+			if ($name !== '') $clean[] = ['name' => $name, 'ceiling' => $ceil];
+		}
+		setting_set($db, 'loc_ceilings', json_encode($clean));
+	}
 	if (isset($_POST['card_min_pct'])) {
 		setting_set($db, 'card_min_pct', (string)max(0.0, min(100.0, (float)$_POST['card_min_pct'])));
 	}

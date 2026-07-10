@@ -34,7 +34,7 @@ function charles_snapshot($db) {
 			'label' => $c['label'], 'balance' => (float)$c['balance'],
 			'limit' => $lim, 'apr' => ($c['apr'] !== null && $c['apr'] !== '') ? (float)$c['apr'] : null,
 			'monthly_payment' => ($c['payment'] !== null && $c['payment'] !== '') ? (float)$c['payment'] : null,
-			'note' => $c['note'] ?? '',
+			'note' => $c['note'] ?? '', 'loc_name' => $c['loc_name'] ?? '',
 			'available' => $lim !== null ? max(0.0, $lim - (float)$c['balance']) : null,
 		];
 		if (($c['type'] ?? '') === 'loc') $locs[] = $row; else $cards[] = $row;
@@ -176,7 +176,8 @@ function charles_snapshot($db) {
 		'raw_material_terms' => 'Raw-material supplier terms: ~30% deposit up front at order, then the remaining ~70% PLUS shipping fees due WHEN THE GOODS SHIP. Air-shipped items (the 45-day-turnaround products) arrive ~10 days after shipping, so the balance+shipping lands ~35 days after the order is placed. Sea-shipped items take ~30 days transit. So an order today = a 30% cash/card hit now and a larger balance+shipping hit ~35 days later (air). Factor this timing into which month the money actually leaves.',
 		'fp_purchases_note' => 'fp_purchases are finished-product imports (FP WINGZ, cases, etc.) bought directly from China — NOT built from raw materials, so they never appear in parts/orders/reorder. Each rides a credit card in its order_ym and already raises that card\'s balance in the projection (using that month\'s card_room, then paying down). If a known order is missing from the list, ask George for item, quantity, cost, month and card, and offer to record it as a task.',
 		'loc_limit' => round($locLimitV), 'loc_monthly_payment' => round($locPayment, 2),
-		'loc_note' => 'The line of credit is ONE facility (limit = loc_limit) with these loan draws (locs[]). loc_available = loc_limit − total loan balances. The monthly loan payments are ACTUAL CASH OUT of the bank; each loan pays off after its remaining payments and then that outflow stops and the LOC frees up.',
+		'loc_facilities' => array_map(fn($f) => ['name' => $f['name'], 'ceiling' => round($f['ceiling']), 'drawn' => round($f['drawn']), 'available' => round($f['available'])], (array)($man['loc_facilities'] ?? [])),
+		'loc_note' => 'There can be MULTIPLE separate lines of credit (loc_facilities), each with its OWN ceiling and its OWN available-to-draw (e.g. a Shopify LOC and a QuickBooks LOC). Track availability PER facility, not as one shared pool — say what is available WHERE. locs[] are the loan draws (each assigned to a facility). Monthly loan payments are ACTUAL CASH OUT of the bank; each loan pays off after its remaining payments, freeing that facility\'s room.',
 		'ar_total' => round((float)($data['ar_total'] ?? 0)),
 		'ap_total' => round((float)($data['ap_total'] ?? 0)),
 		'ap_total_note' => 'ap_total = supplier bills + open MRP purchase orders, modeled as CASH owed (open POs draw down bank cash; the MRP does NOT tag a PO as paid-by-card). It excludes upcoming_card_charges below.',
