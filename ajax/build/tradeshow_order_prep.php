@@ -52,6 +52,9 @@ foreach ($db->query("SELECT DISTINCT prodid FROM build") as $b) { $bomProds[(int
 $fpBySkuLc = []; $fpError = null;
 try {
 	if (shopify_is_configured()) {
+		// Preparing a show order is a deliberate action — always pull LIVE finished-product
+		// inventory (drop the shared 3h cache first) so the planner reflects current stock.
+		try { $db->exec("DELETE FROM data_cache WHERE ckey = 'rec_fp'"); } catch (Throwable $e) {}
 		$fpLoc = shopify_cache_remember($db, 'rec_fp', inventory_cache_ttl($db), fn() => shopify_fp_by_location())['data'];
 		foreach (($fpLoc['skus'] ?? []) as $k => $v) {
 			$fpBySkuLc[strtolower(trim((string)$k))] = ['ar' => (int)($v['rest'] ?? 0), 'or' => (int)($v['oregon'] ?? 0)];
