@@ -42,6 +42,7 @@
 	// Tradeshows + which are excluded from demand (owner picks which shows to include).
 	$showList = $shopConfigured ? tradeshow_locations() : [];
 	$excludedShows = demand_excluded_shows($db);
+	$needHidden = need_hidden_items($db);   // Need-to-Order lines hidden (chosen not to order)
 
 	// ── Load products + prefetch BOM (one query, no N+1) ─────────────────────
 	$cols = "`id`, `name`";
@@ -953,6 +954,11 @@
 		}, 'json').fail(function(){ alert('Could not save.'); $i.prop('disabled', false); });
 	});
 
+	// ── Need to Order: per-line hide (chosen not to order) — persisted server-side ──
+	var needHidden = <?php echo json_encode($needHidden ?: []); ?>;
+	function needKey(it) { return it.type + '::' + it.name; }
+	function isNeedHidden(it) { return needHidden.indexOf(needKey(it)) !== -1; }
+
 	// ── Need to Order: split into "Order Now" and "Coming Up" (estimated purchase date) ──
 	// Prior-year demand broken out by season: Pre (Jul–Sep) · In (Oct–Dec) · Post (Jan–Mar).
 	function needSeasonBreakdown(bs) {
@@ -972,7 +978,8 @@
 			? '<td class="text-center">' + (it.urgency === 'soon' ? '<span class="badge bg-warning text-dark">Soon</span>' : '<span class="badge bg-light text-dark border">Later</span>') + '</td>'
 			: '';
 		var rowStyle = isUp ? '' : ' style="background:#fff5f5;"';
-		return '<tr' + rowStyle + '><td class="fw-semibold">' + typeBadge + ' ' + esc(it.name) +
+		var hideBox = '<input type="checkbox" class="need-hide" data-key="' + esc(needKey(it)) + '"' + (isNeedHidden(it) ? ' checked' : '') + ' title="Hide this line — restore it from Hidden below" style="margin-right:6px;vertical-align:middle;">';
+		return '<tr' + rowStyle + '><td class="fw-semibold">' + hideBox + typeBadge + ' ' + esc(it.name) +
 				' <span class="text-muted small">' + esc(it.description || '') + '</span>' + moqNote + '</td>' +
 			'<td class="small text-muted">' + esc(it.supplier || '—') + '</td>' +
 			'<td class="text-center text-muted">' + it.have + '</td>' +
@@ -1007,16 +1014,20 @@
 		return h + '</tbody></table></div>';
 	}
 	function renderNeedToOrder(items, totalCost) {
+		window._needItems = items; window._needCost = totalCost;   // kept so hide/unhide can re-render
 		if (!items || !items.length) {
 			$('#needToOrder').html('<div class="alert alert-success mb-0">Nothing to order — stock + on-order covers projected demand across all three seasons.</div>');
 			$('#needSummary').text('');
 			return;
 		}
-		var nowItems = items.filter(function(i){ return i.urgency === 'now'; });
-		var upItems  = items.filter(function(i){ return i.urgency !== 'now'; });   // already sorted soonest-first
+		var visible = items.filter(function(i){ return !isNeedHidden(i); });
+		var hiddenItems = items.filter(isNeedHidden);
+		var nowItems = visible.filter(function(i){ return i.urgency === 'now'; });
+		var upItems  = visible.filter(function(i){ return i.urgency !== 'now'; });   // already sorted soonest-first
 		var sumCost = function(l){ return l.reduce(function(s, i){ return s + (i.cost || 0); }, 0); };
 		$('#needSummary').html('<strong class="' + (nowItems.length ? 'text-danger' : '') + '">' + nowItems.length + ' to order now</strong> · ' +
-			upItems.length + ' coming up · Est. $' + (totalCost || 0).toFixed(2));
+			upItems.length + ' coming up · Est. $' + sumCost(visible).toFixed(2) +
+			(hiddenItems.length ? ' · <span class="text-muted">' + hiddenItems.length + ' hidden</span>' : ''));
 
 		var h = '';
 		// Order Now
@@ -1037,8 +1048,26 @@
 				'<div class="small text-muted mb-2">Not urgent yet. <strong>Purchase by (est.)</strong> is the date to place each order so it arrives in time (run-short date minus lead time).</div>' +
 				needTable(upItems, true) + '</div>';
 		}
+		if (!nowItems.length && !upItems.length && hiddenItems.length) {
+			h += '<div class="alert alert-info py-2 mb-2">Every item to order is hidden. Restore some from the Hidden list below.</div>';
+		}
+		// Hidden — items you've chosen not to order (restore by unchecking)
+		if (hiddenItems.length) {
+			h += '<details class="mt-3"><summary class="btn btn-sm btn-light-secondary">▸ Hidden — not ordering (' + hiddenItems.length + ')</summary>' +
+				'<div class="small text-muted mt-2 mb-1">Items you\'ve chosen not to order. <strong>Uncheck</strong> one to bring it back into the list above.</div>' +
+				needTable(hiddenItems, false) + '</details>';
+		}
 		$('#needToOrder').html(h);
 	}
+
+	// Hide / restore a Need-to-Order line; persists and re-renders from the stored data.
+	$(document).on('change', '.need-hide', function(){
+		var key = $(this).data('key'), hide = $(this).is(':checked');
+		if (hide) { if (needHidden.indexOf(key) === -1) needHidden.push(key); }
+		else { needHidden = needHidden.filter(function(k){ return k !== key; }); }
+		$.post('/ajax/research/toggle_need_hidden.php', { key: key, hidden: hide ? 1 : 0 });
+		if (window._needItems) renderNeedToOrder(window._needItems, window._needCost);
+	});
 
 	// ── Finished-goods supply group editor (MOQ / lead / unit cost) ──
 	function renderFgGroups(groups) {

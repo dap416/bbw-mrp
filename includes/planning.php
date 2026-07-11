@@ -189,6 +189,13 @@
 	 *  built to order with the CDA packaging card. It shares its base animator's Shopify SKU. */
 	function is_amazon_product($name) { return stripos((string)$name, '[amazon]') !== false; }
 
+	/** Need-to-Order line keys (type::name) the owner has hidden (chosen not to order). */
+	function need_hidden_items($db) {
+		try { $v = setting_get($db, 'need_hidden_items'); if ($v) { $j = json_decode($v, true); if (is_array($j)) return array_values(array_filter(array_map('strval', $j))); } }
+		catch (Throwable $e) {}
+		return [];
+	}
+
 	/** Tradeshows (by name) the owner has EXCLUDED from demand — their POS units are dropped. */
 	function demand_excluded_shows($db) {
 		try { $v = setting_get($db, 'demand_excluded_shows'); if ($v) { $j = json_decode($v, true); if (is_array($j)) return array_values(array_filter(array_map('strval', $j))); } }
