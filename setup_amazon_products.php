@@ -11,6 +11,7 @@
  * Shows a PREVIEW first; nothing is written until you click Apply. Admin / master only.
  */
 require_once(__DIR__."/includes/fns.php");
+require_once(__DIR__."/includes/planning.php");   // column_exists(), is_amazon_product()
 require_login();
 
 $role = $_SESSION['user_role'] ?? '';
@@ -18,6 +19,7 @@ if (!in_array($role, ['admin', 'master'], true) && !is_owner()) { http_response_
 
 $db = db_connect();
 $apply = ($_POST['apply'] ?? '') === '1';
+$hasSku = column_exists($db, 'products', 'shopify_sku');
 
 // ── Load parts (partno <-> id) and every product's BOM ───────────────────────
 $partNoById = [];   // id => partno
@@ -27,7 +29,7 @@ foreach ($db->query("SELECT id, partno FROM parts") as $r) {
 	$partIdByNo[strtolower(trim((string)$r['partno']))] = (int)$r['id'];
 }
 
-$products = $db->query("SELECT id, name FROM products ORDER BY name ASC")->fetchAll();
+$products = $db->query("SELECT id, name" . ($hasSku ? ", shopify_sku" : "") . " FROM products ORDER BY name ASC")->fetchAll();
 $existingNames = [];
 foreach ($products as $p) $existingNames[strtolower(trim($p['name']))] = true;
 
@@ -36,10 +38,20 @@ foreach ($db->query("SELECT prodid, partid, qty FROM build ORDER BY prodid, part
 	$bomByProd[(int)$b['prodid']][] = ['partid' => (int)$b['partid'], 'qty' => (int)$b['qty']];
 }
 
-/** The Amazon card partno that matches a standard CD- card ('CD-LD' => 'CDA-LD'). */
-function amazon_card_no($partno) {
-	if (!preg_match('/^CD-/i', $partno) || preg_match('/^CDA-/i', $partno)) return null;
-	return preg_replace('/^CD-/i', 'CDA-', $partno);
+/**
+ * Candidate Amazon-card part numbers for a standard CD- card, most-specific first.
+ * The naming isn't perfectly uniform: 'CD-LD' => 'CDA-LD', but 'CD-AX-L' => 'CDA-AXL'
+ * (the inner hyphen is dropped). We generate both forms and match whichever exists.
+ */
+function amazon_card_candidates($partno) {
+	if (!preg_match('/^CD-/i', $partno) || preg_match('/^CDA-/i', $partno)) return [];
+	$rest = substr($partno, 3);                       // text after "CD-"
+	$c = [
+		'CDA-' . $rest,                               // CD-LD -> CDA-LD ; CD-AX-L -> CDA-AX-L
+		'CDA-' . str_replace('-', '', $rest),         // CD-AX-L -> CDA-AXL  (hyphen dropped)
+		'CDA' . $rest,                                // rare: CD-LD -> CDALD
+	];
+	return array_values(array_unique($c));
 }
 
 // ── Build the plan (what would be / was created) ─────────────────────────────
@@ -47,26 +59,28 @@ $plan = [];
 foreach ($products as $p) {
 	$pid  = (int)$p['id'];
 	$name = trim($p['name']);
-	if (stripos($name, '[amazon]') !== false) continue;          // already an Amazon variant
+	if (is_amazon_product($name)) continue;                       // already an Amazon variant
 	$bom = $bomByProd[$pid] ?? [];
 	if (empty($bom)) continue;                                    // not an animator (no BOM)
 
 	$twin        = $name . ' [Amazon]';
 	$twinExists  = isset($existingNames[strtolower($twin)]);
+	$sku         = $hasSku ? trim((string)($p['shopify_sku'] ?? '')) : '';
 	$swaps = [];        // partid => new partid (card swaps)
 	$cardLines = [];    // for display
 	$missing = [];
 	foreach ($bom as $line) {
 		$pn = $partNoById[$line['partid']] ?? '';
-		$amz = amazon_card_no($pn);
-		if ($amz === null) continue;                              // not a standard card
-		$amzId = $partIdByNo[strtolower($amz)] ?? null;
-		if ($amzId) { $swaps[$line['partid']] = $amzId; $cardLines[] = ['from' => $pn, 'to' => $amz]; }
-		else { $missing[] = $pn . ' → ' . $amz; $cardLines[] = ['from' => $pn, 'to' => $amz . ' (NOT FOUND)']; }
+		$cands = amazon_card_candidates($pn);
+		if (empty($cands)) continue;                              // not a standard card
+		$amzId = null; $amzPn = null;
+		foreach ($cands as $c) { if (isset($partIdByNo[strtolower($c)])) { $amzId = $partIdByNo[strtolower($c)]; $amzPn = $c; break; } }
+		if ($amzId) { $swaps[$line['partid']] = $amzId; $cardLines[] = ['from' => $pn, 'to' => $amzPn]; }
+		else { $missing[] = $pn; $cardLines[] = ['from' => $pn, 'to' => implode(' / ', $cands) . ' (NOT FOUND)']; }
 	}
 
 	$plan[] = [
-		'id' => $pid, 'name' => $name, 'twin' => $twin, 'exists' => $twinExists,
+		'id' => $pid, 'name' => $name, 'twin' => $twin, 'sku' => $sku, 'exists' => $twinExists,
 		'bom_count' => count($bom), 'card_lines' => $cardLines, 'missing' => $missing,
 		'bom' => $bom, 'swaps' => $swaps,
 	];
@@ -75,14 +89,17 @@ foreach ($products as $p) {
 // ── Apply ────────────────────────────────────────────────────────────────────
 $created = 0; $errors = [];
 if ($apply) {
-	$insP = $db->prepare("INSERT INTO products (name) VALUES (?)");
+	$insP = $hasSku
+		? $db->prepare("INSERT INTO products (name, shopify_sku) VALUES (?, ?)")
+		: $db->prepare("INSERT INTO products (name) VALUES (?)");
 	$insB = $db->prepare("INSERT INTO build (prodid, partid, qty) VALUES (?, ?, ?)");
 	foreach ($plan as $row) {
 		if ($row['exists']) continue;                             // idempotent
 		if (!empty($row['missing'])) { $errors[] = $row['name'] . ' — missing Amazon card: ' . implode(', ', $row['missing']); continue; }
 		try {
 			$db->beginTransaction();
-			$insP->execute([$row['twin']]);
+			if ($hasSku) $insP->execute([$row['twin'], $row['sku'] !== '' ? $row['sku'] : null]);
+			else         $insP->execute([$row['twin']]);
 			$newId = (int)$db->lastInsertId();
 			foreach ($row['bom'] as $line) {
 				$partid = $row['swaps'][$line['partid']] ?? $line['partid'];
@@ -137,13 +154,14 @@ require_once(__DIR__."/includes/header.php");
 <div class="card"><div class="card-body p-0">
 <table class="table table-sm align-middle mb-0">
 	<thead><tr style="background:#f1f3f5;">
-		<th>Animator</th><th>→ New product</th><th>Card swap</th><th class="text-center">BOM lines</th><th class="text-center">Status</th>
+		<th>Animator</th><th>→ New product</th><th>SKU (follows)</th><th>Card swap</th><th class="text-center">BOM lines</th><th class="text-center">Status</th>
 	</tr></thead>
 	<tbody>
 	<?php foreach ($plan as $row): ?>
 		<tr>
 			<td class="fw-semibold"><?php echo htmlspecialchars($row['name']); ?></td>
 			<td><?php echo htmlspecialchars($row['twin']); ?></td>
+			<td class="small"><?php echo $row['sku'] !== '' ? '<code>'.htmlspecialchars($row['sku']).'</code>' : '<span class="text-muted">— not linked —</span>'; ?></td>
 			<td class="small">
 				<?php if (empty($row['card_lines'])): ?><span class="text-muted">— no CD- card in BOM —</span>
 				<?php else: foreach ($row['card_lines'] as $c): ?>
@@ -158,7 +176,7 @@ require_once(__DIR__."/includes/header.php");
 			</td>
 		</tr>
 	<?php endforeach; ?>
-	<?php if (empty($plan)): ?><tr><td colspan="5" class="text-muted text-center py-3">No animator products found.</td></tr><?php endif; ?>
+	<?php if (empty($plan)): ?><tr><td colspan="6" class="text-muted text-center py-3">No animator products found.</td></tr><?php endif; ?>
 	</tbody>
 </table>
 </div></div>
