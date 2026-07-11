@@ -163,7 +163,7 @@
 	function fg_group_defaults() {
 		return [
 			'WINGZ'        => ['moq' => 250, 'lead_days' => 70, 'unit_cost' => 6.00],
-			'Bags & Cases' => ['moq' => 0,   'lead_days' => 0,  'unit_cost' => 11.00],
+			'Bags & Cases' => ['moq' => 0,   'lead_days' => 90, 'unit_cost' => 11.00],
 		];
 	}
 	function load_fg_supply($db) {
@@ -344,11 +344,14 @@
 			if ($any <= 0) continue;
 			$grp = fg_group($sku, $shopSkus[$sku]['product_title'] . ' ' . $shopSkus[$sku]['variant_title']);
 			$sup = $fgSupply[$grp] ?? null;
+			// Have = on hand − committed (units already sold/awaiting fulfillment aren't available).
+			// Shopify's per-location "available" already nets committed, so rest + oregon = on_hand − committed.
+			$avail = isset($fpLoc[$sku]) ? ((int)($fpLoc[$sku]['rest'] ?? 0) + (int)($fpLoc[$sku]['oregon'] ?? 0)) : $stock;
 			$finishedGoods[] = [
 				'sku'       => $sku,
 				'product'   => $shopSkus[$sku]['product_title'] . ' — ' . $shopSkus[$sku]['variant_title'],
 				'group'     => $grp,
-				'in_stock'  => $stock,
+				'in_stock'  => $avail,
 				'in_stock_oregon'   => isset($fpLoc[$sku]) ? (int)$fpLoc[$sku]['oregon'] : null,
 				'prior_year_sales'  => $perSeason,
 				'prior_year_oregon' => $perSeasonOregon,
