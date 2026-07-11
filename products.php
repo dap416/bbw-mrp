@@ -7,7 +7,8 @@
 
 	$dbLink = $mysqli = db_connect();
 
-	$products = $dbLink->query("SELECT * FROM `products` ORDER BY `name` ASC");
+	// Regular products first (A–Z), then all [Amazon] twins grouped at the bottom (A–Z).
+	$products = $dbLink->query("SELECT * FROM `products` ORDER BY (LOWER(`name`) LIKE '%[amazon]%'), `name` ASC");
 
 	// ── BATCH PREFETCH (avoids per-product N+1 queries inside the loop) ──
 	$allPartsList = $dbLink->query("SELECT * FROM `parts` ORDER BY `partno` ASC")->fetchAll();
