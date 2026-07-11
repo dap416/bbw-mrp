@@ -12,7 +12,7 @@
 	intransit_source_ensure($db);   // where each FP order came from
 	$warehouses = get_warehouses($db);
 	$canEditBuild = can_edit('build');
-	$allProducts = $db->query("SELECT id, name FROM products ORDER BY name ASC")->fetchAll();   // for the manual add-order control
+	$allProducts = $db->query("SELECT id, name FROM products ORDER BY (LOWER(name) LIKE '%[amazon]%'), name ASC")->fetchAll();   // manual add-order control; [Amazon] animators sorted to the bottom
 
 	// Default warehouse: Arkansas
 	$defaultWH = 0;
