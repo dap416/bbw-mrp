@@ -6,6 +6,11 @@
 
 	$dbLink = $mysqli = db_connect();
 
-	extract($_POST);
+	$amount = max(0, (int)($_POST['amount'] ?? 0));
+	$record = (int)($_POST['record'] ?? 0);
 
-	$changeOmit = $dbLink->query("UPDATE `parts` SET `omit` = '$amount' WHERE `id` = '$record'");
+	if ($record > 0) {
+		$stmt = $dbLink->prepare("UPDATE `parts` SET `omit` = ? WHERE `id` = ?");
+		$stmt->execute([$amount, $record]);
+	}
+	echo 'ok';

@@ -649,7 +649,7 @@ loadBriefing(false);
 			</tfoot>
 		</table>
 		</div>
-		<div class="mt-2 text-end"><a href="/orders/stock_calc.php" class="small text-muted">View full stock order details →</a></div>
+		<div class="mt-2 text-end"><a href="/research.php" class="small text-muted">View full stock order details →</a></div>
 		<?php endif; ?>
 	</div>
 	</div>

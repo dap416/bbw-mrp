@@ -308,6 +308,15 @@
 	<!-- Raw-material order list -->
 	<div id="rawOrders" class="mt-3" style="display:none;"></div>
 
+	<!-- Full raw-material stock reference (merged from the old Raw Materials Stock Order page) -->
+	<div id="rawAllWrap" class="mt-3" style="display:none;">
+		<details>
+			<summary class="btn btn-sm btn-outline-secondary">▸ All raw materials — stock reference (on-hand, on-order, BSL, build demand, omit)</summary>
+			<div class="small text-muted mt-2 mb-2">Every stocked part with its Best Stock Level (auto-computed from build history minus omit), trailing 6- &amp; 12-month build demand, and a BSL-based order suggestion. <strong>Omit</strong> = units treated as overstock that reduce the stock target; editing it recomputes BSL on the next refresh. Ordering is done from the <a href="/orders.php">Open Orders</a> page.</div>
+			<div id="rawAll"></div>
+		</details>
+	</div>
+
 	<!-- Optional AI detail plan -->
 	<div id="seasonReport" class="mt-3" style="display:none; background:#faf9f7; border:1px solid #eee; border-radius:8px; padding:16px;"></div>
 	<div id="seasonReportNote" class="small text-muted mt-2"></div>
@@ -805,6 +814,46 @@
 		$('#buildPlan').html(h).show();
 	}
 
+	// Full raw-material stock reference (merged from the old Raw Materials Stock Order page)
+	function renderRawAll(rows) {
+		if (!rows || !rows.length) { $('#rawAllWrap').hide(); return; }
+		var groups = {};
+		rows.forEach(function(p){ (groups[p.category] = groups[p.category] || []).push(p); });
+		var order = ['Camshafts', 'Rods', 'Plates', 'Packaging Cards', 'Packaging', 'Other'];
+		var h = '';
+		order.forEach(function(cat){
+			var g = groups[cat]; if (!g || !g.length) return;
+			h += '<div class="card mb-2"><div class="card-body py-2">' +
+				'<div class="fw-bold mb-1">' + esc(cat) + ' <span class="text-muted small">(' + g.length + ')</span></div>' +
+				'<div class="scroll-table"><table class="table table-sm align-middle mb-0"><thead><tr>' +
+				'<th class="small">Part</th><th class="small text-end">On hand</th><th class="small text-end">On order</th>' +
+				'<th class="small text-end">12mo use</th><th class="small text-end">6mo use</th><th class="small text-end">BSL</th>' +
+				'<th class="small text-end">MOQ</th><th class="small text-end">To order</th><th class="small text-end">Omit</th></tr></thead><tbody>';
+			g.forEach(function(p){
+				var toCls = p.to_order > 0 ? 'stat-neg fw-bold' : 'text-muted';
+				h += '<tr><td class="small fw-semibold">' + esc(p.part) + ' <span class="text-muted">' + esc(p.description||'') + '</span>' + (p.animator_component ? ' <span class="badge bg-light text-muted" style="font-size:0.5rem;">BOM</span>' : '') + '</td>' +
+					'<td class="small text-end">' + p.on_hand + '</td>' +
+					'<td class="small text-end text-muted">' + p.on_order + '</td>' +
+					'<td class="small text-end text-muted">' + p.demand_12mo + '</td>' +
+					'<td class="small text-end text-muted">' + p.demand_6mo + '</td>' +
+					'<td class="small text-end">' + p.bsl + '</td>' +
+					'<td class="small text-end text-muted">' + p.moq + '</td>' +
+					'<td class="small text-end ' + toCls + '">' + (p.to_order > 0 ? p.to_order : '—') + '</td>' +
+					'<td class="text-end"><input type="number" min="0" class="form-control form-control-sm raw-omit text-end" data-id="' + p.part_id + '" value="' + (p.omit||0) + '" style="width:74px;display:inline-block;font-size:0.72rem;padding:1px 4px;"></td></tr>';
+			});
+			h += '</tbody></table></div></div></div>';
+		});
+		$('#rawAll').html(h);
+		$('#rawAllWrap').show();
+	}
+
+	// Save an omit value, then refresh so BSL (and the order suggestions) recompute.
+	$(document).on('change', '.raw-omit', function(){
+		var $i = $(this).prop('disabled', true), id = $i.data('id'), amount = Math.max(0, parseInt($i.val(), 10) || 0);
+		$.post('/ajax/change_omit.php', { record: id, amount: amount }, function(){ loadReadiness(true, false); })
+			.fail(function(){ alert('Could not save omit.'); $i.prop('disabled', false); });
+	});
+
 	var BP_DATA = null, BP_PARTS = null;
 	function bpNum(v, d) { v = parseInt(v, 10); return isNaN(v) ? d : Math.max(0, v); }
 
@@ -940,16 +989,18 @@
 					h = '<div class="alert alert-success mb-0">Raw materials on hand + on order cover every animator build through all three seasons. Nothing to order.</div>';
 				} else {
 					h = '<div class="panel-title mb-2">Raw Materials to Order <span class="muted-pill ms-1">Est. $' + (res.raw_total_cost||0).toFixed(2) + '</span></div>' +
-						'<div class="small text-muted mb-2">Projected quantities cover the whole year (all three seasons of projected builds), rounded up to MOQ. <strong>Order by</strong> is when to place it so it arrives before the part runs out (lead time). Red = already overdue.</div>' +
+						'<div class="small text-muted mb-2">Projected quantities cover the whole year (all three seasons of projected builds), rounded up to MOQ. <strong>Order by</strong> is when to place it so it arrives before the part runs out (lead time). Red = already overdue. <strong>BSL</strong> = best stock level; <strong>12mo</strong> = last-12-month build usage (reference).</div>' +
 						'<div class="scroll-table"><table class="table dash-table align-middle"><thead><tr>' +
-						'<th>Manufacturer</th><th>Part</th><th class="text-center">Proj. use (yr)</th><th class="text-center">Have</th>' +
+						'<th>Manufacturer</th><th>Part</th><th class="text-center">Proj. use (yr)</th><th class="text-center">12mo</th><th class="text-center">Have</th><th class="text-center">BSL</th>' +
 						'<th class="text-center">Order (MOQ)</th><th class="text-center">Order by</th><th class="text-center">Lead</th><th class="text-end">Est. Cost</th></tr></thead><tbody>';
 					ro.forEach(function(r){
 						var byCls = r.by_past ? 'stat-neg fw-bold' : '';
 						h += '<tr><td class="small fw-semibold">' + esc(r.manufacturer) + '</td>' +
 							'<td class="fw-semibold">' + esc(r.part) + ' <span class="text-muted small">' + esc(r.description||'') + '</span></td>' +
 							'<td class="text-center">' + r.total_usage + '</td>' +
+							'<td class="text-center text-muted">' + (r.demand_12mo||0) + '</td>' +
 							'<td class="text-center text-muted">' + (r.on_hand + r.on_order) + '</td>' +
+							'<td class="text-center text-muted">' + (r.bsl||0) + '</td>' +
 							'<td class="text-center stat-neg">' + r.order_qty + '</td>' +
 							'<td class="text-center small ' + byCls + '">' + (r.by_date || '—') + (r.by_past?' ⚠':'') + '</td>' +
 							'<td class="text-center small">' + r.lead_time_days + 'd</td>' +
@@ -959,6 +1010,9 @@
 				}
 				$('#rawOrders').html(h).show();
 			}
+
+			// Full raw-material stock reference (merged from the old stock-order page)
+			if (res.raw_all) renderRawAll(res.raw_all);
 
 			// Chart: prior-year units per season (animators vs other)
 			if (res.charts && typeof Chart !== 'undefined') {

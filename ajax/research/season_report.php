@@ -30,7 +30,7 @@
 	$fresh  = !empty($_POST['fresh']);  // force a recompute, ignore cache
 
 	// Bump when the payload shape changes so old caches auto-invalidate.
-	$SEASON_SCHEMA = 8;
+	$SEASON_SCHEMA = 9;
 
 	$db = db_connect();
 
@@ -45,6 +45,11 @@
 			}
 		} catch (Throwable $e) { /* no cache */ }
 	}
+
+	// Refresh Best Stock Levels from current build history + omit before reading them —
+	// this used to run when the Raw Materials Stock Order page loaded (now merged here).
+	// Guarded include: bsl_calc.php only redirects when hit directly, not when included.
+	try { require(__DIR__."/../bsl_calc.php"); } catch (Throwable $e) { /* keep going with existing BSLs */ }
 
 	try {
 		$data = build_season_dataset($db);
@@ -232,6 +237,9 @@
 			'by_date' => $orderByTs ? date('M j, Y', $orderByTs) : null,
 			'by_past' => $orderByTs ? ($orderByTs < time()) : false,
 			'lead_time_days' => $lead, 'unit_cost' => (float)$rm['unit_cost'], 'cost' => $cost,
+			'bsl' => (int)($rm['base_stock_level'] ?? 0), 'demand_12mo' => (int)($rm['demand_12mo'] ?? 0),
+			'demand_6mo' => (int)($rm['demand_6mo'] ?? 0), 'omit' => (int)($rm['omit'] ?? 0),
+			'part_id' => (int)($rm['part_id'] ?? 0),
 		];
 	}
 	usort($rawOrders, function ($a, $b) {
@@ -254,6 +262,27 @@
 	if ($totalDemand === 0) {
 		$dataWarning = 'Prior-year sales came back empty. Shopify only returns the last 60 days of orders unless your app has the "read_all_orders" scope. Add read_all_orders to the app (alongside read_orders), reinstall it, then click Save on the Shopify card in Integrations and Refresh here.';
 	}
+
+	// ── Full raw-material stock reference (every relevant part) ────────────────
+	// Carries over the reference data from the old Raw Materials Stock Order page:
+	// on-hand, on-order, BSL target, 6/12-mo build demand, MOQ, cost, and omit.
+	$rawAll = [];
+	foreach ($raws as $rm) {
+		$oh = (int)$rm['on_hand']; $oo = (int)$rm['on_order']; $bsl = (int)($rm['base_stock_level'] ?? 0);
+		$d12 = (int)($rm['demand_12mo'] ?? 0); $d6 = (int)($rm['demand_6mo'] ?? 0); $omit = (int)($rm['omit'] ?? 0);
+		if ($oh <= 0 && $oo <= 0 && $bsl <= 0 && $d12 <= 0 && $omit <= 0) continue;   // drop dead parts
+		$moq = max(1, (int)$rm['moq']);
+		$toOrderRaw = $bsl - $oh - $oo;
+		$toOrder = $toOrderRaw > 0 ? (int)(ceil($toOrderRaw / $moq) * $moq) : 0;
+		$rawAll[] = [
+			'part' => $rm['part'], 'description' => $rm['description'], 'manufacturer' => $rm['manufacturer'],
+			'category' => shared_category($rm['part']), 'part_id' => (int)($rm['part_id'] ?? 0),
+			'on_hand' => $oh, 'on_order' => $oo, 'bsl' => $bsl, 'demand_12mo' => $d12, 'demand_6mo' => $d6,
+			'moq' => $moq, 'omit' => $omit, 'to_order' => $toOrder, 'unit_cost' => (float)$rm['unit_cost'],
+			'animator_component' => !empty($rm['animator_component']),
+		];
+	}
+	usort($rawAll, fn($a, $b) => strcmp($a['category'], $b['category']) ?: strcmp($a['part'], $b['part']));
 
 	// ── Optional AI narrative (detailed actions / lead-time timing) ────────────
 	$report = null; $reportNote = null;
@@ -279,6 +308,7 @@
 		'season_shorts'   => $seasonShorts,
 		'raw_orders'      => $rawOrders,
 		'raw_total_cost'  => $rawTotalCost,
+		'raw_all'         => $rawAll,
 		'charts'          => ['labels' => $labels, 'animators' => $anim, 'finished_goods' => $fg],
 		'tradeshow'       => $data['tradeshow_prior_year_jul_aug'],
 		'report'          => $report,

@@ -59,7 +59,7 @@
 		$dbLink->query("UPDATE `parts` SET `bsl` = '$bsl' WHERE `id` = '$partId'");
 	}
 
-	// Redirect only when called directly, not when included by stock_calc.php
+	// Redirect only when called directly, not when included by another page.
 	if (basename(__FILE__) === basename($_SERVER['SCRIPT_FILENAME'])) {
-		header("Location: /orders/stock_calc.php");
+		header("Location: /research.php");
 	}

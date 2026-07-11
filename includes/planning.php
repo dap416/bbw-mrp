@@ -235,9 +235,17 @@
 		// Cards (CD-/CDA-), packaging, plates, rods, cams, etc. are all included
 		// so the assistant can see on-hand for anything, with a flag marking which
 		// are direct animator BOM components.
+		// Trailing build demand per part (6 & 12 months) — reference the old Raw Materials
+		// Stock Order page showed. BUILD trans store consumption as negative qty, so abs().
+		$dem12 = []; $dem6 = [];
+		$t12 = date('Y-m-d H:i:s', strtotime('12 months ago'));
+		$t6  = date('Y-m-d H:i:s', strtotime('6 months ago'));
+		try { foreach ($db->query("SELECT partid, SUM(qty) AS d FROM trans WHERE type='BUILD' AND date > '$t12' GROUP BY partid") as $r) $dem12[$r['partid']] = abs((int)$r['d']); } catch (Throwable $e) {}
+		try { foreach ($db->query("SELECT partid, SUM(qty) AS d FROM trans WHERE type='BUILD' AND date > '$t6'  GROUP BY partid") as $r) $dem6[$r['partid']]  = abs((int)$r['d']); } catch (Throwable $e) {}
+
 		$rawMaterials = [];
 		foreach ($db->query("
-			SELECT p.partno, p.`desc`, p.qoh, p.bsl, p.imoq, p.lead_time, p.cost, p.supplier, p.id,
+			SELECT p.partno, p.`desc`, p.qoh, p.bsl, p.imoq, p.lead_time, p.cost, p.supplier, p.id, p.omit,
 			       m.name AS mfg_name
 			FROM parts p LEFT JOIN manufacturers m ON m.id = p.manufacturer
 			ORDER BY p.partno ASC
@@ -253,6 +261,10 @@
 				'lead_time_days'    => (int)($pt['lead_time'] ?? 45),
 				'unit_cost'         => (float)$pt['cost'],
 				'animator_component' => isset($partIds[$pt['id']]),
+				'part_id'           => (int)$pt['id'],
+				'omit'              => (int)($pt['omit'] ?? 0),
+				'demand_12mo'       => (int)($dem12[$pt['id']] ?? 0),
+				'demand_6mo'        => (int)($dem6[$pt['id']] ?? 0),
 			];
 		}
 
