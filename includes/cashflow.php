@@ -245,9 +245,27 @@
 			// available per LOC (e.g. Shopify $49k vs QuickBooks $85k), not one shared cap.
 			$facilities = [];
 			foreach (loc_ceilings($db) as $c) $facilities[$c['name']] = ['name' => $c['name'], 'ceiling' => (float)$c['ceiling'], 'drawn' => 0.0, 'payment' => 0.0];
+			// When a loan isn't explicitly tagged to a facility, infer it from the loan's
+			// label/note text so real balances still show as drawn against the right cap.
+			$facNames  = array_keys($facilities);
+			$facAliases = ['quickbooks' => ['quickbooks', 'quick books', 'qb', 'intuit'],
+			               'shopify'    => ['shopify', 'shop pay', 'shopify capital']];
+			$matchFacility = function($text) use ($facNames, $facAliases) {
+				$t = strtolower((string)$text);
+				if ($t === '') return null;
+				foreach ($facNames as $name) {
+					$tokens = array_merge([strtolower($name)], $facAliases[strtolower($name)] ?? []);
+					foreach ($tokens as $tok) { if ($tok !== '' && strpos($t, $tok) !== false) return $name; }
+				}
+				return null;
+			};
 			foreach ($res['credit'] as $row) {
 				if (($row['type'] ?? '') !== 'loc') continue;
 				$ln = trim((string)($row['loc_name'] ?? ''));
+				if ($ln === '' || !isset($facilities[$ln])) {                 // untagged → try to infer
+					$guess = $matchFacility($row['label'] . ' ' . ($row['note'] ?? '') . ' ' . $ln);
+					if ($guess !== null) $ln = $guess;
+				}
 				if ($ln !== '' && isset($facilities[$ln])) { $facilities[$ln]['drawn'] += $row['balance']; $facilities[$ln]['payment'] += $row['payment']; }
 				elseif ($ln !== '') { $facilities[$ln] = ['name' => $ln, 'ceiling' => 0.0, 'drawn' => $row['balance'], 'payment' => $row['payment']]; }
 				elseif (count($facilities) === 1) { $k = array_key_first($facilities); $facilities[$k]['drawn'] += $row['balance']; $facilities[$k]['payment'] += $row['payment']; }
@@ -255,10 +273,11 @@
 			}
 			$locFac = []; $locLimitTotal = 0.0; $locAvailTotal = 0.0;
 			foreach ($facilities as $f) {
-				$f['available'] = max(0.0, $f['ceiling'] - $f['drawn']);
+				$f['available'] = $f['ceiling'] - $f['drawn'];     // truthful: negative = overdrawn
+				$f['overdrawn'] = $f['available'] < -0.005;
 				$locFac[] = $f;
 				$locLimitTotal += $f['ceiling'];
-				$locAvailTotal += $f['available'];
+				$locAvailTotal += max(0.0, $f['available']);       // you can't draw a negative
 			}
 			$res['loc_facilities']     = $locFac;
 			$res['loc_limit']          = $locLimitTotal;                 // sum of all LOC ceilings

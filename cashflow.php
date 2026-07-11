@@ -100,11 +100,18 @@
 <div class="card mb-3"><div class="card-body py-2">
 	<div class="d-flex flex-wrap gap-4 align-items-center">
 		<span class="fw-semibold small text-uppercase text-muted" style="letter-spacing:.04em;">Lines of Credit</span>
-		<?php foreach ($locFacs as $f): $pct = $f['ceiling'] > 0 ? min(100, round($f['drawn']/$f['ceiling']*100)) : 0; ?>
+		<?php foreach ($locFacs as $f):
+			$over = !empty($f['overdrawn']) || ($f['ceiling'] > 0 && $f['drawn'] > $f['ceiling'] + 0.005);
+			$pct  = $f['ceiling'] > 0 ? min(100, round($f['drawn'] / $f['ceiling'] * 100)) : ($f['drawn'] > 0 ? 100 : 0);
+			$barColor = $over ? '#e64545' : '#6f42c1';
+		?>
 		<div style="min-width:200px;">
-			<div class="d-flex justify-content-between small"><span class="fw-semibold"><?php echo htmlspecialchars($f['name']); ?></span><span><strong style="color:#2ca01c;"><?php echo money0($f['available']); ?></strong> <span class="text-muted">avail</span></span></div>
-			<div style="height:6px;background:#eef1f5;border-radius:4px;overflow:hidden;"><div style="height:100%;width:<?php echo $pct; ?>%;background:#6f42c1;"></div></div>
-			<div class="text-muted" style="font-size:0.64rem;"><?php echo money0($f['drawn']); ?> drawn of <?php echo money0($f['ceiling']); ?><?php echo empty($f['ceiling']) ? ' — set a ceiling in Planning settings' : ''; ?></div>
+			<div class="d-flex justify-content-between small"><span class="fw-semibold"><?php echo htmlspecialchars($f['name']); ?></span>
+				<?php if ($over): ?><span><strong style="color:#e64545;">−<?php echo money0(abs($f['available'])); ?></strong> <span class="text-muted">over</span></span>
+				<?php else: ?><span><strong style="color:#2ca01c;"><?php echo money0(max(0, $f['available'])); ?></strong> <span class="text-muted">avail</span></span><?php endif; ?>
+			</div>
+			<div style="height:6px;background:#eef1f5;border-radius:4px;overflow:hidden;"><div style="height:100%;width:<?php echo $pct; ?>%;background:<?php echo $barColor; ?>;"></div></div>
+			<div class="text-muted" style="font-size:0.64rem;"><?php echo money0($f['drawn']); ?> drawn of <?php echo money0($f['ceiling']); ?><?php echo empty($f['ceiling']) ? ' — set a ceiling in Planning settings' : ($over ? ' · <span style="color:#e64545;font-weight:600;">OVERDRAWN</span>' : ''); ?></div>
 		</div>
 		<?php endforeach; ?>
 	</div>
@@ -339,7 +346,14 @@
 			<?php if (empty($data['manual']['credit'])): ?><div class="text-muted small">None entered.</div>
 			<?php else: foreach ($data['manual']['credit'] as $a): ?>
 				<div class="d-flex justify-content-between align-items-center border-bottom py-1 small bal-row" data-id="<?php echo $a['id']; ?>" data-label="<?php echo htmlspecialchars($a['label'], ENT_QUOTES); ?>" data-type="<?php echo $a['type']; ?>" data-balance="<?php echo $a['balance']; ?>" data-limit="<?php echo $a['limit']; ?>" data-payment="<?php echo $a['payment']; ?>" data-apr="<?php echo $a['apr'] !== null ? $a['apr'] : ''; ?>" data-qbid="<?php echo htmlspecialchars((string)$a['qb_id'], ENT_QUOTES); ?>" data-asof="<?php echo $a['as_of']; ?>" data-note="<?php echo htmlspecialchars((string)$a['note'], ENT_QUOTES); ?>" data-locname="<?php echo htmlspecialchars((string)($a['loc_name'] ?? ''), ENT_QUOTES); ?>">
-					<span><?php echo htmlspecialchars($a['label']); ?> <span class="text-muted" style="font-size:0.7rem;">· <?php echo htmlspecialchars($a['kind']); ?><?php echo ($a['type']==='loc' && !empty($a['loc_name'])) ? ' · '.htmlspecialchars($a['loc_name']) : ''; ?><?php echo $a['apr'] !== null ? ' · '.rtrim(rtrim(number_format($a['apr'],2),'0'),'.').'% APR' : ''; ?><?php echo $a['payment'] > 0 ? ' · '.money($a['payment']).'/mo' : ''; ?></span><?php echo bal_badge($a); ?></span>
+					<span><?php echo htmlspecialchars($a['label']); ?> <span class="text-muted" style="font-size:0.7rem;">· <?php echo htmlspecialchars($a['kind']); ?><?php echo $a['apr'] !== null ? ' · '.rtrim(rtrim(number_format($a['apr'],2),'0'),'.').'% APR' : ''; ?><?php echo $a['payment'] > 0 ? ' · '.money($a['payment']).'/mo' : ''; ?></span><?php echo bal_badge($a); ?>
+						<?php if ($a['type']==='loc'): ?>
+						<select class="form-select form-select-sm bal-loc-inline d-inline-block ms-1" data-id="<?php echo $a['id']; ?>" style="width:auto;font-size:0.68rem;padding:1px 18px 1px 6px;height:auto;vertical-align:middle;">
+							<option value="">— assign LOC —</option>
+							<?php foreach (loc_ceilings($db) as $c): ?><option value="<?php echo htmlspecialchars($c['name'], ENT_QUOTES); ?>"<?php echo (strcasecmp((string)($a['loc_name'] ?? ''), $c['name'])===0) ? ' selected' : ''; ?>><?php echo htmlspecialchars($c['name']); ?></option><?php endforeach; ?>
+						</select>
+						<?php endif; ?>
+					</span>
 					<span><span class="fw-semibold" style="color:#d9822b;"><?php echo money($a['balance']); ?></span> <a href="#" class="bal-update ms-1 fw-semibold" style="font-size:0.7rem;">update</a> <a href="#" class="bal-edit ms-1 text-muted" style="font-size:0.7rem;">edit</a> <a href="#" class="bal-del ms-1 text-danger" style="font-size:0.7rem;">×</a></span>
 				</div>
 			<?php endforeach; endif; ?>
@@ -678,6 +692,8 @@
 	$('#openBalances').on('click', function(){ $('#manageDetails').attr('open','open'); $('html,body').animate({scrollTop:$('#manageDetails').offset().top-90},200); });
 	$('#balSaveBtn').on('click', function(){ var $btn=$(this).prop('disabled',true); $.post('/ajax/cashflow/save_balance.php', { id:$('#balId').val(), label:$('#balLabel').val(), acct_type:$('#balType').val(), balance:$('#balAmount').val(), credit_limit:$('#balLimit').val(), monthly_payment:$('#balPayment').val(), apr:$('#balApr').val(), qb_account_id:$('#balQbId').val(), as_of:$('#balAsOf').val(), note:$('#balNote').val(), loc_name:$('#balLoc').val() }, function(resp){ if($.trim(resp)==='ok') location.reload(); else { $('#balMsg').addClass('text-danger').text(resp); $btn.prop('disabled',false); } }).fail(function(x){ $('#balMsg').addClass('text-danger').text('Save failed: '+(x.responseText||x.status)); $btn.prop('disabled',false); }); });
 	$(document).on('click', '.bal-del', function(e){ e.preventDefault(); if(!confirm('Remove this account balance?'))return; $.post('/ajax/cashflow/delete_balance.php', { id:$(this).closest('.bal-row').data('id') }, function(resp){ if($.trim(resp)==='ok') location.reload(); else alert(resp); }); });
+	// Assign a LOC loan to its facility (QuickBooks / Shopify) in one click — the top-of-page LOC availability then reflects it.
+	$(document).on('change', '.bal-loc-inline', function(){ var $sel=$(this).prop('disabled',true), $r=$sel.closest('.bal-row'); $.post('/ajax/cashflow/save_balance.php', { id:$r.data('id'), label:$r.attr('data-label'), acct_type:$r.attr('data-type'), balance:$r.attr('data-balance'), credit_limit:$r.attr('data-limit')||'', monthly_payment:$r.attr('data-payment')||'', apr:$r.attr('data-apr')||'', qb_account_id:$r.attr('data-qbid')||'', as_of:$r.attr('data-asof')||'', note:$r.attr('data-note')||'', loc_name:$sel.val() }, function(resp){ if($.trim(resp)==='ok') location.reload(); else { alert(resp); $sel.prop('disabled',false); } }).fail(function(){ alert('Save failed'); $sel.prop('disabled',false); }); });
 
 	// ── Recurring expenses ──
 	function expShowForm(s){ $('#expForm').toggleClass('hidden', !s); }
