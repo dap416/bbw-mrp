@@ -144,6 +144,40 @@
 	 * stock, animator BOMs + raw materials, non-animator finished goods, and
 	 * Jul/Aug tradeshow (POS) spikes. Used by the Season Readiness report.
 	 */
+	/**
+	 * Finished-good supply terms (MOQ, lead time, unit cost) keyed by GROUP — a family of
+	 * finished goods that share a source, cost, and working/lead time (e.g. all WINGZ, all
+	 * Bags & Cases). Finished goods are imported, so unlike raw parts they carry no MOQ/lead
+	 * time in the parts table; the "Need to Order" timing needs this.
+	 */
+	function ensure_fg_supply_table($db) {
+		$db->exec("CREATE TABLE IF NOT EXISTS fg_supply (
+			grp        VARCHAR(60) PRIMARY KEY,
+			moq        INT NOT NULL DEFAULT 0,
+			lead_days  INT NOT NULL DEFAULT 0,
+			unit_cost  DECIMAL(12,2) NOT NULL DEFAULT 0,
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		) ENGINE=InnoDB");
+	}
+	function load_fg_supply($db) {
+		$out = [];
+		try { ensure_fg_supply_table($db); foreach ($db->query("SELECT grp, moq, lead_days, unit_cost FROM fg_supply") as $r) {
+			$out[$r['grp']] = ['moq' => (int)$r['moq'], 'lead_days' => (int)$r['lead_days'], 'unit_cost' => (float)$r['unit_cost']];
+		} } catch (Throwable $e) {}
+		return $out;
+	}
+	/** Group a finished good (by SKU + title) into a supply family with shared terms. */
+	function fg_group($sku, $title) {
+		$t = strtolower(trim($sku . ' ' . $title));
+		if (strpos($t, 'wing') !== false)                                   return 'WINGZ';
+		if (strpos($t, 'case') !== false || strpos($t, 'bag') !== false)    return 'Bags & Cases';
+		if (strpos($t, 'batter') !== false)                                 return 'Batteries';
+		if (strpos($t, 'hat') !== false || strpos($t, 'beanie') !== false)  return 'Hats';
+		if (strpos($t, 'remote') !== false || strpos($t, 'charger') !== false || strpos($t, 'charge') !== false
+		    || strpos($t, 'stake') !== false || strpos($t, 'cord') !== false || strpos($t, 'plug') !== false) return 'Accessories';
+		return 'Other';
+	}
+
 	function build_season_dataset($db) {
 		$today = date('Y-m-d');
 		$y = (int)date('Y');
@@ -270,6 +304,7 @@
 
 		// ── Non-animator finished goods (cases, wings, etc. — no BOM) ─────────
 		// Built from Shopify SKUs that sold, excluding animator SKUs and POD apparel.
+		$fgSupply = load_fg_supply($db);   // per-GROUP MOQ / lead time / unit cost (imported goods)
 		$fgSkus = [];
 		foreach ($priorSales as $skuMap) foreach ($skuMap as $sku => $q) $fgSkus[$sku] = true;
 		$finishedGoods = [];
@@ -282,19 +317,42 @@
 			$any = 0;
 			foreach ($seasons as $s) { $v = (int)($priorSales[$s['key']][$sku] ?? 0); $perSeason[$s['key']] = $v; $any += $v; $perSeasonOregon[$s['key']] = (int)($priorOregon[$s['key']][$sku] ?? 0); }
 			if ($any <= 0) continue;
+			$grp = fg_group($sku, $shopSkus[$sku]['product_title'] . ' ' . $shopSkus[$sku]['variant_title']);
+			$sup = $fgSupply[$grp] ?? null;
 			$finishedGoods[] = [
 				'sku'       => $sku,
 				'product'   => $shopSkus[$sku]['product_title'] . ' — ' . $shopSkus[$sku]['variant_title'],
+				'group'     => $grp,
 				'in_stock'  => $stock,
 				'in_stock_oregon'   => isset($fpLoc[$sku]) ? (int)$fpLoc[$sku]['oregon'] : null,
 				'prior_year_sales'  => $perSeason,
 				'prior_year_oregon' => $perSeasonOregon,
+				// Supply terms inherited from the group (imported goods share source/cost/lead).
+				'moq'            => $sup && (int)$sup['moq'] > 0 ? (int)$sup['moq'] : 1,
+				'moq_set'        => $sup && (int)$sup['moq'] > 0,
+				'lead_time_days' => $sup && (int)$sup['lead_days'] > 0 ? (int)$sup['lead_days'] : 90,
+				'lead_set'       => $sup && (int)$sup['lead_days'] > 0,
+				'unit_cost'      => $sup ? (float)$sup['unit_cost'] : 0.0,
 			];
 		}
 		// Sort finished goods by total prior-year demand desc
 		usort($finishedGoods, function($a, $b) {
 			return array_sum($b['prior_year_sales']) <=> array_sum($a['prior_year_sales']);
 		});
+
+		// Distinct finished-good groups present + their shared supply terms (for the group editor).
+		$fgGroups = [];
+		foreach ($finishedGoods as $fg) {
+			$g = $fg['group'];
+			if (!isset($fgGroups[$g])) {
+				$sup = $fgSupply[$g] ?? null;
+				$fgGroups[$g] = ['group' => $g, 'count' => 0,
+					'moq' => $sup ? (int)$sup['moq'] : 0, 'lead_days' => $sup ? (int)$sup['lead_days'] : 0,
+					'unit_cost' => $sup ? (float)$sup['unit_cost'] : 0.0, 'set' => $sup && (int)$sup['moq'] > 0];
+			}
+			$fgGroups[$g]['count']++;
+		}
+		ksort($fgGroups);
 
 		// ── Tradeshow / POS spikes in prior-year Jul–Aug ──────────────────────
 		$tradeshow = ['total' => 0, 'top_days' => []];
@@ -338,6 +396,7 @@
 			'animators'      => $animators,
 			'raw_materials'  => $rawMaterials,
 			'finished_goods' => $finishedGoods,
+			'finished_good_groups' => array_values($fgGroups),
 			'tradeshow_prior_year_jul_aug' => $tradeshow,
 		];
 	}

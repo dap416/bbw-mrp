@@ -206,6 +206,18 @@
 </div>
 <?php endif; ?>
 
+<!-- ── RESEARCH TABS ────────────────────────────────────────────────────── -->
+<ul class="nav nav-tabs mb-3" id="researchTabs" role="tablist">
+	<li class="nav-item" role="presentation"><button class="nav-link active" id="tab-season-btn" data-bs-toggle="tab" data-bs-target="#pane-season" type="button" role="tab"><i class="ti ti-calendar-stats me-1"></i>Season Readiness</button></li>
+	<li class="nav-item" role="presentation"><button class="nav-link" id="tab-need-btn" data-bs-toggle="tab" data-bs-target="#pane-need" type="button" role="tab"><i class="ti ti-shopping-cart-plus me-1"></i>Need to Order</button></li>
+	<li class="nav-item" role="presentation"><button class="nav-link" id="tab-parts-btn" data-bs-toggle="tab" data-bs-target="#pane-parts" type="button" role="tab"><i class="ti ti-list-details me-1"></i>Parts Breakdown</button></li>
+	<li class="nav-item" role="presentation"><button class="nav-link" id="tab-planning-btn" data-bs-toggle="tab" data-bs-target="#pane-planning" type="button" role="tab"><i class="ti ti-robot me-1"></i>Planning Assistant</button></li>
+</ul>
+<div class="tab-content" id="researchTabContent">
+
+<!-- ══ PANE: PLANNING ASSISTANT ═════════════════════════════════════════════ -->
+<div class="tab-pane fade" id="pane-planning" role="tabpanel" aria-labelledby="tab-planning-btn">
+
 <!-- ── PLANNING ASSISTANT (AI CHAT) ─────────────────────────────────────── -->
 <div class="card mb-4" style="border-top:3px solid #d97757;">
 <div class="card-body">
@@ -263,6 +275,11 @@
 </div>
 </div>
 
+</div><!-- /pane-planning -->
+
+<!-- ══ PANE: SEASON READINESS ═══════════════════════════════════════════════ -->
+<div class="tab-pane fade show active" id="pane-season" role="tabpanel" aria-labelledby="tab-season-btn">
+
 <!-- ── SEASON READINESS ─────────────────────────────────────────────────── -->
 <div class="card mb-4" style="border-top:3px solid #2ca87f;">
 <div class="card-body">
@@ -303,18 +320,6 @@
 	<div id="seasonCharts" class="row g-3 mt-1" style="display:none;">
 		<div class="col-12 col-lg-7"><canvas id="seasonChart" height="120"></canvas></div>
 		<div class="col-12 col-lg-5"><div id="tradeshowBox" class="small"></div></div>
-	</div>
-
-	<!-- Raw-material order list -->
-	<div id="rawOrders" class="mt-3" style="display:none;"></div>
-
-	<!-- Full raw-material stock reference (merged from the old Raw Materials Stock Order page) -->
-	<div id="rawAllWrap" class="mt-3" style="display:none;">
-		<details>
-			<summary class="btn btn-sm btn-outline-secondary">▸ All raw materials — stock reference (on-hand, on-order, BSL, build demand, omit)</summary>
-			<div class="small text-muted mt-2 mb-2">Every stocked part with its Best Stock Level (auto-computed from build history minus omit), trailing 6- &amp; 12-month build demand, and a BSL-based order suggestion. <strong>Omit</strong> = units treated as overstock that reduce the stock target; editing it recomputes BSL on the next refresh. Ordering is done from the <a href="/orders.php">Open Orders</a> page.</div>
-			<div id="rawAll"></div>
-		</details>
 	</div>
 
 	<!-- Optional AI detail plan -->
@@ -414,6 +419,25 @@
 
 </div>
 </div>
+
+</div><!-- /pane-season -->
+
+<!-- ══ PANE: NEED TO ORDER ══════════════════════════════════════════════════ -->
+<div class="tab-pane fade" id="pane-need" role="tabpanel" aria-labelledby="tab-need-btn">
+<div class="card mb-4" style="border-top:3px solid #e64545;">
+<div class="card-body">
+	<div class="panel-header mb-2">
+		<span class="panel-title">Need to Order</span>
+		<span id="needSummary" class="small text-muted"></span>
+	</div>
+	<p class="text-muted small mb-2">Everything to order to stay ahead of demand, <strong>rounded up to each item's MOQ</strong> and back-timed by <strong>lead time</strong>. <strong>Order by</strong> is the last day to place it so it lands before you run short — anything already past that is flagged <span class="badge bg-danger" style="font-size:0.6rem;">ORDER NOW</span>. Finished goods use their group's MOQ/lead (set on the Parts Breakdown tab); raw parts use the parts table.</p>
+	<div id="needToOrder"></div>
+</div>
+</div>
+</div><!-- /pane-need -->
+
+<!-- ══ PANE: PARTS BREAKDOWN ════════════════════════════════════════════════ -->
+<div class="tab-pane fade" id="pane-parts" role="tabpanel" aria-labelledby="tab-parts-btn">
 
 <!-- ── COMPARISON TABLE ─────────────────────────────────────────────────── -->
 <div class="card research-card mb-4">
@@ -569,6 +593,27 @@
 </div>
 </div>
 <?php endif; ?>
+
+<!-- ── FINISHED-GOODS SUPPLY GROUPS (MOQ / lead / cost) ──────────────────── -->
+<div class="card mb-4" style="border-top:3px solid #e64545;">
+<div class="card-body">
+	<div class="panel-header mb-2"><span class="panel-title">Finished-Goods Order Terms</span></div>
+	<p class="text-muted small mb-2">Imported finished goods (WINGZ, cases, etc.) are ordered by <strong>group</strong> — each group shares one source, cost, and lead time. Set the <strong>MOQ</strong>, <strong>lead time</strong>, and <strong>unit cost</strong> per group and the <a href="#" class="goto-need">Need to Order</a> tab times the orders correctly. Groups without terms assume a 90-day lead and MOQ 1 until you set them.</p>
+	<div id="fgGroups"></div>
+</div>
+</div>
+
+<!-- ── ALL RAW MATERIALS — STOCK REFERENCE (from the old stock-order page) ── -->
+<div id="rawAllWrap" class="mb-4" style="display:none;">
+	<div class="card"><div class="card-body">
+		<div class="panel-header mb-2"><span class="panel-title">All Raw Materials — Stock Reference</span></div>
+		<div class="small text-muted mb-2">Every stocked part with its Best Stock Level (auto-computed from build history minus omit), trailing 6- &amp; 12-month build demand, and a BSL-based order suggestion. <strong>Omit</strong> = units treated as overstock that reduce the stock target; editing it recomputes BSL on the next refresh. Ordering is done from the <a href="/orders.php">Open Orders</a> page.</div>
+		<div id="rawAll"></div>
+	</div></div>
+</div>
+
+</div><!-- /pane-parts -->
+</div><!-- /tab-content -->
 
 <script>
 	// Auto-save SKU mapping on change (blur / datalist pick) — no button needed.
@@ -854,6 +899,89 @@
 			.fail(function(){ alert('Could not save omit.'); $i.prop('disabled', false); });
 	});
 
+	// ── Need to Order: one urgency-sorted list of raw + finished to order ──
+	function renderNeedToOrder(items, totalCost) {
+		if (!items || !items.length) {
+			$('#needToOrder').html('<div class="alert alert-success mb-0">Nothing to order — stock + on-order covers projected demand across all three seasons.</div>');
+			$('#needSummary').text('');
+			return;
+		}
+		var nowCount = items.filter(function(i){ return i.urgency === 'now'; }).length;
+		$('#needSummary').html('<strong class="' + (nowCount ? 'text-danger' : '') + '">' + nowCount + ' to order now</strong> · ' + items.length + ' total · Est. $' + (totalCost || 0).toFixed(2));
+		var h = '<div class="scroll-table"><table class="table dash-table align-middle"><thead><tr>' +
+			'<th>Item</th><th>Source</th><th class="text-center">Have</th><th class="text-center">Need (yr)</th>' +
+			'<th class="text-center">Order (MOQ)</th><th class="text-center">Order by</th><th class="text-center">Lead</th>' +
+			'<th class="text-end">Est. Cost</th><th class="text-center">When</th></tr></thead><tbody>';
+		items.forEach(function(it){
+			var typeBadge = it.type === 'raw'
+				? '<span class="badge bg-light text-dark border" style="font-size:0.56rem;">RAW</span>'
+				: '<span class="badge" style="background:#fde8e8;color:#b42318;font-size:0.56rem;">FINISHED</span>';
+			var urg = it.urgency === 'now'
+				? '<span class="badge bg-danger">ORDER NOW</span>'
+				: (it.urgency === 'soon' ? '<span class="badge bg-warning text-dark">Soon</span>' : '<span class="badge bg-light text-dark border">Later</span>');
+			var byCls = it.by_past ? 'stat-neg fw-bold' : (it.urgency === 'soon' ? 'fw-semibold' : 'text-muted');
+			var moqNote = (it.type === 'finished' && !it.moq_known)
+				? ' <span class="warn-pill" title="No MOQ set for this group — set it on the Parts Breakdown tab">MOQ?</span>' : '';
+			var rowStyle = it.urgency === 'now' ? ' style="background:#fff5f5;"' : '';
+			h += '<tr' + rowStyle + '><td class="fw-semibold">' + typeBadge + ' ' + esc(it.name) +
+					' <span class="text-muted small">' + esc(it.description || '') + '</span>' + moqNote + '</td>' +
+				'<td class="small text-muted">' + esc(it.supplier || '—') + '</td>' +
+				'<td class="text-center text-muted">' + it.have + '</td>' +
+				'<td class="text-center text-muted">' + it.need + '</td>' +
+				'<td class="text-center stat-neg fw-bold">' + it.order_qty + ' <span class="text-muted fw-normal" style="font-size:0.68rem;">(MOQ ' + it.moq + ')</span></td>' +
+				'<td class="text-center small ' + byCls + '">' + (it.by_date || '—') + '</td>' +
+				'<td class="text-center small">' + it.lead_time_days + 'd</td>' +
+				'<td class="text-end fw-semibold">$' + (it.cost || 0).toFixed(2) + '</td>' +
+				'<td class="text-center">' + urg + '</td></tr>';
+		});
+		h += '</tbody></table></div>';
+		$('#needToOrder').html(h);
+	}
+
+	// ── Finished-goods supply group editor (MOQ / lead / unit cost) ──
+	function renderFgGroups(groups) {
+		if (!groups || !groups.length) { $('#fgGroups').html('<div class="text-muted small">No finished-goods groups found (they appear once Shopify prior-year sales load).</div>'); return; }
+		var h = '<div class="scroll-table"><table class="table dash-table align-middle"><thead><tr>' +
+			'<th>Group</th><th class="text-center">Items</th><th class="text-center" style="width:110px;">MOQ</th>' +
+			'<th class="text-center" style="width:130px;">Lead (days)</th><th class="text-center" style="width:140px;">Unit cost</th>' +
+			'<th class="text-center" style="width:90px;"></th></tr></thead><tbody>';
+		groups.forEach(function(g){
+			var flag = g.set ? '' : ' <span class="warn-pill" style="font-size:0.56rem;">not set</span>';
+			h += '<tr data-group="' + esc(g.group) + '"><td class="fw-semibold">' + esc(g.group) + flag + '</td>' +
+				'<td class="text-center text-muted">' + g.count + '</td>' +
+				'<td><input type="number" min="1" class="form-control form-control-sm fg-moq text-end" value="' + (g.moq || '') + '" placeholder="1"></td>' +
+				'<td><input type="number" min="1" class="form-control form-control-sm fg-lead text-end" value="' + (g.lead_days || '') + '" placeholder="90"></td>' +
+				'<td><div class="input-group input-group-sm"><span class="input-group-text">$</span><input type="number" min="0" step="0.01" class="form-control fg-cost text-end" value="' + (g.unit_cost || '') + '" placeholder="0.00"></div></td>' +
+				'<td class="text-center"><button class="btn btn-sm btn-primary fg-save">Save</button> <span class="fg-msg small"></span></td></tr>';
+		});
+		h += '</tbody></table></div>';
+		$('#fgGroups').html(h);
+	}
+
+	// Save a finished-goods group's supply terms, then refresh so timing recomputes.
+	$(document).on('click', '.fg-save', function(){
+		var $row = $(this).closest('tr'), $btn = $(this).prop('disabled', true);
+		var grp = $row.data('group');
+		var moq = Math.max(0, parseInt($row.find('.fg-moq').val(), 10) || 0);
+		var lead = Math.max(0, parseInt($row.find('.fg-lead').val(), 10) || 0);
+		var cost = Math.max(0, parseFloat($row.find('.fg-cost').val()) || 0);
+		$row.find('.fg-msg').removeClass('text-danger text-success').text('Saving…');
+		$.post('/ajax/research/set_fg_supply.php', { group: grp, moq: moq, lead_days: lead, unit_cost: cost }, function(res){
+			if (res && res.ok) { loadReadiness(true, false); }
+			else { $row.find('.fg-msg').addClass('text-danger').text((res && res.error) || 'Failed'); $btn.prop('disabled', false); }
+		}, 'json').fail(function(){ $row.find('.fg-msg').addClass('text-danger').text('Failed'); $btn.prop('disabled', false); });
+	});
+
+	// "Need to Order" quick-link from the Parts Breakdown tab.
+	$(document).on('click', '.goto-need', function(e){ e.preventDefault(); var t = document.getElementById('tab-need-btn'); if (t) new bootstrap.Tab(t).show(); });
+
+	// Remember the active tab across refreshes; resize the chart when its pane appears.
+	$('#researchTabs button[data-bs-toggle="tab"]').on('shown.bs.tab', function(e){
+		try { localStorage.setItem('bbw_research_tab', e.target.id); } catch(_){}
+		if (e.target.id === 'tab-season-btn' && seasonChartObj) { try { seasonChartObj.resize(); } catch(_){} }
+	});
+	(function(){ try { var t = localStorage.getItem('bbw_research_tab'); if (t && document.getElementById(t)) new bootstrap.Tab(document.getElementById(t)).show(); } catch(_){} })();
+
 	var BP_DATA = null, BP_PARTS = null;
 	function bpNum(v, d) { v = parseInt(v, 10); return isNaN(v) ? d : Math.max(0, v); }
 
@@ -982,37 +1110,14 @@
 			// Shared-parts drawdown across seasons (cumulative), grouped by category
 			if (res.shared_by_part) renderSharedDrawdown(res.shared_by_part, res.season_shorts);
 
-			// Raw-material order list (cumulative shortfall + order-by date)
-			if (res.raw_orders) {
-				var ro = res.raw_orders, h = '';
-				if (!ro.length) {
-					h = '<div class="alert alert-success mb-0">Raw materials on hand + on order cover every animator build through all three seasons. Nothing to order.</div>';
-				} else {
-					h = '<div class="panel-title mb-2">Raw Materials to Order <span class="muted-pill ms-1">Est. $' + (res.raw_total_cost||0).toFixed(2) + '</span></div>' +
-						'<div class="small text-muted mb-2">Projected quantities cover the whole year (all three seasons of projected builds), rounded up to MOQ. <strong>Order by</strong> is when to place it so it arrives before the part runs out (lead time). Red = already overdue. <strong>BSL</strong> = best stock level; <strong>12mo</strong> = last-12-month build usage (reference).</div>' +
-						'<div class="scroll-table"><table class="table dash-table align-middle"><thead><tr>' +
-						'<th>Manufacturer</th><th>Part</th><th class="text-center">Proj. use (yr)</th><th class="text-center">12mo</th><th class="text-center">Have</th><th class="text-center">BSL</th>' +
-						'<th class="text-center">Order (MOQ)</th><th class="text-center">Order by</th><th class="text-center">Lead</th><th class="text-end">Est. Cost</th></tr></thead><tbody>';
-					ro.forEach(function(r){
-						var byCls = r.by_past ? 'stat-neg fw-bold' : '';
-						h += '<tr><td class="small fw-semibold">' + esc(r.manufacturer) + '</td>' +
-							'<td class="fw-semibold">' + esc(r.part) + ' <span class="text-muted small">' + esc(r.description||'') + '</span></td>' +
-							'<td class="text-center">' + r.total_usage + '</td>' +
-							'<td class="text-center text-muted">' + (r.demand_12mo||0) + '</td>' +
-							'<td class="text-center text-muted">' + (r.on_hand + r.on_order) + '</td>' +
-							'<td class="text-center text-muted">' + (r.bsl||0) + '</td>' +
-							'<td class="text-center stat-neg">' + r.order_qty + '</td>' +
-							'<td class="text-center small ' + byCls + '">' + (r.by_date || '—') + (r.by_past?' ⚠':'') + '</td>' +
-							'<td class="text-center small">' + r.lead_time_days + 'd</td>' +
-							'<td class="text-end fw-semibold">$' + r.cost.toFixed(2) + '</td></tr>';
-					});
-					h += '</tbody></table></div>';
-				}
-				$('#rawOrders').html(h).show();
-			}
+			// Consolidated "Need to Order" list (raw + finished, urgency-sorted)
+			if (res.need_to_order) renderNeedToOrder(res.need_to_order, res.need_total_cost);
 
 			// Full raw-material stock reference (merged from the old stock-order page)
 			if (res.raw_all) renderRawAll(res.raw_all);
+
+			// Finished-goods supply group editor (MOQ / lead / cost)
+			if (res.fg_groups) renderFgGroups(res.fg_groups);
 
 			// Chart: prior-year units per season (animators vs other)
 			if (res.charts && typeof Chart !== 'undefined') {

@@ -30,7 +30,7 @@
 	$fresh  = !empty($_POST['fresh']);  // force a recompute, ignore cache
 
 	// Bump when the payload shape changes so old caches auto-invalidate.
-	$SEASON_SCHEMA = 9;
+	$SEASON_SCHEMA = 10;
 
 	$db = db_connect();
 
@@ -233,9 +233,10 @@
 		$rawOrders[] = [
 			'part' => $part, 'description' => $rm['description'], 'manufacturer' => $rm['manufacturer'],
 			'total_usage' => $total, 'on_hand' => (int)$rm['on_hand'], 'on_order' => (int)$rm['on_order'],
-			'short' => $short, 'order_qty' => $order,
+			'short' => $short, 'order_qty' => $order, 'moq' => $moq,
 			'by_date' => $orderByTs ? date('M j, Y', $orderByTs) : null,
 			'by_past' => $orderByTs ? ($orderByTs < time()) : false,
+			'by_ts' => $orderByTs ?: null,
 			'lead_time_days' => $lead, 'unit_cost' => (float)$rm['unit_cost'], 'cost' => $cost,
 			'bsl' => (int)($rm['base_stock_level'] ?? 0), 'demand_12mo' => (int)($rm['demand_12mo'] ?? 0),
 			'demand_6mo' => (int)($rm['demand_6mo'] ?? 0), 'omit' => (int)($rm['omit'] ?? 0),
@@ -246,6 +247,70 @@
 		if ($a['by_past'] !== $b['by_past']) return $a['by_past'] ? -1 : 1;
 		return strcasecmp($a['manufacturer'], $b['manufacturer']);
 	});
+
+	// ── Finished-goods orders: same cumulative-shortfall + order-by logic as raw ──
+	// Finished goods are imported (no build), so "available" is current stock; demand
+	// draws it down across the seasons. MOQ + lead time come from the group supply terms.
+	$fgOrders = []; $fgTotalCost = 0.0;
+	foreach ($data['finished_goods'] as $f) {
+		$startAvail = (int)$f['in_stock'];
+		$cum = 0; $total = 0; $firstNegStart = null;
+		foreach ($seasons as $s) {
+			$u = (int)($f['prior_year_sales'][$s['key']] ?? 0);
+			$cum += $u; $total += $u;
+			if ($firstNegStart === null && $cum > $startAvail) $firstNegStart = $s['start'];
+		}
+		$short = max(0, $total - $startAvail);
+		if ($short <= 0) continue;
+		$moq   = max(1, (int)$f['moq']);
+		$order = (int)(ceil($short / $moq) * $moq);
+		$lead  = (int)$f['lead_time_days'];
+		$cost  = $order * (float)$f['unit_cost'];
+		$fgTotalCost += $cost;
+		$orderByTs = $firstNegStart ? strtotime("-$lead days", strtotime($firstNegStart)) : null;
+		$fgOrders[] = [
+			'sku' => $f['sku'], 'product' => $f['product'], 'group' => $f['group'],
+			'total_usage' => $total, 'in_stock' => $startAvail,
+			'short' => $short, 'order_qty' => $order, 'moq' => $moq,
+			'moq_set' => !empty($f['moq_set']), 'lead_set' => !empty($f['lead_set']),
+			'by_date' => $orderByTs ? date('M j, Y', $orderByTs) : null,
+			'by_past' => $orderByTs ? ($orderByTs < time()) : false,
+			'by_ts' => $orderByTs ?: null,
+			'lead_time_days' => $lead, 'unit_cost' => (float)$f['unit_cost'], 'cost' => $cost,
+		];
+	}
+
+	// ── Unified "Need to Order": raw + finished, urgency-tagged and sorted ────────
+	// urgency: now = order-by already reached/overdue; soon = within 30 days; later = beyond.
+	$soonTs = time() + 30 * 86400;
+	$needToOrder = [];
+	foreach ($rawOrders as $r) {
+		$urg = $r['by_past'] ? 'now' : (($r['by_ts'] && $r['by_ts'] <= $soonTs) ? 'soon' : 'later');
+		$needToOrder[] = [
+			'type' => 'raw', 'name' => $r['part'], 'description' => $r['description'], 'supplier' => $r['manufacturer'],
+			'group' => null, 'have' => $r['on_hand'] + $r['on_order'], 'need' => $r['total_usage'], 'short' => $r['short'],
+			'order_qty' => $r['order_qty'], 'moq' => (int)$r['moq'],
+			'moq_known' => true, 'by_date' => $r['by_date'], 'by_past' => $r['by_past'], 'by_ts' => $r['by_ts'],
+			'lead_time_days' => $r['lead_time_days'], 'unit_cost' => $r['unit_cost'], 'cost' => $r['cost'], 'urgency' => $urg,
+		];
+	}
+	foreach ($fgOrders as $o) {
+		$urg = $o['by_past'] ? 'now' : (($o['by_ts'] && $o['by_ts'] <= $soonTs) ? 'soon' : 'later');
+		$needToOrder[] = [
+			'type' => 'finished', 'name' => $o['sku'], 'description' => $o['product'], 'supplier' => $o['group'],
+			'group' => $o['group'], 'have' => $o['in_stock'], 'need' => $o['total_usage'], 'short' => $o['short'],
+			'order_qty' => $o['order_qty'], 'moq' => $o['moq'], 'moq_known' => !empty($o['moq_set']),
+			'by_date' => $o['by_date'], 'by_past' => $o['by_past'], 'by_ts' => $o['by_ts'],
+			'lead_time_days' => $o['lead_time_days'], 'unit_cost' => $o['unit_cost'], 'cost' => $o['cost'], 'urgency' => $urg,
+		];
+	}
+	// Sort: overdue/soonest order-by first (null timestamps last), then biggest cost.
+	usort($needToOrder, function ($a, $b) {
+		$at = $a['by_ts'] ?? PHP_INT_MAX; $bt = $b['by_ts'] ?? PHP_INT_MAX;
+		if ($at !== $bt) return $at <=> $bt;
+		return $b['cost'] <=> $a['cost'];
+	});
+	$needTotalCost = $rawTotalCost + $fgTotalCost;
 
 	// Chart series: prior-year units per season (animators vs other)
 	$labels = []; $anim = []; $fg = []; $totalDemand = 0;
@@ -309,6 +374,11 @@
 		'raw_orders'      => $rawOrders,
 		'raw_total_cost'  => $rawTotalCost,
 		'raw_all'         => $rawAll,
+		'fg_orders'       => $fgOrders,
+		'fg_total_cost'   => $fgTotalCost,
+		'need_to_order'   => $needToOrder,
+		'need_total_cost' => $needTotalCost,
+		'fg_groups'       => $data['finished_good_groups'] ?? [],
 		'charts'          => ['labels' => $labels, 'animators' => $anim, 'finished_goods' => $fg],
 		'tradeshow'       => $data['tradeshow_prior_year_jul_aug'],
 		'report'          => $report,
