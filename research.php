@@ -39,6 +39,10 @@
 		? (shopify_cache_remember($db, 'season_fp_loc', inventory_cache_ttl($db), fn() => shopify_fp_by_location())['data']['skus'] ?? [])
 		: [];
 
+	// Tradeshows + which are excluded from demand (owner picks which shows to include).
+	$showList = $shopConfigured ? tradeshow_locations() : [];
+	$excludedShows = demand_excluded_shows($db);
+
 	// ── Load products + prefetch BOM (one query, no N+1) ─────────────────────
 	$cols = "`id`, `name`";
 	if ($hasCol)     $cols .= ", `shopify_sku`";
@@ -209,6 +213,38 @@
 <div class="alert alert-danger">
 	<h6 class="fw-bold mb-1">Couldn't load Shopify data</h6>
 	<p class="mb-0 small"><?php echo htmlspecialchars($shopErr); ?></p>
+</div>
+<?php endif; ?>
+
+<!-- ── INCLUDE TRADESHOWS IN DEMAND ─────────────────────────────────────── -->
+<?php if ($showList): ?>
+<div class="card mb-3" style="border-left:4px solid #2ca87f;">
+<div class="card-body py-2">
+	<div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+		<div>
+			<span class="fw-bold"><i class="ti ti-tent me-1"></i>Tradeshows in demand</span>
+			<span class="text-muted small ms-1">Shows are intermittent — uncheck any you're <strong>not</strong> attending and their POS units drop out of projected demand.<?php echo $excludedShows ? ' <strong>'.count($excludedShows).' excluded.</strong>' : ''; ?></span>
+		</div>
+		<button class="btn btn-sm btn-outline-secondary" id="demandShowsToggle"><i class="ti ti-adjustments me-1"></i>Choose shows</button>
+	</div>
+	<div id="demandShowsPanel" class="mt-2" style="display:none;">
+		<div class="row g-1">
+			<?php foreach ($showList as $show): $inc = !in_array($show['name'], $excludedShows, true); $id = 'ds_'.substr(md5($show['name']),0,8); ?>
+			<div class="col-12 col-md-6 col-lg-4">
+				<div class="form-check">
+					<input class="form-check-input demand-show" type="checkbox" value="<?php echo htmlspecialchars($show['name'], ENT_QUOTES); ?>" id="<?php echo $id; ?>"<?php echo $inc ? ' checked' : ''; ?>>
+					<label class="form-check-label small" for="<?php echo $id; ?>"><?php echo htmlspecialchars($show['name']); ?> <span class="show-units text-muted" data-name="<?php echo htmlspecialchars($show['name'], ENT_QUOTES); ?>" style="font-size:0.7rem;"></span></label>
+				</div>
+			</div>
+			<?php endforeach; ?>
+		</div>
+		<div class="d-flex gap-3 mt-2 align-items-center flex-wrap">
+			<button class="btn btn-sm btn-primary" id="demandShowsSave">Save &amp; recompute demand</button>
+			<a href="#" id="demandShowsImpact" class="small text-decoration-none"><i class="ti ti-eye me-1"></i>Show each show's last-year units</a>
+			<span id="demandShowsMsg" class="small"></span>
+		</div>
+	</div>
+</div>
 </div>
 <?php endif; ?>
 
@@ -1040,6 +1076,33 @@
 
 	// "Need to Order" quick-link from the Parts Breakdown tab.
 	$(document).on('click', '.goto-need', function(e){ e.preventDefault(); var t = document.getElementById('tab-need-btn'); if (t) new bootstrap.Tab(t).show(); });
+
+	// ── Include tradeshows in demand ──
+	$('#demandShowsToggle').on('click', function(){ $('#demandShowsPanel').slideToggle(150); });
+	$('#demandShowsSave').on('click', function(){
+		var excluded = [];
+		$('.demand-show').each(function(){ if (!$(this).is(':checked')) excluded.push($(this).val()); });
+		var $b = $(this).prop('disabled', true);
+		$('#demandShowsMsg').removeClass('text-danger text-success').text('Saving…');
+		$.post('/ajax/research/set_demand_shows.php', { excluded: JSON.stringify(excluded) }, function(res){
+			if (res && res.ok) { $('#demandShowsMsg').addClass('text-success').text('Saved — recomputing demand…'); loadReadiness(true, false); }
+			else { $('#demandShowsMsg').addClass('text-danger').text((res && res.error) || 'Save failed'); $b.prop('disabled', false); }
+		}, 'json').fail(function(){ $('#demandShowsMsg').addClass('text-danger').text('Save failed'); $b.prop('disabled', false); });
+	});
+	$('#demandShowsImpact').on('click', function(e){
+		e.preventDefault();
+		var $l = $(this).text('Loading last-year units… (can take a moment)');
+		$.getJSON('/ajax/research/show_demand.php', function(res){
+			if (res && res.shows) {
+				$('.show-units').each(function(){
+					var nm = $(this).data('name');
+					var m = res.shows.filter(function(s){ return s.name === nm; })[0];
+					if (m) $(this).text('· ' + m.units + ' last yr');
+				});
+				$l.html('<i class="ti ti-eye me-1"></i>Units loaded');
+			} else { $l.text((res && res.error) || 'Failed to load'); }
+		}).fail(function(){ $l.text('Failed to load'); });
+	});
 
 	// Remember the active tab across refreshes; resize the chart when its pane appears.
 	$('#researchTabs button[data-bs-toggle="tab"]').on('shown.bs.tab', function(e){

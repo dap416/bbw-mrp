@@ -189,6 +189,35 @@
 	 *  built to order with the CDA packaging card. It shares its base animator's Shopify SKU. */
 	function is_amazon_product($name) { return stripos((string)$name, '[amazon]') !== false; }
 
+	/** Tradeshows (by name) the owner has EXCLUDED from demand — their POS units are dropped. */
+	function demand_excluded_shows($db) {
+		try { $v = setting_get($db, 'demand_excluded_shows'); if ($v) { $j = json_decode($v, true); if (is_array($j)) return array_values(array_filter(array_map('strval', $j))); } }
+		catch (Throwable $e) {}
+		return [];
+	}
+
+	/**
+	 * Units sold at one show (all its Shopify location ids) in a date range, [sku => units].
+	 * Cached per show + window (prior-year data is static), shared by the demand engine and
+	 * the "Include in demand" panel so a show is only fetched from Shopify once.
+	 */
+	function show_sales_by_sku($db, $show, $since, $until, $ttl) {
+		$ids = $show['ids'] ?? [];
+		if (!$ids) return [];
+		$key = 'show_bysku_' . substr(md5(implode(',', $ids)), 0, 10) . '_' . $since . '_' . $until;
+		$res = shopify_cache_remember($db, $key, $ttl, function () use ($ids, $since, $until) {
+			$bySku = [];
+			foreach ($ids as $lid) {
+				$r = shopify_show_sales($lid, $since, $until);
+				if (!empty($r['error'])) continue;
+				foreach (($r['by_sku'] ?? []) as $sku => $u) $bySku[$sku] = ($bySku[$sku] ?? 0) + (int)$u;
+			}
+			return $bySku;
+		});
+		$data = $res['data'] ?? [];
+		return is_array($data) ? $data : [];
+	}
+
 	/**
 	 * Finished-product stock AVAILABLE for a SKU = on hand − committed, summed across every
 	 * Shopify location (Shopify's per-location "available" already nets committed). Falls back
@@ -220,10 +249,12 @@
 		$priorOregon  = [];   // season key => [sku => units FULFILLED from the Oregon Warehouse]
 		$shopErr = null;
 		$ttl = $shopReady ? inventory_cache_ttl($db) : 0;
+		$seasonWindows = [];   // season key => [prior_start, prior_end]
 		foreach ($seasons as $s) {
 			if (!$shopReady) { $priorSales[$s['key']] = []; $priorAmazon[$s['key']] = []; $priorChannel[$s['key']] = []; $priorOregon[$s['key']] = []; continue; }
 			$ps = date('Y-m-d', strtotime('-1 year', strtotime($s['start'])));
 			$pe = date('Y-m-d', strtotime('-1 year', strtotime($s['end'])));
+			$seasonWindows[$s['key']] = [$ps, $pe];
 			$r  = shopify_sales_in_range($ps, $pe);
 			if (!empty($r['error'])) { $shopErr = $r['error']; $priorSales[$s['key']] = []; $priorAmazon[$s['key']] = []; $priorChannel[$s['key']] = []; }
 			else { $priorSales[$s['key']] = $r['by_sku'] ?? []; $priorAmazon[$s['key']] = $r['by_sku_amazon'] ?? []; $priorChannel[$s['key']] = $r['by_channel'] ?? []; }
@@ -231,6 +262,23 @@
 			$loc = shopify_cache_remember($db, 'season_loc_'.$ps.'_'.$pe, $ttl, fn() => shopify_sales_by_location($ps, $pe))['data'];
 			$priorOregon[$s['key']] = (is_array($loc) && empty($loc['error'])) ? ($loc['by_sku_oregon'] ?? []) : [];
 			$seasons[array_search($s, $seasons, true)]['prior_window'] = "$ps to $pe";
+		}
+
+		// ── Drop excluded tradeshows from demand ──────────────────────────────
+		// Tradeshows are intermittent; the owner picks which shows to include. Any show
+		// NOT included has its POS units subtracted from that season's prior-year sales,
+		// so we don't project demand for a show we aren't attending.
+		$excludedShows = $shopReady ? demand_excluded_shows($db) : [];
+		if ($excludedShows) {
+			foreach (tradeshow_locations() as $show) {
+				if (!in_array($show['name'], $excludedShows, true)) continue;
+				foreach ($seasonWindows as $key => $w) {
+					$ss = show_sales_by_sku($db, $show, $w[0], $w[1], $ttl);
+					foreach ($ss as $sku => $u) {
+						if (isset($priorSales[$key][$sku])) $priorSales[$key][$sku] = max(0, (int)$priorSales[$key][$sku] - (int)$u);
+					}
+				}
+			}
 		}
 
 		// Current finished-product inventory split by location (Oregon vs rest).
