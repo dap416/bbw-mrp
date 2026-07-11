@@ -334,19 +334,24 @@
 			$isAmz = is_amazon_product($p['name']);
 			$sku = $hasSku ? ($p['shopify_sku'] ?? '') : '';
 			if ($sku !== '') $animatorSkus[$sku] = true;
-			// A base animator and its [Amazon] twin share one Shopify SKU. Split that SKU's
-			// demand so it is NOT counted twice: the [Amazon] twin carries only the Amazon
-			// (TJ Stumpf) units (built to order with a CDA card, no stock held); the base
-			// carries all the retail units (CD card, drawing from Shopify stock).
+			// A base animator and its [Amazon] twin share one Shopify SKU. Split the demand so
+			// the Amazon customer (TJ Stumpf) is NOT double-counted:
+			//   • base carries RETAIL only = last-year total minus TJ's last-year units (CD card).
+			//   • the [Amazon] twin carries TJ's ACTUAL committed order THIS year (Shopify
+			//     committed for the SKU) — his real, already-placed PO, built fresh with a CDA
+			//     card and no stock held. We use his committed order rather than a last-year
+			//     forecast, and it lands in the current (pre-season) window since it's on the books.
 			$perSeason = []; $perSeasonAmazon = []; $perSeasonOregon = [];
-			foreach ($seasons as $s) {
-				$tot = ($sku !== '') ? (int)($priorSales[$s['key']][$sku] ?? 0) : 0;
-				$amz = ($sku !== '') ? (int)($priorAmazon[$s['key']][$sku] ?? 0) : 0;
-				if ($isAmz) {
-					$perSeason[$s['key']]       = $amz;
-					$perSeasonAmazon[$s['key']] = $amz;
-					$perSeasonOregon[$s['key']] = 0;
-				} else {
+			if ($isAmz) {
+				$committed = ($sku !== '' && isset($fpLoc[$sku])) ? ((int)($fpLoc[$sku]['rest_committed'] ?? 0) + (int)($fpLoc[$sku]['oregon_committed'] ?? 0)) : 0;
+				foreach ($seasons as $i => $s) {
+					$v = ($i === 0) ? $committed : 0;   // lump the placed PO into the first (pre-season) window
+					$perSeason[$s['key']] = $v; $perSeasonAmazon[$s['key']] = $v; $perSeasonOregon[$s['key']] = 0;
+				}
+			} else {
+				foreach ($seasons as $s) {
+					$tot = ($sku !== '') ? (int)($priorSales[$s['key']][$sku] ?? 0) : 0;
+					$amz = ($sku !== '') ? (int)($priorAmazon[$s['key']][$sku] ?? 0) : 0;
 					$perSeason[$s['key']]       = max(0, $tot - $amz);
 					$perSeasonAmazon[$s['key']] = 0;
 					$perSeasonOregon[$s['key']] = ($sku !== '') ? (int)($priorOregon[$s['key']][$sku] ?? 0) : 0;
@@ -488,7 +493,7 @@
 				'wholesale_orders_note' => 'open_wholesale_orders lists your CURRENT open Shopify draft/wholesale orders (customer POs not yet completed), each with name (order number), customer, created date, status, total, unit count, and line items (sku, title, qty). Use these as concrete demand when the user asks about a specific order or PO: match by name or customer, treat the line items as units to fulfill, net each SKU against in_stock (animators/finished_goods), convert any animator shortfall to raw materials via its bom, and respect MOQ/lead times. This is OPEN drafts only - completed/closed orders are not listed.',
 				'oregon_split_status' => $oregonStatus,
 				'note'              => 'Only animator products have raw materials (BOMs) in the MRP; everything else is ordered as finished goods. moq = round up to a multiple. lead_time_days = order-to-delivery. on_order = already-placed raw POs not yet received.',
-				'amazon_twin_note'  => 'Some animators have an "[Amazon]" twin product that SHARES the same Shopify SKU (is_amazon=true). The twin is the Amazon-customer (' . shopify_amazon_customer() . ') variant, built to order with the CDA packaging card. To avoid double-counting a shared SKU, demand is split: the [Amazon] twin\'s prior_year_sales holds ONLY the Amazon-customer units (in_stock is 0 — always built fresh, never held in stock), and the base animator holds all remaining retail units. So the base BOM consumes CD- cards and the [Amazon] BOM consumes CDA- cards, and the two together sum to that SKU\'s full sales exactly once.',
+				'amazon_twin_note'  => 'Some animators have an "[Amazon]" twin product that SHARES the same Shopify SKU (is_amazon=true). The twin is the Amazon-customer (' . shopify_amazon_customer() . ') variant, built to order with the CDA packaging card. Demand is split so the Amazon customer is NOT double-counted: the BASE animator carries RETAIL only = last-year total MINUS the Amazon-customer\'s last-year units (in_stock = total physical on hand, CD cards). The [Amazon] twin carries the Amazon customer\'s ACTUAL committed order THIS year — Shopify "committed" units for the SKU, i.e. his real already-placed PO — with in_stock = 0 (built fresh, CDA cards), lumped into the pre-season (Jul–Sep) window. We use his real committed PO rather than a last-year forecast. Base build + twin build sum to the correct total (retail shortfall + his placed order) with no double-count. NOTE: the twin\'s demand is the SKU\'s total Shopify committed, which for animators is dominated by the Amazon PO.',
 				'parts_coverage'    => 'raw_materials lists EVERY part in MRP inventory with on_hand, on_order, base_stock_level, moq, lead_time_days, unit_cost. animator_component=true marks a direct BOM component of an animator. Packaging cards (CD-* and Amazon CDA-*), plates, rods and packaging are all included even when they are not BOM components — their demand tracks the animator they package (matchable by part-number brand code, e.g. LDA→CD-LD/CDA-LD; AXLA→CD-AX-L/CDA-AX-L; AXRA→CD-AX-R/CDA-AX-R; KMA→CD-KM/CDA-KM). NOTE: on_order is a total quantity, not a list of POs with ETAs.',
 				'packaging_card_rule' => 'Each animator uses ONE packaging card per unit built. Units sold to the Amazon customer (' . shopify_amazon_customer() . ') OR on any order tagged "' . shopify_amazon_tag() . '" in Shopify use the Amazon CDA-<brand> card; ALL other units use the regular CD-<brand> card. Per animator: prior_year_amazon = units needing a CDA card; (prior_year_sales − prior_year_amazon) = units needing a CD card. So CDA-<brand> demand = that animator\'s prior_year_amazon; CD-<brand> demand = prior_year_sales − prior_year_amazon. Match the CD/CDA card to the animator by brand code in the part number.',
 				'sales_coverage'    => 'prior_year_sales counts EVERY Shopify order in the window (line-item quantities) EXCEPT cancelled orders. This INCLUDES: online/web, point-of-sale (POS/tradeshows), completed/paid draft orders, and Collective/wholesale. Native Shopify bundles are exploded into their component SKUs. It EXCLUDES: open/un-completed draft orders (no sale yet) and anything not recorded in Shopify (e.g. an off-platform Amazon or wholesale PO). sales_by_channel below shows the actual channel mix so you can confirm coverage. Seasons are quarter-granular (jul_sep, oct_dec, jan_mar) — a sub-quarter date range maps to whole quarters.',
