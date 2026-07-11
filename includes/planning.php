@@ -159,8 +159,15 @@
 			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		) ENGINE=InnoDB");
 	}
+	/** Known imported-goods terms supplied by the owner. The group editor (fg_supply rows) overrides these. */
+	function fg_group_defaults() {
+		return [
+			'WINGZ'        => ['moq' => 250, 'lead_days' => 70, 'unit_cost' => 6.00],
+			'Bags & Cases' => ['moq' => 0,   'lead_days' => 0,  'unit_cost' => 11.00],
+		];
+	}
 	function load_fg_supply($db) {
-		$out = [];
+		$out = fg_group_defaults();   // seed with known defaults; DB rows below take precedence
 		try { ensure_fg_supply_table($db); foreach ($db->query("SELECT grp, moq, lead_days, unit_cost FROM fg_supply") as $r) {
 			$out[$r['grp']] = ['moq' => (int)$r['moq'], 'lead_days' => (int)$r['lead_days'], 'unit_cost' => (float)$r['unit_cost']];
 		} } catch (Throwable $e) {}

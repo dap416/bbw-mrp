@@ -30,7 +30,7 @@
 	$fresh  = !empty($_POST['fresh']);  // force a recompute, ignore cache
 
 	// Bump when the payload shape changes so old caches auto-invalidate.
-	$SEASON_SCHEMA = 10;
+	$SEASON_SCHEMA = 11;
 
 	$db = db_connect();
 
@@ -288,6 +288,7 @@
 		$urg = $r['by_past'] ? 'now' : (($r['by_ts'] && $r['by_ts'] <= $soonTs) ? 'soon' : 'later');
 		$needToOrder[] = [
 			'type' => 'raw', 'name' => $r['part'], 'description' => $r['description'], 'supplier' => $r['manufacturer'],
+			'category' => shared_category($r['part']),
 			'group' => null, 'have' => $r['on_hand'] + $r['on_order'], 'need' => $r['total_usage'], 'short' => $r['short'],
 			'order_qty' => $r['order_qty'], 'moq' => (int)$r['moq'],
 			'moq_known' => true, 'by_date' => $r['by_date'], 'by_past' => $r['by_past'], 'by_ts' => $r['by_ts'],
@@ -298,6 +299,7 @@
 		$urg = $o['by_past'] ? 'now' : (($o['by_ts'] && $o['by_ts'] <= $soonTs) ? 'soon' : 'later');
 		$needToOrder[] = [
 			'type' => 'finished', 'name' => $o['sku'], 'description' => $o['product'], 'supplier' => $o['group'],
+			'category' => $o['group'],
 			'group' => $o['group'], 'have' => $o['in_stock'], 'need' => $o['total_usage'], 'short' => $o['short'],
 			'order_qty' => $o['order_qty'], 'moq' => $o['moq'], 'moq_known' => !empty($o['moq_set']),
 			'by_date' => $o['by_date'], 'by_past' => $o['by_past'], 'by_ts' => $o['by_ts'],
@@ -344,6 +346,7 @@
 			'category' => shared_category($rm['part']), 'part_id' => (int)($rm['part_id'] ?? 0),
 			'on_hand' => $oh, 'on_order' => $oo, 'bsl' => $bsl, 'demand_12mo' => $d12, 'demand_6mo' => $d6,
 			'moq' => $moq, 'omit' => $omit, 'to_order' => $toOrder, 'unit_cost' => (float)$rm['unit_cost'],
+			'lead_time_days' => (int)($rm['lead_time_days'] ?? 45),
 			'animator_component' => !empty($rm['animator_component']),
 		];
 	}

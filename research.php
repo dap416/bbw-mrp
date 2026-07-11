@@ -873,18 +873,20 @@
 				'<div class="scroll-table"><table class="table table-sm align-middle mb-0"><thead><tr>' +
 				'<th class="small">Part</th><th class="small text-end">On hand</th><th class="small text-end">On order</th>' +
 				'<th class="small text-end">12mo use</th><th class="small text-end">6mo use</th><th class="small text-end">BSL</th>' +
-				'<th class="small text-end">MOQ</th><th class="small text-end">To order</th><th class="small text-end">Omit</th></tr></thead><tbody>';
+				'<th class="small text-end">MOQ</th><th class="small text-end">Lead</th><th class="small text-end">To order</th><th class="small text-end">Omit</th></tr></thead><tbody>';
 			g.forEach(function(p){
 				var toCls = p.to_order > 0 ? 'stat-neg fw-bold' : 'text-muted';
+				var supStyle = 'width:66px;display:inline-block;font-size:0.72rem;padding:1px 4px;';
 				h += '<tr><td class="small fw-semibold">' + esc(p.part) + ' <span class="text-muted">' + esc(p.description||'') + '</span>' + (p.animator_component ? ' <span class="badge bg-light text-muted" style="font-size:0.5rem;">BOM</span>' : '') + '</td>' +
 					'<td class="small text-end">' + p.on_hand + '</td>' +
 					'<td class="small text-end text-muted">' + p.on_order + '</td>' +
 					'<td class="small text-end text-muted">' + p.demand_12mo + '</td>' +
 					'<td class="small text-end text-muted">' + p.demand_6mo + '</td>' +
 					'<td class="small text-end">' + p.bsl + '</td>' +
-					'<td class="small text-end text-muted">' + p.moq + '</td>' +
+					'<td class="text-end"><input type="number" min="1" class="form-control form-control-sm raw-supply text-end" data-id="' + p.part_id + '" data-field="moq" value="' + (p.moq||1) + '" style="' + supStyle + '"></td>' +
+					'<td class="text-end"><input type="number" min="1" class="form-control form-control-sm raw-supply text-end" data-id="' + p.part_id + '" data-field="lead" value="' + (p.lead_time_days||0) + '" style="' + supStyle + '"></td>' +
 					'<td class="small text-end ' + toCls + '">' + (p.to_order > 0 ? p.to_order : '—') + '</td>' +
-					'<td class="text-end"><input type="number" min="0" class="form-control form-control-sm raw-omit text-end" data-id="' + p.part_id + '" value="' + (p.omit||0) + '" style="width:74px;display:inline-block;font-size:0.72rem;padding:1px 4px;"></td></tr>';
+					'<td class="text-end"><input type="number" min="0" class="form-control form-control-sm raw-omit text-end" data-id="' + p.part_id + '" value="' + (p.omit||0) + '" style="' + supStyle + '"></td></tr>';
 			});
 			h += '</tbody></table></div></div></div>';
 		});
@@ -897,6 +899,15 @@
 		var $i = $(this).prop('disabled', true), id = $i.data('id'), amount = Math.max(0, parseInt($i.val(), 10) || 0);
 		$.post('/ajax/change_omit.php', { record: id, amount: amount }, function(){ loadReadiness(true, false); })
 			.fail(function(){ alert('Could not save omit.'); $i.prop('disabled', false); });
+	});
+
+	// Save a raw part's MOQ / lead time, then refresh so the order timing recomputes.
+	$(document).on('change', '.raw-supply', function(){
+		var $i = $(this).prop('disabled', true), id = $i.data('id'), field = $i.data('field'), value = Math.max(0, parseInt($i.val(), 10) || 0);
+		$.post('/ajax/research/set_part_supply.php', { id: id, field: field, value: value }, function(res){
+			if (res && res.ok) { loadReadiness(true, false); }
+			else { alert((res && res.error) || 'Could not save.'); $i.prop('disabled', false); }
+		}, 'json').fail(function(){ alert('Could not save.'); $i.prop('disabled', false); });
 	});
 
 	// ── Need to Order: split into "Order Now" and "Coming Up" (estimated purchase date) ──
@@ -921,12 +932,26 @@
 			'<td class="text-center small">' + it.lead_time_days + 'd</td>' +
 			'<td class="text-end fw-semibold">$' + (it.cost || 0).toFixed(2) + '</td>' + whenCell + '</tr>';
 	}
+	var NEED_CAT_ORDER = ['Camshafts', 'Rods', 'Plates', 'Packaging Cards', 'Packaging', 'WINGZ', 'Bags & Cases', 'Batteries', 'Hats', 'Accessories', 'Other'];
 	function needTable(list, isUp) {
+		var cols = isUp ? 9 : 8;
+		// Group like products together (raw category or finished-goods group), keep each
+		// group's rows in the incoming (soonest-first) order.
+		var groups = {};
+		list.forEach(function(it){ var c = it.category || 'Other'; (groups[c] = groups[c] || []).push(it); });
+		var cats = Object.keys(groups).sort(function(a, b){
+			var ia = NEED_CAT_ORDER.indexOf(a), ib = NEED_CAT_ORDER.indexOf(b);
+			if (ia < 0) ia = 999; if (ib < 0) ib = 999;
+			return ia - ib || (a < b ? -1 : 1);
+		});
 		var h = '<div class="scroll-table"><table class="table dash-table align-middle"><thead><tr>' +
 			'<th>Item</th><th>Source</th><th class="text-center">Have</th><th class="text-center">Need (yr)</th>' +
 			'<th class="text-center">Order (MOQ)</th><th class="text-center">' + (isUp ? 'Purchase by (est.)' : 'Order by') + '</th>' +
 			'<th class="text-center">Lead</th><th class="text-end">Est. Cost</th>' + (isUp ? '<th class="text-center">When</th>' : '') + '</tr></thead><tbody>';
-		list.forEach(function(it){ h += needRow(it, isUp); });
+		cats.forEach(function(c){
+			h += '<tr><td colspan="' + cols + '" class="fw-bold small text-uppercase" style="letter-spacing:.03em;background:#f1f3f5;">' + esc(c) + ' <span class="text-muted">(' + groups[c].length + ')</span></td></tr>';
+			groups[c].forEach(function(it){ h += needRow(it, isUp); });
+		});
 		return h + '</tbody></table></div>';
 	}
 	function renderNeedToOrder(items, totalCost) {
