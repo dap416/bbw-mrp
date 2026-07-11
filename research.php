@@ -436,7 +436,7 @@
 		<span class="panel-title">Need to Order</span>
 		<span id="needSummary" class="small text-muted"></span>
 	</div>
-	<p class="text-muted small mb-2">Everything to order to stay ahead of demand, <strong>rounded up to each item's MOQ</strong> and back-timed by <strong>lead time</strong>. <strong>Order by</strong> is the last day to place it so it lands before you run short — anything already past that is flagged <span class="badge bg-danger" style="font-size:0.6rem;">ORDER NOW</span>. Finished goods use their group's MOQ/lead (set on the Parts Breakdown tab); raw parts use the parts table.</p>
+	<p class="text-muted small mb-2">Everything to order to stay ahead of demand, <strong>rounded up to each item's MOQ</strong> and back-timed by <strong>lead time</strong>. <strong>Order by</strong> is the last day to place it so it lands before you run short — anything already past that is flagged <span class="badge bg-danger" style="font-size:0.6rem;">ORDER NOW</span>. <strong>Need</strong> = last year's sales across the whole season — <strong>preseason (Jul–Sep) + in-season (Oct–Dec) + postseason (Jan–Mar)</strong>, through Mar 2027 — shown as the total with the three-quarter split (Pre·In·Post) beneath it. Finished goods use their group's MOQ/lead (set on the Parts Breakdown tab); raw parts use the parts table.</p>
 	<div id="needToOrder"></div>
 </div>
 </div>
@@ -918,6 +918,13 @@
 	});
 
 	// ── Need to Order: split into "Order Now" and "Coming Up" (estimated purchase date) ──
+	// Prior-year demand broken out by season: Pre (Jul–Sep) · In (Oct–Dec) · Post (Jan–Mar).
+	function needSeasonBreakdown(bs) {
+		if (!bs) return '';
+		var pre = bs.jul_sep || 0, ins = bs.oct_dec || 0, post = bs.jan_mar || 0;
+		return '<div class="text-muted" style="font-size:0.64rem;" title="Preseason Jul–Sep · In-season Oct–Dec · Postseason Jan–Mar">'
+			+ pre + ' · ' + ins + ' · ' + post + '</div>';
+	}
 	function needRow(it, isUp) {
 		var typeBadge = it.type === 'raw'
 			? '<span class="badge bg-light text-dark border" style="font-size:0.56rem;">RAW</span>'
@@ -933,7 +940,8 @@
 				' <span class="text-muted small">' + esc(it.description || '') + '</span>' + moqNote + '</td>' +
 			'<td class="small text-muted">' + esc(it.supplier || '—') + '</td>' +
 			'<td class="text-center text-muted">' + it.have + '</td>' +
-			'<td class="text-center text-muted">' + it.need + '</td>' +
+			'<td class="text-center"><div class="fw-semibold">' + it.need + '</div>' + needSeasonBreakdown(it.by_season) + '</td>' +
+			'<td class="text-center stat-neg fw-bold">' + (it.short != null ? it.short : '—') + '</td>' +
 			'<td class="text-center stat-neg fw-bold">' + it.order_qty + ' <span class="text-muted fw-normal" style="font-size:0.68rem;">(MOQ ' + it.moq + ')</span></td>' +
 			'<td class="text-center small ' + dateCls + '">' + (it.by_date || '—') + '</td>' +
 			'<td class="text-center small">' + it.lead_time_days + 'd</td>' +
@@ -941,7 +949,7 @@
 	}
 	var NEED_CAT_ORDER = ['Camshafts', 'Rods', 'Plates', 'Packaging Cards', 'Packaging', 'WINGZ', 'Bags & Cases', 'Batteries', 'Hats', 'Accessories', 'Other'];
 	function needTable(list, isUp) {
-		var cols = isUp ? 9 : 8;
+		var cols = isUp ? 10 : 9;
 		// Group like products together (raw category or finished-goods group), keep each
 		// group's rows in the incoming (soonest-first) order.
 		var groups = {};
@@ -952,7 +960,8 @@
 			return ia - ib || (a < b ? -1 : 1);
 		});
 		var h = '<div class="scroll-table"><table class="table dash-table align-middle"><thead><tr>' +
-			'<th>Item</th><th>Source</th><th class="text-center">Have</th><th class="text-center">Need (yr)</th>' +
+			'<th>Item</th><th>Source</th><th class="text-center">Have</th><th class="text-center">Need<br><small class="text-muted fw-normal">season total · Pre·In·Post</small></th>' +
+			'<th class="text-center">Short by</th>' +
 			'<th class="text-center">Order (MOQ)</th><th class="text-center">' + (isUp ? 'Purchase by (est.)' : 'Order by') + '</th>' +
 			'<th class="text-center">Lead</th><th class="text-end">Est. Cost</th>' + (isUp ? '<th class="text-center">When</th>' : '') + '</tr></thead><tbody>';
 		cats.forEach(function(c){

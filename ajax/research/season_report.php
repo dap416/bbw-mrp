@@ -30,7 +30,7 @@
 	$fresh  = !empty($_POST['fresh']);  // force a recompute, ignore cache
 
 	// Bump when the payload shape changes so old caches auto-invalidate.
-	$SEASON_SCHEMA = 13;
+	$SEASON_SCHEMA = 14;
 
 	$db = db_connect();
 
@@ -216,10 +216,10 @@
 	$rawOrders = []; $rawTotalCost = 0.0;
 	foreach ($partMeta as $part => $rm) {
 		$startAvail = (int)$rm['on_hand'] + (int)$rm['on_order'];
-		$cum = 0; $total = 0; $firstNegStart = null;
+		$cum = 0; $total = 0; $firstNegStart = null; $bySeason = [];
 		foreach ($seasons as $s) {
 			$u = (int)($seasonUsage[$s['key']][$part] ?? 0);
-			$cum += $u; $total += $u;
+			$cum += $u; $total += $u; $bySeason[$s['key']] = $u;
 			if ($firstNegStart === null && $cum > $startAvail) $firstNegStart = $s['start'];
 		}
 		$short = max(0, $total - $startAvail);
@@ -232,7 +232,7 @@
 		$orderByTs = $firstNegStart ? strtotime("-$lead days", strtotime($firstNegStart)) : null;
 		$rawOrders[] = [
 			'part' => $part, 'description' => $rm['description'], 'manufacturer' => $rm['manufacturer'],
-			'total_usage' => $total, 'on_hand' => (int)$rm['on_hand'], 'on_order' => (int)$rm['on_order'],
+			'total_usage' => $total, 'by_season' => $bySeason, 'on_hand' => (int)$rm['on_hand'], 'on_order' => (int)$rm['on_order'],
 			'short' => $short, 'order_qty' => $order, 'moq' => $moq,
 			'by_date' => $orderByTs ? date('M j, Y', $orderByTs) : null,
 			'by_past' => $orderByTs ? ($orderByTs < time()) : false,
@@ -254,10 +254,10 @@
 	$fgOrders = []; $fgTotalCost = 0.0;
 	foreach ($data['finished_goods'] as $f) {
 		$startAvail = (int)$f['in_stock'];
-		$cum = 0; $total = 0; $firstNegStart = null;
+		$cum = 0; $total = 0; $firstNegStart = null; $bySeason = [];
 		foreach ($seasons as $s) {
 			$u = (int)($f['prior_year_sales'][$s['key']] ?? 0);
-			$cum += $u; $total += $u;
+			$cum += $u; $total += $u; $bySeason[$s['key']] = $u;
 			if ($firstNegStart === null && $cum > $startAvail) $firstNegStart = $s['start'];
 		}
 		$short = max(0, $total - $startAvail);
@@ -270,7 +270,7 @@
 		$orderByTs = $firstNegStart ? strtotime("-$lead days", strtotime($firstNegStart)) : null;
 		$fgOrders[] = [
 			'sku' => $f['sku'], 'product' => $f['product'], 'group' => $f['group'],
-			'total_usage' => $total, 'in_stock' => $startAvail,
+			'total_usage' => $total, 'by_season' => $bySeason, 'in_stock' => $startAvail,
 			'short' => $short, 'order_qty' => $order, 'moq' => $moq,
 			'moq_set' => !empty($f['moq_set']), 'lead_set' => !empty($f['lead_set']),
 			'by_date' => $orderByTs ? date('M j, Y', $orderByTs) : null,
@@ -289,7 +289,7 @@
 		$needToOrder[] = [
 			'type' => 'raw', 'name' => $r['part'], 'description' => $r['description'], 'supplier' => $r['manufacturer'],
 			'category' => shared_category($r['part']),
-			'group' => null, 'have' => $r['on_hand'] + $r['on_order'], 'need' => $r['total_usage'], 'short' => $r['short'],
+			'group' => null, 'have' => $r['on_hand'] + $r['on_order'], 'need' => $r['total_usage'], 'by_season' => $r['by_season'], 'short' => $r['short'],
 			'order_qty' => $r['order_qty'], 'moq' => (int)$r['moq'],
 			'moq_known' => true, 'by_date' => $r['by_date'], 'by_past' => $r['by_past'], 'by_ts' => $r['by_ts'],
 			'lead_time_days' => $r['lead_time_days'], 'unit_cost' => $r['unit_cost'], 'cost' => $r['cost'], 'urgency' => $urg,
@@ -300,7 +300,7 @@
 		$needToOrder[] = [
 			'type' => 'finished', 'name' => $o['sku'], 'description' => $o['product'], 'supplier' => $o['group'],
 			'category' => $o['group'],
-			'group' => $o['group'], 'have' => $o['in_stock'], 'need' => $o['total_usage'], 'short' => $o['short'],
+			'group' => $o['group'], 'have' => $o['in_stock'], 'need' => $o['total_usage'], 'by_season' => $o['by_season'], 'short' => $o['short'],
 			'order_qty' => $o['order_qty'], 'moq' => $o['moq'], 'moq_known' => !empty($o['moq_set']),
 			'by_date' => $o['by_date'], 'by_past' => $o['by_past'], 'by_ts' => $o['by_ts'],
 			'lead_time_days' => $o['lead_time_days'], 'unit_cost' => $o['unit_cost'], 'cost' => $o['cost'], 'urgency' => $urg,
