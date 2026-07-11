@@ -12,6 +12,7 @@
 	intransit_source_ensure($db);   // where each FP order came from
 	$warehouses = get_warehouses($db);
 	$canEditBuild = can_edit('build');
+	$allProducts = $db->query("SELECT id, name FROM products ORDER BY name ASC")->fetchAll();   // for the manual add-order control
 
 	// Default warehouse: Arkansas
 	$defaultWH = 0;
@@ -212,6 +213,23 @@
 	</div>
 
 	<div id="recResults"></div>
+
+	<?php if ($canEditBuild): ?>
+	<hr class="my-3">
+	<div class="d-flex align-items-center gap-2 flex-wrap">
+		<span class="small fw-semibold text-muted">Or add one manually:</span>
+		<select id="manOrderProd" class="form-select form-select-sm" style="width:280px;">
+			<option value="">Select product…</option>
+			<?php foreach ($allProducts as $p): ?>
+			<option value="<?php echo (int)$p['id']; ?>"><?php echo htmlspecialchars($p['name']); ?></option>
+			<?php endforeach; ?>
+		</select>
+		<input type="number" min="1" id="manOrderQty" class="form-control form-control-sm" style="width:90px;" placeholder="Qty" />
+		<button id="manOrderAdd" class="btn btn-sm btn-outline-primary"><i class="ti ti-plus me-1"></i>Add packaging order</button>
+		<span class="small text-muted">into <strong><?php echo htmlspecialchars($activeWHName ?: 'current warehouse'); ?></strong></span>
+		<span id="manOrderMsg" class="small"></span>
+	</div>
+	<?php endif; ?>
 
 </div>
 </div>
@@ -521,6 +539,21 @@ initRecommendPanel({
 	getWarehouse: function(){ return REC_WH; },
 	getWarehouseName: function(){ return REC_WH_NAME; }
 });
+
+// ── Manually add a single packaging order (goes straight into the queue) ──
+$('#manOrderAdd').on('click', function(){
+	var pid = parseInt($('#manOrderProd').val(), 10) || 0;
+	var qty = parseInt($('#manOrderQty').val(), 10) || 0;
+	if (!pid) { $('#manOrderMsg').removeClass('text-success').addClass('text-danger').text('Pick a product.'); return; }
+	if (qty <= 0) { $('#manOrderMsg').removeClass('text-success').addClass('text-danger').text('Enter a quantity.'); return; }
+	var $btn = $(this).prop('disabled', true);
+	$('#manOrderMsg').removeClass('text-danger text-success').text('Adding…');
+	$.post('/ajax/build/create_orders.php', { orders: JSON.stringify([{ prodid: pid, qty: qty }]), warehouse_id: REC_WH, source: 'manual' }, function(res){
+		if (typeof res === 'string' && res.indexOf('ok') === 0) { location.reload(); }
+		else { $('#manOrderMsg').addClass('text-danger').text(res || 'Failed'); $btn.prop('disabled', false); }
+	}).fail(function(x){ $('#manOrderMsg').addClass('text-danger').text('Failed: ' + (x.responseText || x.status)); $btn.prop('disabled', false); });
+});
+$(document).on('keypress', '#manOrderQty', function(e){ if (e.which === 13) $('#manOrderAdd').click(); });
 
 // ── Set "Build By" due date on a packaging order ──
 $(document).on('change', '.duedate-input', function() {
