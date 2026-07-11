@@ -163,7 +163,7 @@
 	function fg_group_defaults() {
 		return [
 			'WINGZ'        => ['moq' => 250, 'lead_days' => 70, 'unit_cost' => 6.00],
-			'Bags & Cases' => ['moq' => 0,   'lead_days' => 90, 'unit_cost' => 11.00],
+			'Bags & Cases' => ['moq' => 1000, 'lead_days' => 90, 'unit_cost' => 11.00],
 		];
 	}
 	function load_fg_supply($db) {
