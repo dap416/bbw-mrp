@@ -61,11 +61,11 @@
 			
 		?>
 
-		<tr>
+		<tr id="prod<?php echo $prodId; ?>">
 			<td><?php echo $prodName; ?></td>
 			<td>
 				<?php
-			
+
 					$totalCost = false;
 
 					foreach (($buildByProd[$prodId] ?? []) as $part) {
@@ -220,6 +220,15 @@
 			
 		});
 
+		// Deep link: /products.php?edit=<id> opens that product's BOM editor and scrolls to it.
+		(function() {
+			var m = window.location.search.match(/[?&]edit=(\d+)/);
+			if (!m) return;
+			var id = m[1];
+			$("[action=editButton][record='" + id + "']").trigger('click');
+			var $row = $("#prod" + id);
+			if ($row.length) $('html,body').animate({ scrollTop: $row.offset().top - 80 }, 300);
+		})();
 
 	</script>
 	

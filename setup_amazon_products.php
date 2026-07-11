@@ -31,7 +31,8 @@ foreach ($db->query("SELECT id, partno FROM parts") as $r) {
 
 $products = $db->query("SELECT id, name" . ($hasSku ? ", shopify_sku" : "") . " FROM products ORDER BY name ASC")->fetchAll();
 $existingNames = [];
-foreach ($products as $p) $existingNames[strtolower(trim($p['name']))] = true;
+$idByName = [];   // lower(name) => product id (to link Edit BOM / Remove for existing twins)
+foreach ($products as $p) { $existingNames[strtolower(trim($p['name']))] = true; $idByName[strtolower(trim($p['name']))] = (int)$p['id']; }
 
 $bomByProd = [];   // prodid => [ [partid,qty], ... ]
 foreach ($db->query("SELECT prodid, partid, qty FROM build ORDER BY prodid, partid") as $b) {
@@ -87,7 +88,7 @@ foreach ($products as $p) {
 }
 
 // ── Apply ────────────────────────────────────────────────────────────────────
-$created = 0; $errors = [];
+$created = 0; $errors = []; $createdIds = [];   // lower(twin name) => new id
 if ($apply) {
 	$insP = $hasSku
 		? $db->prepare("INSERT INTO products (name, shopify_sku) VALUES (?, ?)")
@@ -106,6 +107,7 @@ if ($apply) {
 				$insB->execute([$newId, $partid, $line['qty']]);
 			}
 			$db->commit();
+			$createdIds[strtolower($row['twin'])] = $newId;
 			$created++;
 		} catch (Throwable $e) {
 			if ($db->inTransaction()) $db->rollBack();
@@ -154,10 +156,10 @@ require_once(__DIR__."/includes/header.php");
 <div class="card"><div class="card-body p-0">
 <table class="table table-sm align-middle mb-0">
 	<thead><tr style="background:#f1f3f5;">
-		<th>Animator</th><th>→ New product</th><th>SKU (follows)</th><th>Card swap</th><th class="text-center">BOM lines</th><th class="text-center">Status</th>
+		<th>Animator</th><th>→ New product</th><th>SKU (follows)</th><th>Card swap</th><th class="text-center">BOM lines</th><th class="text-center">Status</th><th class="text-center">Manage twin</th>
 	</tr></thead>
 	<tbody>
-	<?php foreach ($plan as $row): ?>
+	<?php foreach ($plan as $row): $twinId = $idByName[strtolower($row['twin'])] ?? ($createdIds[strtolower($row['twin'])] ?? null); ?>
 		<tr>
 			<td class="fw-semibold"><?php echo htmlspecialchars($row['name']); ?></td>
 			<td><?php echo htmlspecialchars($row['twin']); ?></td>
@@ -174,11 +176,28 @@ require_once(__DIR__."/includes/header.php");
 				<?php elseif (!empty($row['missing'])): ?><span class="badge bg-danger">missing card</span>
 				<?php else: ?><span class="badge bg-success"><?php echo $apply ? 'created' : 'will create'; ?></span><?php endif; ?>
 			</td>
+			<td class="text-center">
+				<?php if ($twinId): ?>
+					<a href="/products.php?edit=<?php echo (int)$twinId; ?>" class="btn btn-sm btn-outline-primary py-0">Edit BOM</a>
+					<button class="btn btn-sm btn-outline-danger py-0 twin-remove" data-id="<?php echo (int)$twinId; ?>" data-name="<?php echo htmlspecialchars($row['twin'], ENT_QUOTES); ?>">Remove</button>
+				<?php else: ?><span class="text-muted small">—</span><?php endif; ?>
+			</td>
 		</tr>
 	<?php endforeach; ?>
-	<?php if (empty($plan)): ?><tr><td colspan="6" class="text-muted text-center py-3">No animator products found.</td></tr><?php endif; ?>
+	<?php if (empty($plan)): ?><tr><td colspan="7" class="text-muted text-center py-3">No animator products found.</td></tr><?php endif; ?>
 	</tbody>
 </table>
 </div></div>
+
+<script>
+	// Remove an [Amazon] twin product (deletes it and its BOM).
+	$(document).on('click', '.twin-remove', function() {
+		var $btn = $(this), id = $btn.data('id'), name = $btn.data('name');
+		if (!confirm('Remove "' + name + '"? This deletes the product and its BOM.')) return;
+		$btn.prop('disabled', true).text('Removing…');
+		$.post('/ajax/products/delete.php', { prodid: id }, function() { location.reload(); })
+			.fail(function() { alert('Could not remove.'); $btn.prop('disabled', false).text('Remove'); });
+	});
+</script>
 
 <?php require_once(__DIR__."/includes/footer.php"); ?>
