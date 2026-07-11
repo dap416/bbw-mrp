@@ -899,42 +899,67 @@
 			.fail(function(){ alert('Could not save omit.'); $i.prop('disabled', false); });
 	});
 
-	// ── Need to Order: one urgency-sorted list of raw + finished to order ──
+	// ── Need to Order: split into "Order Now" and "Coming Up" (estimated purchase date) ──
+	function needRow(it, isUp) {
+		var typeBadge = it.type === 'raw'
+			? '<span class="badge bg-light text-dark border" style="font-size:0.56rem;">RAW</span>'
+			: '<span class="badge" style="background:#fde8e8;color:#b42318;font-size:0.56rem;">FINISHED</span>';
+		var moqNote = (it.type === 'finished' && !it.moq_known)
+			? ' <span class="warn-pill" title="No MOQ set for this group — set it on the Parts Breakdown tab">MOQ?</span>' : '';
+		var dateCls = isUp ? (it.urgency === 'soon' ? 'fw-semibold' : 'text-muted') : 'stat-neg fw-bold';
+		var whenCell = isUp
+			? '<td class="text-center">' + (it.urgency === 'soon' ? '<span class="badge bg-warning text-dark">Soon</span>' : '<span class="badge bg-light text-dark border">Later</span>') + '</td>'
+			: '';
+		var rowStyle = isUp ? '' : ' style="background:#fff5f5;"';
+		return '<tr' + rowStyle + '><td class="fw-semibold">' + typeBadge + ' ' + esc(it.name) +
+				' <span class="text-muted small">' + esc(it.description || '') + '</span>' + moqNote + '</td>' +
+			'<td class="small text-muted">' + esc(it.supplier || '—') + '</td>' +
+			'<td class="text-center text-muted">' + it.have + '</td>' +
+			'<td class="text-center text-muted">' + it.need + '</td>' +
+			'<td class="text-center stat-neg fw-bold">' + it.order_qty + ' <span class="text-muted fw-normal" style="font-size:0.68rem;">(MOQ ' + it.moq + ')</span></td>' +
+			'<td class="text-center small ' + dateCls + '">' + (it.by_date || '—') + '</td>' +
+			'<td class="text-center small">' + it.lead_time_days + 'd</td>' +
+			'<td class="text-end fw-semibold">$' + (it.cost || 0).toFixed(2) + '</td>' + whenCell + '</tr>';
+	}
+	function needTable(list, isUp) {
+		var h = '<div class="scroll-table"><table class="table dash-table align-middle"><thead><tr>' +
+			'<th>Item</th><th>Source</th><th class="text-center">Have</th><th class="text-center">Need (yr)</th>' +
+			'<th class="text-center">Order (MOQ)</th><th class="text-center">' + (isUp ? 'Purchase by (est.)' : 'Order by') + '</th>' +
+			'<th class="text-center">Lead</th><th class="text-end">Est. Cost</th>' + (isUp ? '<th class="text-center">When</th>' : '') + '</tr></thead><tbody>';
+		list.forEach(function(it){ h += needRow(it, isUp); });
+		return h + '</tbody></table></div>';
+	}
 	function renderNeedToOrder(items, totalCost) {
 		if (!items || !items.length) {
 			$('#needToOrder').html('<div class="alert alert-success mb-0">Nothing to order — stock + on-order covers projected demand across all three seasons.</div>');
 			$('#needSummary').text('');
 			return;
 		}
-		var nowCount = items.filter(function(i){ return i.urgency === 'now'; }).length;
-		$('#needSummary').html('<strong class="' + (nowCount ? 'text-danger' : '') + '">' + nowCount + ' to order now</strong> · ' + items.length + ' total · Est. $' + (totalCost || 0).toFixed(2));
-		var h = '<div class="scroll-table"><table class="table dash-table align-middle"><thead><tr>' +
-			'<th>Item</th><th>Source</th><th class="text-center">Have</th><th class="text-center">Need (yr)</th>' +
-			'<th class="text-center">Order (MOQ)</th><th class="text-center">Order by</th><th class="text-center">Lead</th>' +
-			'<th class="text-end">Est. Cost</th><th class="text-center">When</th></tr></thead><tbody>';
-		items.forEach(function(it){
-			var typeBadge = it.type === 'raw'
-				? '<span class="badge bg-light text-dark border" style="font-size:0.56rem;">RAW</span>'
-				: '<span class="badge" style="background:#fde8e8;color:#b42318;font-size:0.56rem;">FINISHED</span>';
-			var urg = it.urgency === 'now'
-				? '<span class="badge bg-danger">ORDER NOW</span>'
-				: (it.urgency === 'soon' ? '<span class="badge bg-warning text-dark">Soon</span>' : '<span class="badge bg-light text-dark border">Later</span>');
-			var byCls = it.by_past ? 'stat-neg fw-bold' : (it.urgency === 'soon' ? 'fw-semibold' : 'text-muted');
-			var moqNote = (it.type === 'finished' && !it.moq_known)
-				? ' <span class="warn-pill" title="No MOQ set for this group — set it on the Parts Breakdown tab">MOQ?</span>' : '';
-			var rowStyle = it.urgency === 'now' ? ' style="background:#fff5f5;"' : '';
-			h += '<tr' + rowStyle + '><td class="fw-semibold">' + typeBadge + ' ' + esc(it.name) +
-					' <span class="text-muted small">' + esc(it.description || '') + '</span>' + moqNote + '</td>' +
-				'<td class="small text-muted">' + esc(it.supplier || '—') + '</td>' +
-				'<td class="text-center text-muted">' + it.have + '</td>' +
-				'<td class="text-center text-muted">' + it.need + '</td>' +
-				'<td class="text-center stat-neg fw-bold">' + it.order_qty + ' <span class="text-muted fw-normal" style="font-size:0.68rem;">(MOQ ' + it.moq + ')</span></td>' +
-				'<td class="text-center small ' + byCls + '">' + (it.by_date || '—') + '</td>' +
-				'<td class="text-center small">' + it.lead_time_days + 'd</td>' +
-				'<td class="text-end fw-semibold">$' + (it.cost || 0).toFixed(2) + '</td>' +
-				'<td class="text-center">' + urg + '</td></tr>';
-		});
-		h += '</tbody></table></div>';
+		var nowItems = items.filter(function(i){ return i.urgency === 'now'; });
+		var upItems  = items.filter(function(i){ return i.urgency !== 'now'; });   // already sorted soonest-first
+		var sumCost = function(l){ return l.reduce(function(s, i){ return s + (i.cost || 0); }, 0); };
+		$('#needSummary').html('<strong class="' + (nowItems.length ? 'text-danger' : '') + '">' + nowItems.length + ' to order now</strong> · ' +
+			upItems.length + ' coming up · Est. $' + (totalCost || 0).toFixed(2));
+
+		var h = '';
+		// Order Now
+		if (nowItems.length) {
+			h += '<div class="mb-3">' +
+				'<div class="d-flex align-items-center gap-2 mb-1"><span class="fw-bold" style="color:#b42318;"><i class="ti ti-alert-triangle me-1"></i>Order Now</span>' +
+				'<span class="muted-pill">' + nowItems.length + ' item' + (nowItems.length !== 1 ? 's' : '') + ' · Est. $' + sumCost(nowItems).toFixed(2) + '</span></div>' +
+				'<div class="small text-muted mb-2">Their order-by date has already arrived — place these today so they land before you run short.</div>' +
+				needTable(nowItems, false) + '</div>';
+		} else {
+			h += '<div class="alert alert-success py-2 mb-3"><i class="ti ti-circle-check me-1"></i>Nothing to order right now — everything below still has runway.</div>';
+		}
+		// Coming Up (with estimated purchase date)
+		if (upItems.length) {
+			h += '<div class="mt-2">' +
+				'<div class="d-flex align-items-center gap-2 mb-1"><span class="fw-bold" style="color:#4680ff;"><i class="ti ti-calendar-clock me-1"></i>Coming Up</span>' +
+				'<span class="muted-pill">' + upItems.length + ' item' + (upItems.length !== 1 ? 's' : '') + ' · Est. $' + sumCost(upItems).toFixed(2) + '</span></div>' +
+				'<div class="small text-muted mb-2">Not urgent yet. <strong>Purchase by (est.)</strong> is the date to place each order so it arrives in time (run-short date minus lead time).</div>' +
+				needTable(upItems, true) + '</div>';
+		}
 		$('#needToOrder').html(h);
 	}
 
