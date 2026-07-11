@@ -232,6 +232,29 @@
 		</div>
 		<?php endif; ?>
 
+		<!-- LOC loan payments (auto-draw on their due day, clear ~3 days later) -->
+		<?php if (!empty($tm['loan_payments'])): ?>
+		<div class="p-2 rounded mb-2" style="background:#faf9fe;">
+			<div class="fw-semibold text-uppercase mb-1" style="font-size:0.62rem;letter-spacing:.04em;color:#6f42c1;">LOC loan payments <span class="text-muted" style="text-transform:none;letter-spacing:0;font-weight:400;">· auto-drawn from the bank, clear ~3 days after the due date</span></div>
+			<?php foreach ($tm['loan_payments'] as $lp):
+				$suf = $lp['due_day'] ? date('S', mktime(0,0,0,1,(int)$lp['due_day'],2000)) : '';
+				$st = $lp['status'];
+				$stTxt = $lp['paid'] ? '' : ($st==='cleared' ? 'likely cleared — confirm' : ($st==='drawing' ? 'drawing / clearing now' : ($st==='upcoming' ? 'upcoming' : '')));
+				$stColor = $st==='cleared' ? '#2ca01c' : ($st==='drawing' ? '#d9822b' : '#4680ff');
+			?>
+			<div class="d-flex justify-content-between align-items-center small py-1" style="border-bottom:1px solid #efeaf9;<?php echo $lp['paid'] ? 'opacity:.6;' : ''; ?>">
+				<span>
+					<?php if (!empty($lp['key'])): ?><input type="checkbox" class="cashout-paid" data-ym="<?php echo $tm['ym']; ?>" data-key="<?php echo htmlspecialchars($lp['key'], ENT_QUOTES); ?>"<?php echo $lp['paid'] ? ' checked' : ''; ?> title="Mark this loan payment as cleared this month" style="vertical-align:middle;margin-right:4px;"><?php endif; ?>
+					<span<?php echo $lp['paid'] ? ' style="text-decoration:line-through;"' : ''; ?>><?php echo htmlspecialchars($lp['label']); ?></span>
+					<?php if ($lp['due_day']): ?> <span class="text-muted" style="font-size:0.7rem;">due the <?php echo (int)$lp['due_day'].$suf; ?></span><?php endif; ?>
+					<?php if ($lp['paid']): ?> <span class="badge bg-success" style="font-size:0.5rem;vertical-align:middle;">CLEARED</span><?php elseif ($stTxt): ?> <span style="color:<?php echo $stColor; ?>;font-size:0.68rem;">● <?php echo $stTxt; ?></span><?php endif; ?>
+				</span>
+				<span class="fw-semibold" style="color:#6f42c1;<?php echo $lp['paid'] ? 'text-decoration:line-through;' : ''; ?>"><?php echo money0($lp['amount']); ?></span>
+			</div>
+			<?php endforeach; ?>
+		</div>
+		<?php endif; ?>
+
 		<!-- Done vs To-do -->
 		<div class="row g-3">
 			<div class="col-12 col-lg-6">
@@ -294,6 +317,13 @@
 				<?php else: foreach ($allOut as $it): ?>
 					<div class="form-check"><input class="form-check-input rec-out" type="checkbox" value="<?php echo htmlspecialchars($it['key'], ENT_QUOTES); ?>"<?php echo !empty($it['paid'])?' checked':''; ?> id="recout_<?php echo htmlspecialchars($it['key'], ENT_QUOTES); ?>"><label class="form-check-label small" for="recout_<?php echo htmlspecialchars($it['key'], ENT_QUOTES); ?>"><?php echo htmlspecialchars($it['label']); ?> <span class="fw-semibold" style="color:#d9822b;">−<?php echo money0($it['amount']); ?></span></label></div>
 				<?php endforeach; endif; ?>
+
+				<?php if (!empty($tm['loan_payments'])): ?>
+				<div class="fw-semibold text-uppercase mb-1 mt-3" style="font-size:0.64rem;letter-spacing:.04em;color:#6f42c1;">LOC loan payments — already cleared</div>
+				<?php foreach ($tm['loan_payments'] as $lp): if (empty($lp['key'])) continue; $suf = $lp['due_day'] ? date('S', mktime(0,0,0,1,(int)$lp['due_day'],2000)) : ''; ?>
+					<div class="form-check"><input class="form-check-input rec-out" type="checkbox" value="<?php echo htmlspecialchars($lp['key'], ENT_QUOTES); ?>"<?php echo !empty($lp['paid'])?' checked':''; ?> id="recout_<?php echo htmlspecialchars($lp['key'], ENT_QUOTES); ?>"><label class="form-check-label small" for="recout_<?php echo htmlspecialchars($lp['key'], ENT_QUOTES); ?>"><?php echo htmlspecialchars($lp['label']); ?><?php echo $lp['due_day'] ? ' <span class="text-muted">(due the '.(int)$lp['due_day'].$suf.')</span>' : ''; ?> <span class="fw-semibold" style="color:#6f42c1;">−<?php echo money0($lp['amount']); ?></span></label></div>
+				<?php endforeach; ?>
+				<?php endif; ?>
 			</div>
 			<div class="modal-footer">
 				<span id="recMsg" class="small text-danger me-auto"></span>
@@ -328,6 +358,7 @@
 					<div class="col-6" id="balLimitWrap" style="display:none;"><div class="input-group input-group-sm"><span class="input-group-text">Limit $</span><input type="text" id="balLimit" class="form-control" placeholder="Credit limit" /></div></div>
 					<div class="col-6" id="balPayWrap" style="display:none;"><div class="input-group input-group-sm"><span class="input-group-text">Loan pay/mo $</span><input type="text" id="balPayment" class="form-control" placeholder="Fixed loan payment" /></div><div class="form-text" style="font-size:0.62rem;">Cards don't need this — minimums auto-calc.</div></div>
 					<div class="col-6" id="balLocWrap" style="display:none;"><input type="text" id="balLoc" class="form-control form-control-sm" list="balLocNames" placeholder="Which LOC (facility)"><datalist id="balLocNames"><?php foreach (loc_ceilings($db) as $c): ?><option value="<?php echo htmlspecialchars($c['name'], ENT_QUOTES); ?>"></option><?php endforeach; ?></datalist><div class="form-text" style="font-size:0.62rem;">Which line of credit this loan draws on.</div></div>
+					<div class="col-6" id="balDueWrap" style="display:none;"><div class="input-group input-group-sm"><span class="input-group-text">Pmt due day</span><input type="number" min="1" max="31" id="balDueDay" class="form-control" placeholder="e.g. 13" /></div><div class="form-text" style="font-size:0.62rem;">Day of month the loan auto-draws (clears ~3 days later).</div></div>
 					<div class="col-6" id="balAprWrap" style="display:none;"><div class="input-group input-group-sm"><span class="input-group-text">APR %</span><input type="text" id="balApr" class="form-control" placeholder="e.g. 24.99" /></div></div>
 					<div class="col-6"><input type="date" id="balAsOf" class="form-control form-control-sm" value="<?php echo date('Y-m-d'); ?>" title="Date accurate as of" /></div>
 					<div class="col-12"><input type="text" id="balNote" class="form-control form-control-sm" placeholder="Note (optional)" /></div>
@@ -345,7 +376,7 @@
 			<div class="fw-semibold small text-muted mb-1 mt-3">Credit Cards / Lines of Credit</div>
 			<?php if (empty($data['manual']['credit'])): ?><div class="text-muted small">None entered.</div>
 			<?php else: foreach ($data['manual']['credit'] as $a): ?>
-				<div class="d-flex justify-content-between align-items-center border-bottom py-1 small bal-row" data-id="<?php echo $a['id']; ?>" data-label="<?php echo htmlspecialchars($a['label'], ENT_QUOTES); ?>" data-type="<?php echo $a['type']; ?>" data-balance="<?php echo $a['balance']; ?>" data-limit="<?php echo $a['limit']; ?>" data-payment="<?php echo $a['payment']; ?>" data-apr="<?php echo $a['apr'] !== null ? $a['apr'] : ''; ?>" data-qbid="<?php echo htmlspecialchars((string)$a['qb_id'], ENT_QUOTES); ?>" data-asof="<?php echo $a['as_of']; ?>" data-note="<?php echo htmlspecialchars((string)$a['note'], ENT_QUOTES); ?>" data-locname="<?php echo htmlspecialchars((string)($a['loc_name'] ?? ''), ENT_QUOTES); ?>">
+				<div class="d-flex justify-content-between align-items-center border-bottom py-1 small bal-row" data-id="<?php echo $a['id']; ?>" data-label="<?php echo htmlspecialchars($a['label'], ENT_QUOTES); ?>" data-type="<?php echo $a['type']; ?>" data-balance="<?php echo $a['balance']; ?>" data-limit="<?php echo $a['limit']; ?>" data-payment="<?php echo $a['payment']; ?>" data-apr="<?php echo $a['apr'] !== null ? $a['apr'] : ''; ?>" data-qbid="<?php echo htmlspecialchars((string)$a['qb_id'], ENT_QUOTES); ?>" data-asof="<?php echo $a['as_of']; ?>" data-note="<?php echo htmlspecialchars((string)$a['note'], ENT_QUOTES); ?>" data-locname="<?php echo htmlspecialchars((string)($a['loc_name'] ?? ''), ENT_QUOTES); ?>" data-dueday="<?php echo $a['due_day'] !== null ? (int)$a['due_day'] : ''; ?>">
 					<span><?php echo htmlspecialchars($a['label']); ?> <span class="text-muted" style="font-size:0.7rem;">· <?php echo htmlspecialchars($a['kind']); ?><?php echo $a['apr'] !== null ? ' · '.rtrim(rtrim(number_format($a['apr'],2),'0'),'.').'% APR' : ''; ?><?php echo $a['payment'] > 0 ? ' · '.money($a['payment']).'/mo' : ''; ?></span><?php echo bal_badge($a); ?>
 						<?php if ($a['type']==='loc'): ?>
 						<select class="form-select form-select-sm bal-loc-inline d-inline-block ms-1" data-id="<?php echo $a['id']; ?>" style="width:auto;font-size:0.68rem;padding:1px 18px 1px 6px;height:auto;vertical-align:middle;">
@@ -610,16 +641,17 @@
 		<?php if (!empty($b['card_payments'])): ?>
 		<div class="mt-2">
 			<div class="fw-semibold text-uppercase mb-1" style="font-size:0.6rem;letter-spacing:.04em;color:#6f42c1;">Card &amp; Loan Payments</div>
-			<?php foreach ($b['card_payments'] as $c): ?>
-			<div class="d-flex justify-content-between align-items-center py-1" style="font-size:0.76rem;border-bottom:1px solid #f3f1fa;">
-				<span><?php echo htmlspecialchars($c['label']); ?><?php
+			<?php foreach ($b['card_payments'] as $c): $isLoanPay = !empty($c['payable']) && !empty($c['key']); $loanPaid = !empty($c['paid']); ?>
+			<div class="d-flex justify-content-between align-items-center py-1" style="font-size:0.76rem;border-bottom:1px solid #f3f1fa;<?php echo $loanPaid ? 'opacity:.6;' : ''; ?>">
+				<span><?php if ($isLoanPay): ?><input type="checkbox" class="cashout-paid" data-ym="<?php echo $b['ym']; ?>" data-key="<?php echo htmlspecialchars($c['key'], ENT_QUOTES); ?>"<?php echo $loanPaid ? ' checked' : ''; ?> title="Mark this loan payment as cleared this month" style="vertical-align:middle;margin-right:3px;"><?php endif; ?><span<?php echo $loanPaid ? ' style="text-decoration:line-through;"' : ''; ?>><?php echo htmlspecialchars($c['label']); ?></span><?php
 					echo ($c['type'] ?? '') === 'loc' ? ' <span class="badge bg-info text-dark" style="font-size:0.5rem;vertical-align:middle;">LOAN</span>' : '';
 					echo $c['apr'] !== null ? ' <span class="text-muted" style="font-size:0.66rem;">'.rtrim(rtrim(number_format($c['apr'],2),'0'),'.').'%</span>' : '';
 					echo $c['is_target'] ? ' <span class="badge bg-primary" style="font-size:0.54rem;vertical-align:middle;">FOCUS</span>' : '';
 					echo $c['paid_off'] ? ' <span class="badge bg-success" style="font-size:0.54rem;vertical-align:middle;">PAID OFF</span>' : '';
-				?><br><span class="text-muted" style="font-size:0.66rem;">Bal <?php echo money0($c['balance']); ?><?php echo isset($c['available']) && $c['available'] !== null ? ' · '.money0($c['available']).' Avail' : ''; ?></span></span>
+					echo $loanPaid ? ' <span class="badge bg-success" style="font-size:0.5rem;vertical-align:middle;">CLEARED</span>' : '';
+				?><br><span class="text-muted" style="font-size:0.66rem;">Bal <?php echo money0($c['balance']); ?><?php echo isset($c['available']) && $c['available'] !== null ? ' · '.money0($c['available']).' Avail' : ''; ?><?php echo !empty($c['due_day']) ? ' · due the '.(int)$c['due_day'].date('S', mktime(0,0,0,1,(int)$c['due_day'],2000)) : ''; ?></span></span>
 				<span class="text-end">
-					<?php if ($c['amount'] > 0): ?><span class="fw-semibold" style="color:#6f42c1;"><?php echo money0($c['amount']); ?></span><?php else: ?><span class="text-muted" style="font-size:0.66rem;">no pay</span><?php endif; ?>
+					<?php if ($c['amount'] > 0): ?><span class="fw-semibold" style="color:#6f42c1;<?php echo $loanPaid ? 'text-decoration:line-through;' : ''; ?>"><?php echo money0($c['amount']); ?></span><?php elseif ($loanPaid && !empty($c['scheduled'])): ?><span class="text-muted" style="font-size:0.66rem;text-decoration:line-through;"><?php echo money0($c['scheduled']); ?></span><?php else: ?><span class="text-muted" style="font-size:0.66rem;">no pay</span><?php endif; ?>
 				</span>
 			</div>
 			<?php endforeach; ?>
@@ -682,18 +714,18 @@
 <script>
 	// ── Balances ──
 	function balShowForm(s){ $('#balForm').toggleClass('hidden', !s); }
-	$('#balType').on('change', function(){ var t=$(this).val(); $('#balAprWrap').toggle(t!=='bank'); $('#balLimitWrap').toggle(t==='credit'); $('#balPayWrap').toggle(t==='loc'); $('#balLocWrap').toggle(t==='loc'); });
+	$('#balType').on('change', function(){ var t=$(this).val(); $('#balAprWrap').toggle(t!=='bank'); $('#balLimitWrap').toggle(t==='credit'); $('#balPayWrap').toggle(t==='loc'); $('#balLocWrap').toggle(t==='loc'); $('#balDueWrap').toggle(t==='loc'); });
 	$('#balQbAccount').on('change', function(){ var v=$(this).val(), $o=$(this).find('option:selected'); if(v==='')return; if(v==='__manual__'){ $('#balQbId').val(''); $('#balLabel').val('').focus(); return; } $('#balQbId').val(v); $('#balLabel').val($o.data('name')); $('#balType').val($o.data('type')).trigger('change'); if(!$('#balAmount').val()) $('#balAmount').val(Math.abs(parseFloat($o.data('balance'))||0).toFixed(2)); });
-	$('#addBalBtn').on('click', function(){ $('#balId,#balQbId,#balLabel,#balAmount,#balLimit,#balPayment,#balApr,#balNote,#balLoc').val(''); $('#balQbAccount').val(''); $('#balType').val('bank').trigger('change'); $('#balAsOf').val('<?php echo date('Y-m-d'); ?>'); $('#balMsg').text(''); balShowForm(true); });
+	$('#addBalBtn').on('click', function(){ $('#balId,#balQbId,#balLabel,#balAmount,#balLimit,#balPayment,#balApr,#balNote,#balLoc,#balDueDay').val(''); $('#balQbAccount').val(''); $('#balType').val('bank').trigger('change'); $('#balAsOf').val('<?php echo date('Y-m-d'); ?>'); $('#balMsg').text(''); balShowForm(true); });
 	$('#balCancelBtn').on('click', function(){ balShowForm(false); });
-	$(document).on('click', '.bal-edit', function(e){ e.preventDefault(); var $r=$(this).closest('.bal-row'); $('#balId').val($r.data('id')); $('#balQbId').val($r.data('qbid')||''); $('#balQbAccount').val($r.data('qbid')||''); $('#balLabel').val($r.data('label')); $('#balType').val($r.data('type')).trigger('change'); $('#balAmount').val($r.data('balance')); $('#balLimit').val($r.data('limit')||''); $('#balPayment').val($r.data('payment')||''); $('#balApr').val($r.data('apr')||''); $('#balLoc').val($r.data('locname')||''); $('#balAsOf').val($r.data('asof')||''); $('#balNote').val($r.data('note')||''); $('#balMsg').text(''); balShowForm(true); });
+	$(document).on('click', '.bal-edit', function(e){ e.preventDefault(); var $r=$(this).closest('.bal-row'); $('#balId').val($r.data('id')); $('#balQbId').val($r.data('qbid')||''); $('#balQbAccount').val($r.data('qbid')||''); $('#balLabel').val($r.data('label')); $('#balType').val($r.data('type')).trigger('change'); $('#balAmount').val($r.data('balance')); $('#balLimit').val($r.data('limit')||''); $('#balPayment').val($r.data('payment')||''); $('#balApr').val($r.data('apr')||''); $('#balLoc').val($r.data('locname')||''); $('#balDueDay').val($r.attr('data-dueday')||''); $('#balAsOf').val($r.data('asof')||''); $('#balNote').val($r.data('note')||''); $('#balMsg').text(''); balShowForm(true); });
 	// Quick weekly update: prefill everything, set the date to TODAY, focus the amount.
-	$(document).on('click', '.bal-update', function(e){ e.preventDefault(); $('#manageDetails').attr('open','open'); var $r=$(this).closest('.bal-row'); $('#balId').val($r.data('id')); $('#balQbId').val($r.data('qbid')||''); $('#balQbAccount').val($r.data('qbid')||''); $('#balLabel').val($r.data('label')); $('#balType').val($r.data('type')).trigger('change'); $('#balAmount').val($r.data('balance')); $('#balLimit').val($r.data('limit')||''); $('#balPayment').val($r.data('payment')||''); $('#balApr').val($r.data('apr')||''); $('#balLoc').val($r.data('locname')||''); $('#balAsOf').val('<?php echo date('Y-m-d'); ?>'); $('#balNote').val($r.data('note')||''); $('#balMsg').text(''); balShowForm(true); $('html,body').animate({scrollTop:$('#balForm').offset().top-90},200); $('#balAmount').focus().select(); });
+	$(document).on('click', '.bal-update', function(e){ e.preventDefault(); $('#manageDetails').attr('open','open'); var $r=$(this).closest('.bal-row'); $('#balId').val($r.data('id')); $('#balQbId').val($r.data('qbid')||''); $('#balQbAccount').val($r.data('qbid')||''); $('#balLabel').val($r.data('label')); $('#balType').val($r.data('type')).trigger('change'); $('#balAmount').val($r.data('balance')); $('#balLimit').val($r.data('limit')||''); $('#balPayment').val($r.data('payment')||''); $('#balApr').val($r.data('apr')||''); $('#balLoc').val($r.data('locname')||''); $('#balDueDay').val($r.attr('data-dueday')||''); $('#balAsOf').val('<?php echo date('Y-m-d'); ?>'); $('#balNote').val($r.data('note')||''); $('#balMsg').text(''); balShowForm(true); $('html,body').animate({scrollTop:$('#balForm').offset().top-90},200); $('#balAmount').focus().select(); });
 	$('#openBalances').on('click', function(){ $('#manageDetails').attr('open','open'); $('html,body').animate({scrollTop:$('#manageDetails').offset().top-90},200); });
-	$('#balSaveBtn').on('click', function(){ var $btn=$(this).prop('disabled',true); $.post('/ajax/cashflow/save_balance.php', { id:$('#balId').val(), label:$('#balLabel').val(), acct_type:$('#balType').val(), balance:$('#balAmount').val(), credit_limit:$('#balLimit').val(), monthly_payment:$('#balPayment').val(), apr:$('#balApr').val(), qb_account_id:$('#balQbId').val(), as_of:$('#balAsOf').val(), note:$('#balNote').val(), loc_name:$('#balLoc').val() }, function(resp){ if($.trim(resp)==='ok') location.reload(); else { $('#balMsg').addClass('text-danger').text(resp); $btn.prop('disabled',false); } }).fail(function(x){ $('#balMsg').addClass('text-danger').text('Save failed: '+(x.responseText||x.status)); $btn.prop('disabled',false); }); });
+	$('#balSaveBtn').on('click', function(){ var $btn=$(this).prop('disabled',true); $.post('/ajax/cashflow/save_balance.php', { id:$('#balId').val(), label:$('#balLabel').val(), acct_type:$('#balType').val(), balance:$('#balAmount').val(), credit_limit:$('#balLimit').val(), monthly_payment:$('#balPayment').val(), apr:$('#balApr').val(), qb_account_id:$('#balQbId').val(), as_of:$('#balAsOf').val(), note:$('#balNote').val(), loc_name:$('#balLoc').val(), due_day:$('#balDueDay').val() }, function(resp){ if($.trim(resp)==='ok') location.reload(); else { $('#balMsg').addClass('text-danger').text(resp); $btn.prop('disabled',false); } }).fail(function(x){ $('#balMsg').addClass('text-danger').text('Save failed: '+(x.responseText||x.status)); $btn.prop('disabled',false); }); });
 	$(document).on('click', '.bal-del', function(e){ e.preventDefault(); if(!confirm('Remove this account balance?'))return; $.post('/ajax/cashflow/delete_balance.php', { id:$(this).closest('.bal-row').data('id') }, function(resp){ if($.trim(resp)==='ok') location.reload(); else alert(resp); }); });
 	// Assign a LOC loan to its facility (QuickBooks / Shopify) in one click — the top-of-page LOC availability then reflects it.
-	$(document).on('change', '.bal-loc-inline', function(){ var $sel=$(this).prop('disabled',true), $r=$sel.closest('.bal-row'); $.post('/ajax/cashflow/save_balance.php', { id:$r.data('id'), label:$r.attr('data-label'), acct_type:$r.attr('data-type'), balance:$r.attr('data-balance'), credit_limit:$r.attr('data-limit')||'', monthly_payment:$r.attr('data-payment')||'', apr:$r.attr('data-apr')||'', qb_account_id:$r.attr('data-qbid')||'', as_of:$r.attr('data-asof')||'', note:$r.attr('data-note')||'', loc_name:$sel.val() }, function(resp){ if($.trim(resp)==='ok') location.reload(); else { alert(resp); $sel.prop('disabled',false); } }).fail(function(){ alert('Save failed'); $sel.prop('disabled',false); }); });
+	$(document).on('change', '.bal-loc-inline', function(){ var $sel=$(this).prop('disabled',true), $r=$sel.closest('.bal-row'); $.post('/ajax/cashflow/save_balance.php', { id:$r.data('id'), label:$r.attr('data-label'), acct_type:$r.attr('data-type'), balance:$r.attr('data-balance'), credit_limit:$r.attr('data-limit')||'', monthly_payment:$r.attr('data-payment')||'', apr:$r.attr('data-apr')||'', qb_account_id:$r.attr('data-qbid')||'', as_of:$r.attr('data-asof')||'', note:$r.attr('data-note')||'', loc_name:$sel.val(), due_day:$r.attr('data-dueday')||'' }, function(resp){ if($.trim(resp)==='ok') location.reload(); else { alert(resp); $sel.prop('disabled',false); } }).fail(function(){ alert('Save failed'); $sel.prop('disabled',false); }); });
 
 	// ── Recurring expenses ──
 	function expShowForm(s){ $('#expForm').toggleClass('hidden', !s); }

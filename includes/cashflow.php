@@ -184,6 +184,8 @@
 		catch (Throwable $e) { /* already there */ }
 		try { $db->exec("ALTER TABLE cash_balances ADD COLUMN loc_name VARCHAR(80) NULL"); }   // which LOC facility a loc draw belongs to
 		catch (Throwable $e) { /* already there */ }
+		try { $db->exec("ALTER TABLE cash_balances ADD COLUMN due_day TINYINT NULL"); }        // day-of-month a LOC loan payment auto-draws
+		catch (Throwable $e) { /* already there */ }
 	}
 
 	/**
@@ -226,6 +228,7 @@
 					'note'    => $r['note'],
 					'type'    => $r['acct_type'],
 					'loc_name'=> $r['loc_name'] ?? '',
+					'due_day' => (isset($r['due_day']) && $r['due_day'] !== null && $r['due_day'] !== '') ? (int)$r['due_day'] : null,
 				];
 				if ($r['acct_type'] === 'bank') {
 					$res['bank'][] = $row;
@@ -913,7 +916,8 @@
 		foreach (($data['manual']['credit'] ?? []) as $c) {
 			$cards[] = ['label' => $c['label'], 'apr' => $c['apr'],
 			            'bal' => max(0.0, (float)$c['balance']), 'min' => max(0.0, (float)($c['payment'] ?? 0)),
-			            'limit' => $c['limit'], 'type' => $c['type'] ?? 'credit', 'as_of' => $c['as_of'] ?? null];
+			            'limit' => $c['limit'], 'type' => $c['type'] ?? 'credit', 'as_of' => $c['as_of'] ?? null,
+			            'id' => (int)($c['id'] ?? 0), 'due_day' => $c['due_day'] ?? null];
 		}
 		// Priority order for the avalanche: highest APR first (nulls last).
 		$order = array_keys($cards);
@@ -1023,14 +1027,25 @@
 			// If the month's card payments are already made (and reflected in the
 			// reported balances), skip it entirely so we don't recommend paying twice.
 			$cardsDone = in_array($ym, $cardDone, true);
-			$pay = array_fill(0, count($cards), 0.0);
+			$locPaidYm = $paidLines[$ym] ?? [];   // per-loan LOC payments already cleared this month
+			$pay   = array_fill(0, count($cards), 0.0);
+			$sched = array_fill(0, count($cards), 0.0);   // scheduled amount (before paid-zeroing) for display
+			$loanCleared = array_fill(0, count($cards), false);
 			$minTotal = 0.0;
 			$targetIdx = null;
 			if (!$cardsDone) {
 				foreach ($cards as $k => $c) {
 					// LOC loans keep their fixed scheduled payment; cards use % of the current balance.
-					if (($c['type'] ?? 'credit') === 'loc') $m = min($c['min'], $c['bal']);
-					else $m = ($c['bal'] > 0.005) ? min($c['bal'], max($cardMinFloor, round($c['bal'] * $cardMinPct / 100, 2))) : 0.0;
+					if (($c['type'] ?? 'credit') === 'loc') {
+						$m = min($c['min'], $c['bal']);
+						$sched[$k] = $m;
+						// A loan payment auto-draws on its due day. Once marked cleared this
+						// month it is already in the reported balance — don't subtract it again.
+						if (!empty($c['id']) && !empty($locPaidYm['locpay' . $c['id']])) { $loanCleared[$k] = true; $m = 0.0; }
+					} else {
+						$m = ($c['bal'] > 0.005) ? min($c['bal'], max($cardMinFloor, round($c['bal'] * $cardMinPct / 100, 2))) : 0.0;
+						$sched[$k] = $m;
+					}
 					$pay[$k] = $m; $minTotal += $m;
 				}
 				$extraPool = max(0.0, $cashBeforeCards - $buffer - $minTotal);
@@ -1045,15 +1060,22 @@
 			}
 			$cardPayments = []; $cardTotal = 0.0; $loanPaid = 0.0; $cardPaid = 0.0;
 			foreach ($cards as $k => &$c) {
-				if ($pay[$k] <= 0 && $c['bal'] <= 0) continue;
+				$isLoc = ($c['type'] ?? 'credit') === 'loc';
+				// Always keep LOC loans visible (even when this month's payment is already
+				// cleared) so their due date + paid state show; skip only dead cards.
+				if ($pay[$k] <= 0 && $c['bal'] <= 0 && !($isLoc && $c['bal'] > 0.005) && !$loanCleared[$k]) continue;
 				$c['bal'] = max(0.0, $c['bal'] - $pay[$k]);
 				$cardTotal += $pay[$k];
-				if (($c['type'] ?? 'credit') === 'loc') $loanPaid += $pay[$k]; else $cardPaid += $pay[$k];
+				if ($isLoc) $loanPaid += $pay[$k]; else $cardPaid += $pay[$k];
 				$avail = $c['limit'] !== null ? max(0.0, (float)$c['limit'] - (float)$c['bal']) : null;
 				$cardPayments[] = ['label' => $c['label'], 'apr' => $c['apr'], 'amount' => round($pay[$k], 2),
+				                   'scheduled' => round($sched[$k], 2),
 				                   'is_target' => ($k === $targetIdx), 'paid_off' => ($c['bal'] <= 0.005),
 				                   'balance' => round((float)$c['bal'], 2), 'limit' => $c['limit'],
-				                   'available' => $avail === null ? null : round($avail, 2), 'type' => $c['type']];
+				                   'available' => $avail === null ? null : round($avail, 2), 'type' => $c['type'],
+				                   'id' => $c['id'] ?? null, 'due_day' => $c['due_day'] ?? null,
+				                   'key' => ($isLoc && !empty($c['id'])) ? 'locpay' . $c['id'] : null,
+				                   'payable' => $isLoc, 'paid' => $loanCleared[$k]];
 			}
 			unset($c);
 			// Split the cash-out line so loan payments read distinctly from card payments.
@@ -1158,6 +1180,23 @@
 			if (!empty($cp['is_target'])) { $debtTarget = $cp; }
 		}
 
+		// ── LOC loan payments with due dates: auto-draw on the due day, clear ~3 days later ──
+		$todayD = (int)date('j');
+		$loanPayments = [];
+		foreach (($cur['card_payments'] ?? []) as $cp) {
+			if (($cp['type'] ?? '') !== 'loc') continue;
+			$dd = $cp['due_day'] ?? null;
+			$lp = ['label' => $cp['label'], 'amount' => round($cp['scheduled'] ?? $cp['amount']),
+			       'due_day' => $dd, 'paid' => !empty($cp['paid']), 'key' => $cp['key'] ?? null, 'balance' => $cp['balance'] ?? null];
+			if ($dd !== null) {
+				$lp['due_date'] = $curYm . '-' . str_pad((string)$dd, 2, '0', STR_PAD_LEFT);
+				if     ($todayD > $dd + 3) $lp['status'] = 'cleared';   // due + 3-day clear has passed
+				elseif ($todayD >= $dd)    $lp['status'] = 'drawing';   // drawn, clearing now
+				else                       $lp['status'] = 'upcoming';
+			} else { $lp['status'] = null; }
+			$loanPayments[] = $lp;
+		}
+
 		// ── Month-end projection (following the plan) vs the buffer ──
 		$projEnd = $cur['end_cash'] === null ? null : (float)$cur['end_cash'];
 		$endStatus = 'good';
@@ -1211,6 +1250,7 @@
 			          'pct' => $outPlanned > 0 ? min(100, round($outPaid / $outPlanned * 100)) : 0,
 			          'done' => $outDone, 'todo' => $outTodo],
 			'debt' => ['planned' => round($debtPlanned), 'target' => $debtTarget, 'payments' => $cur['card_payments'] ?? []],
+			'loan_payments' => $loanPayments,
 			'pace' => ['daily_net' => round($dailyNet), 'net_month' => round($netMonth), 'cross_buffer_day' => $crossBufferDay],
 			'yoy' => $yoy,
 			'bank_accounts' => $data['manual']['bank'] ?? [],

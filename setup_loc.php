@@ -22,8 +22,8 @@ $CEILINGS = [
 ];
 // The two loan draws on the QuickBooks LOC.
 $loans = [
-	['label' => 'LOC Loan — $65,000 draw', 'loc' => 'QuickBooks', 'balance' => 39314.00, 'payment' => 5959.09, 'note' => '7 payments left · due the 13th monthly · paid from bank (cash out)'],
-	['label' => 'LOC Loan — $25,000 draw', 'loc' => 'QuickBooks', 'balance' => 6679.00,  'payment' => 2293.61, 'note' => '3 payments left · due the 26th monthly · paid from bank (cash out)'],
+	['label' => 'LOC Loan — $65,000 draw', 'loc' => 'QuickBooks', 'balance' => 39314.00, 'payment' => 5959.09, 'due' => 13, 'note' => '7 payments left · due the 13th monthly · paid from bank (cash out)'],
+	['label' => 'LOC Loan — $25,000 draw', 'loc' => 'QuickBooks', 'balance' => 6679.00,  'payment' => 2293.61, 'due' => 26, 'note' => '3 payments left · due the 26th monthly · paid from bank (cash out)'],
 ];
 
 $out = [];
@@ -31,10 +31,10 @@ try {
 	$db->beginTransaction();
 	// Remove any prior LOC rows so we don't double-count draws.
 	$removed = $db->exec("DELETE FROM cash_balances WHERE acct_type = 'loc'");
-	$ins = $db->prepare("INSERT INTO cash_balances (label, acct_type, balance, credit_limit, monthly_payment, apr, as_of, note, loc_name, user_id)
-	                     VALUES (?, 'loc', ?, NULL, ?, NULL, CURDATE(), ?, ?, ?)");
+	$ins = $db->prepare("INSERT INTO cash_balances (label, acct_type, balance, credit_limit, monthly_payment, apr, as_of, note, loc_name, due_day, user_id)
+	                     VALUES (?, 'loc', ?, NULL, ?, NULL, CURDATE(), ?, ?, ?, ?)");
 	foreach ($loans as $l) {
-		$ins->execute([$l['label'], $l['balance'], $l['payment'], $l['note'], $l['loc'], $_SESSION['user_id'] ?? null]);
+		$ins->execute([$l['label'], $l['balance'], $l['payment'], $l['note'], $l['loc'], $l['due'] ?? null, $_SESSION['user_id'] ?? null]);
 		$out[] = $l;
 	}
 	setting_set($db, 'loc_ceilings', json_encode($CEILINGS));
