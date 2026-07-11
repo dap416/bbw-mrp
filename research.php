@@ -516,7 +516,7 @@
 		<thead><tr>
 			<th>Product</th>
 			<th>Shopify SKU</th>
-			<th class="text-center">In Stock<br><small class="text-muted fw-normal">available (on hand − committed)</small></th>
+			<th class="text-center">In Stock<br><small class="text-muted fw-normal">on hand (Shopify)</small></th>
 			<th class="text-center">Can Build Now<br><small class="text-muted fw-normal">from raw materials</small></th>
 			<th class="text-center">Total Available<br><small class="text-muted fw-normal">stock + buildable</small></th>
 			<th>Limiting Raw Material</th>
@@ -525,8 +525,8 @@
 		<?php foreach ($mapped as $p):
 			$sku   = $p['shopify_sku'];
 			$found = isset($shopSkus[$sku]);
-			// Available = on hand − committed (consistent with Need to Order / Season Readiness).
-			$stock = $found ? (int)fp_available_qty($fpLoc, $sku, (int)$shopSkus[$sku]['qty']) : null;
+			// On hand — total physical (consistent with Need to Order / Season Readiness).
+			$stock = $found ? (int)fp_onhand_qty($fpLoc, $sku, (int)$shopSkus[$sku]['qty']) : null;
 
 			[$buildable, $limit] = compute_buildable($bomByProd[$p['id']] ?? []);
 

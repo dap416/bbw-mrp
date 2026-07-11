@@ -235,6 +235,17 @@
 		return $fallback;
 	}
 
+	/**
+	 * Finished-product ON HAND for a SKU = physical units across every Shopify location
+	 * (NOT minus committed). This is the "Have" used for build/order planning: demand is the
+	 * full prior-year projection, which already includes the units now sitting as committed
+	 * orders, so subtracting committed here would double-count and over-build.
+	 */
+	function fp_onhand_qty($fpLoc, $sku, $fallback = null) {
+		if ($sku !== '' && isset($fpLoc[$sku])) return (int)($fpLoc[$sku]['rest_on_hand'] ?? 0) + (int)($fpLoc[$sku]['oregon_on_hand'] ?? 0);
+		return $fallback;
+	}
+
 	function build_season_dataset($db) {
 		$today = date('Y-m-d');
 		$y = (int)date('Y');
@@ -346,7 +357,7 @@
 				'product'   => $p['name'],
 				'sku'       => $sku,
 				'is_amazon' => $isAmz,
-				'in_stock'  => $isAmz ? 0 : fp_available_qty($fpLoc, $sku, ($sku !== '' && isset($shopSkus[$sku])) ? (int)$shopSkus[$sku]['qty'] : null),   // on hand − committed
+				'in_stock'  => $isAmz ? 0 : fp_onhand_qty($fpLoc, $sku, ($sku !== '' && isset($shopSkus[$sku])) ? (int)$shopSkus[$sku]['qty'] : null),   // total physical on hand
 				'in_stock_oregon'   => $fpO,              // finished units currently AT the Oregon Warehouse (null = unknown)
 				'prior_year_sales'  => $perSeason,        // retail units for the base; Amazon (TJ Stumpf) units for the [Amazon] twin
 				'prior_year_oregon' => $perSeasonOregon,  // subset FULFILLED from the Oregon Warehouse
@@ -409,8 +420,8 @@
 			if ($any <= 0) continue;
 			$grp = fg_group($sku, $shopSkus[$sku]['product_title'] . ' ' . $shopSkus[$sku]['variant_title']);
 			$sup = $fgSupply[$grp] ?? null;
-			// Have = on hand − committed (units already sold/awaiting fulfillment aren't available).
-			$avail = fp_available_qty($fpLoc, $sku, $stock);
+			// Have = total physical on hand (full prior-year demand already covers committed orders).
+			$avail = fp_onhand_qty($fpLoc, $sku, $stock);
 			$finishedGoods[] = [
 				'sku'       => $sku,
 				'product'   => $shopSkus[$sku]['product_title'] . ' — ' . $shopSkus[$sku]['variant_title'],

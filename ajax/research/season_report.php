@@ -30,7 +30,7 @@
 	$fresh  = !empty($_POST['fresh']);  // force a recompute, ignore cache
 
 	// Bump when the payload shape changes so old caches auto-invalidate.
-	$SEASON_SCHEMA = 14;
+	$SEASON_SCHEMA = 15;
 
 	$db = db_connect();
 
