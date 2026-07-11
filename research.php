@@ -11,6 +11,16 @@
 
 	$db = db_connect();
 
+	// "Refresh Live Data" — drop cached live Shopify inventory so stock re-pulls fresh,
+	// force the season report to recompute, then bounce back to a clean URL.
+	if (!empty($_GET['fresh'])) {
+		try {
+			$db->exec("DELETE FROM data_cache WHERE ckey = 'season_fp_loc' OR ckey LIKE 'season_loc_%'");
+			setting_set($db, 'season_cache_at', '0');
+		} catch (Throwable $e) {}
+		header('Location: /research.php'); exit;
+	}
+
 	$aiReady = anthropic_is_configured();
 	$defaultTarget = date('Y-m-d', strtotime('+90 days'));
 
@@ -188,7 +198,7 @@
 		   title="<?php echo $shopErr ? htmlspecialchars($shopErr) : 'Manage Shopify connection'; ?>">
 			<i class="ti ti-plug-connected me-1"></i><?php echo $badgeText; ?>
 		</a>
-		<button class="btn btn-outline-secondary btn-sm" onclick="location.reload()">
+		<button class="btn btn-outline-secondary btn-sm" onclick="this.disabled=true;this.innerHTML='<i class=\'ti ti-refresh me-1\'></i>Refreshing…';location.href='?fresh=1'">
 			<i class="ti ti-refresh me-1"></i>Refresh Live Data
 		</button>
 	</div>

@@ -46,6 +46,12 @@
 		} catch (Throwable $e) { /* no cache */ }
 	}
 
+	// On a forced Refresh, drop cached LIVE Shopify inventory so "Have" re-pulls from
+	// Shopify (otherwise stock is up to 3h stale even after clicking Refresh).
+	if ($fresh) {
+		try { $db->exec("DELETE FROM data_cache WHERE ckey = 'season_fp_loc' OR ckey LIKE 'season_loc_%'"); } catch (Throwable $e) {}
+	}
+
 	// Refresh Best Stock Levels from current build history + omit before reading them —
 	// this used to run when the Raw Materials Stock Order page loaded (now merged here).
 	// Guarded include: bsl_calc.php only redirects when hit directly, not when included.
