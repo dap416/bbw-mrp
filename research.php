@@ -331,6 +331,7 @@
 		<span class="panel-title">Season Readiness</span>
 		<div class="d-flex align-items-center gap-2 flex-wrap">
 			<span id="seasonAsOf" class="small text-muted"></span>
+			<div class="form-check form-switch mb-0"><input class="form-check-input" type="checkbox" id="toggleCanBuild"><label class="form-check-label small" for="toggleCanBuild">Show &ldquo;Can build&rdquo;</label></div>
 			<button id="seasonRefresh" class="btn btn-sm btn-outline-secondary"<?php echo ($shopConfigured && !$shopErr) ? '' : ' disabled'; ?>>
 				<i class="ti ti-refresh me-1"></i>Refresh
 			</button>
@@ -1240,13 +1241,14 @@
 						'<span class="fw-bold">' + esc(q.label) + '</span> ' + verdictBadge(q.status) + '</div>';
 						cards += '<div class="small fw-semibold text-muted">Build (Animators):</div>';
 						if (q.animator_items && q.animator_items.length) {
-							cards += '<table class="table table-sm mb-2"><thead><tr><th class="small">SKU</th><th class="small text-end">Demand</th><th class="small text-end">Build</th><th class="small text-end">Have</th><th class="small text-end">Can build</th></tr></thead><tbody>';
+							var cbCls = 'canbuild-col' + (window._showCanBuild ? '' : ' d-none');
+							cards += '<table class="table table-sm mb-2"><thead><tr><th class="small">SKU</th><th class="small text-end">Have</th><th class="small text-end">Demand</th><th class="small text-end">Need to Build</th><th class="small text-end ' + cbCls + '">Can build</th></tr></thead><tbody>';
 							q.animator_items.forEach(function(it, ai){
 								var rid = 'ai-' + si + '-' + ai; cards += '<tr class="ai-row" data-target="' + rid + '" style="cursor:pointer;"><td class="small"><i class="ti ti-chevron-right ai-chev"></i> <code>' + esc(it.sku) + '</code></td>' +
+									'<td class="text-end small text-muted">' + (it.have||0) + '</td>' +
 									'<td class="text-end small text-muted">' + (it.demand||0) + '</td>' +
 										'<td class="text-end small ' + (it.to_build>0?'stat-neg':'stat-pos') + '">' + it.to_build + '</td>' +
-									'<td class="text-end small text-muted">' + (it.have||0) + '</td>' +
-									'<td class="text-end small">' + (it.buildable==null?'-':it.buildable) + '</td></tr>' +
+									'<td class="text-end small ' + cbCls + '">' + (it.buildable==null?'-':it.buildable) + '</td></tr>' +
 										'<tr id="' + rid + '" class="ai-detail" style="display:none;"><td colspan="5" class="p-0">' + aiExplain(it) + '</td></tr>';
 							});
 							cards += '</tbody></table>';
@@ -1335,6 +1337,12 @@
 	$(document).on('click', '.ai-row', function() {
 		$('#' + $(this).data('target')).toggle();
 		$(this).find('.ai-chev').toggleClass('ti-chevron-right ti-chevron-down');
+	});
+
+	// Show / hide the "Can build" column (hidden by default).
+	$('#toggleCanBuild').on('change', function() {
+		window._showCanBuild = $(this).is(':checked');
+		$('.canbuild-col').toggleClass('d-none', !window._showCanBuild);
 	});
 
 	$('#seasonRefresh').on('click', function() { loadReadiness(true, false); });
