@@ -21,6 +21,7 @@
 	$events   = load_cash_events($db);
 	$monthData= build_month_blocks($db, $data, $forecast, $events);
 	$blocks   = $monthData['blocks'];
+	$thisMonth= build_this_month($db, $monthData, $data, $forecast);
 	$loanPct  = $monthData['loan_pct'];
 	$syncedAt = cf_synced_at($db);
 	$hideBefore = (string) setting_get($db, 'cashflow_hide_before', '');
@@ -137,6 +138,163 @@
 <div class="alert alert-warning d-flex justify-content-between align-items-center flex-wrap gap-2 py-2">
 	<div>⚠ <strong><?php echo $balDue; ?> account balance<?php echo $balDue === 1 ? '' : 's'; ?></strong> need the weekly update (older than <?php echo $updDays; ?> days). Keeping balances current keeps the whole forecast accurate.</div>
 	<button class="btn btn-sm btn-warning" id="openBalances">Update now</button>
+</div>
+<?php endif; ?>
+
+<!-- ── THIS MONTH — live progress tracker ──────────────────────────────────── -->
+<?php if ($thisMonth): $tm = $thisMonth;
+	$endColor = $tm['end_status']==='danger' ? '#e64545' : ($tm['end_status']==='warn' ? '#d9822b' : '#2ca01c');
+	// Plain-English "are you on track" read.
+	$opinion = [];
+	if ($tm['proj_end'] !== null) {
+		if ($tm['end_status']==='danger') $opinion[] = ['warn', 'On the current plan you end '.$tm['label'].' at '.money0($tm['proj_end']).' — below zero. Hold off on extra debt paydown and pull income forward.'];
+		elseif ($tm['end_status']==='warn') $opinion[] = ['warn', 'You end the month at '.money0($tm['proj_end']).', under your '.money0($tm['buffer']).' buffer by '.money0($tm['buffer']-$tm['proj_end']).'. Pay only minimums on cards this month.'];
+		else $opinion[] = ['good', 'On track — projected to end '.$tm['label'].' at '.money0($tm['proj_end']).', above your '.money0($tm['buffer']).' buffer.'];
+	}
+	if ($tm['pace']['cross_buffer_day'] !== null) $opinion[] = ['warn', 'At the current burn you dip below the buffer around the '.$tm['pace']['cross_buffer_day'].date('S', mktime(0,0,0,1,$tm['pace']['cross_buffer_day'],2000)).'. Slow discretionary spend or bring a receivable in sooner.'];
+	if ($tm['in']['pace_delta'] < -1000) $opinion[] = ['info', 'Collections are running '.money0(abs($tm['in']['pace_delta'])).' behind the month\'s pace ('.money0($tm['in']['received']).' of '.money0($tm['in']['planned']).' in, '.round($tm['frac']*100).'% through the month).'];
+	elseif ($tm['in']['pace_delta'] > 1000) $opinion[] = ['good', 'Collections are ahead of pace — '.money0($tm['in']['received']).' already in of '.money0($tm['in']['planned']).' planned.'];
+	if (!empty($tm['debt']['target']) && $tm['debt']['target']['amount'] > 0) $opinion[] = ['info', 'Suggested debt focus: '.money0($tm['debt']['target']['amount']).' to '.htmlspecialchars($tm['debt']['target']['label']).($tm['debt']['target']['apr']!==null?' ('.rtrim(rtrim(number_format($tm['debt']['target']['apr'],2),'0'),'.').'% APR)':'').' — but only what keeps you above the buffer.'];
+	if ($tm['yoy']['available']) { $up = $tm['yoy']['delta'] >= 0; $opinion[] = [$up?'good':'warn', 'Year-over-year: '.($up?'up':'down').' '.abs($tm['yoy']['pct']).'% vs '.date('M Y', strtotime($tm['ym'].'-01 -1 year')).' ('.money0($tm['yoy']['this']).' vs '.money0($tm['yoy']['prior']).' '.$tm['yoy']['basis'].').']; }
+?>
+<div class="card mb-3" style="border-top:4px solid #4680ff;">
+	<div class="card-body">
+		<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+			<div>
+				<h4 class="fw-bold mb-0">This Month — <?php echo $tm['label']; ?></h4>
+				<div class="text-muted small">Day <?php echo $tm['day']; ?> of <?php echo $tm['days_in']; ?> · <?php echo $tm['days_left']; ?> days left. Reconcile your real balances, tick what's already done, and see if you're on track.</div>
+			</div>
+			<button class="btn btn-primary" id="reconcileBtn"><i class="ti ti-checkbox me-1"></i>Reconcile now</button>
+		</div>
+
+		<!-- KPI row -->
+		<div class="row g-2 mb-3">
+			<div class="col-6 col-lg-3"><div class="p-2 rounded h-100" style="background:#f6f8fa;">
+				<div class="text-muted text-uppercase fw-semibold" style="font-size:0.6rem;letter-spacing:.04em;">Cash in Bank Now</div>
+				<div class="h5 fw-bold mb-0"><?php echo money0($tm['start_cash']); ?></div>
+			</div></div>
+			<div class="col-6 col-lg-3"><div class="p-2 rounded h-100" style="background:#f6f8fa;">
+				<div class="text-muted text-uppercase fw-semibold" style="font-size:0.6rem;letter-spacing:.04em;">Projected Month-End</div>
+				<div class="h5 fw-bold mb-0" style="color:<?php echo $endColor; ?>;"><?php echo $tm['proj_end']===null?'—':money0($tm['proj_end']); ?></div>
+				<div class="text-muted" style="font-size:0.64rem;">buffer <?php echo money0($tm['buffer']); ?></div>
+			</div></div>
+			<div class="col-6 col-lg-3"><div class="p-2 rounded h-100" style="background:#f6f8fa;">
+				<div class="text-muted text-uppercase fw-semibold" style="font-size:0.6rem;letter-spacing:.04em;">Suggested to Debt</div>
+				<div class="h5 fw-bold mb-0" style="color:#6f42c1;"><?php echo money0($tm['debt']['planned']); ?></div>
+				<div class="text-muted" style="font-size:0.64rem;">minimums + avalanche</div>
+			</div></div>
+			<div class="col-6 col-lg-3"><div class="p-2 rounded h-100" style="background:#f6f8fa;">
+				<div class="text-muted text-uppercase fw-semibold" style="font-size:0.6rem;letter-spacing:.04em;">vs Last Year</div>
+				<?php if ($tm['yoy']['available']): ?>
+					<div class="h5 fw-bold mb-0" style="color:<?php echo $tm['yoy']['delta']>=0?'#2ca01c':'#e64545'; ?>;"><?php echo ($tm['yoy']['delta']>=0?'+':'').$tm['yoy']['pct']; ?>%</div>
+					<div class="text-muted" style="font-size:0.64rem;"><?php echo money0($tm['yoy']['this']); ?> vs <?php echo money0($tm['yoy']['prior']); ?></div>
+				<?php else: ?>
+					<div class="fw-semibold mb-0" style="font-size:0.8rem;">Unlocks in 2027</div>
+					<div class="text-muted" style="font-size:0.64rem;">needs a full prior year</div>
+				<?php endif; ?>
+			</div></div>
+		</div>
+
+		<!-- Progress bars: in received vs planned, out paid vs planned -->
+		<div class="row g-3 mb-2">
+			<div class="col-12 col-lg-6">
+				<div class="d-flex justify-content-between align-items-center mb-1">
+					<span class="fw-semibold text-success" style="font-size:0.8rem;">Cash In — received this month</span>
+					<span class="small"><span class="fw-bold text-success"><?php echo money0($tm['in']['received']); ?></span> <span class="text-muted">of <?php echo money0($tm['in']['planned']); ?> planned</span></span>
+				</div>
+				<div class="progress" style="height:14px;"><div class="progress-bar bg-success" style="width:<?php echo $tm['in']['pct']; ?>%;"><?php echo $tm['in']['pct']; ?>%</div></div>
+				<div class="text-muted mt-1" style="font-size:0.68rem;"><?php echo money0($tm['in']['remaining']); ?> still to come in.</div>
+			</div>
+			<div class="col-12 col-lg-6">
+				<div class="d-flex justify-content-between align-items-center mb-1">
+					<span class="fw-semibold" style="font-size:0.8rem;color:#d9822b;">Operating Cash Out — paid this month</span>
+					<span class="small"><span class="fw-bold" style="color:#d9822b;"><?php echo money0($tm['out']['paid']); ?></span> <span class="text-muted">of <?php echo money0($tm['out']['planned']); ?> planned</span></span>
+				</div>
+				<div class="progress" style="height:14px;"><div class="progress-bar" style="width:<?php echo $tm['out']['pct']; ?>%;background:#d9822b;"><?php echo $tm['out']['pct']; ?>%</div></div>
+				<div class="text-muted mt-1" style="font-size:0.68rem;"><?php echo money0($tm['out']['remaining']); ?> operating still to pay (debt payments tracked separately).</div>
+			</div>
+		</div>
+
+		<!-- On-track opinion -->
+		<?php if (!empty($opinion)): ?>
+		<div class="p-2 rounded mb-2" style="background:#f8f9fb;">
+			<div class="fw-semibold text-uppercase text-muted mb-1" style="font-size:0.62rem;letter-spacing:.04em;">Staying on track</div>
+			<?php foreach ($opinion as $op): $oc = $op[0]==='warn' ? '#e64545' : ($op[0]==='good' ? '#2ca01c' : '#4680ff'); ?>
+				<div class="small mb-1" style="line-height:1.35;"><span style="color:<?php echo $oc; ?>;">●</span> <?php echo $op[1]; ?></div>
+			<?php endforeach; ?>
+		</div>
+		<?php endif; ?>
+
+		<!-- Done vs To-do -->
+		<div class="row g-3">
+			<div class="col-12 col-lg-6">
+				<div class="fw-semibold text-uppercase mb-1" style="font-size:0.64rem;letter-spacing:.04em;color:#2ca01c;">✓ Done this month</div>
+				<?php $doneAll = array_merge($tm['in']['done'], $tm['out']['done']);
+				if (empty($doneAll)): ?><div class="text-muted small">Nothing reconciled yet — click <strong>Reconcile now</strong>.</div>
+				<?php else: foreach ($tm['in']['done'] as $it): ?>
+					<div class="d-flex justify-content-between small py-1" style="border-bottom:1px solid #f1f3f5;"><span class="text-muted" style="text-decoration:line-through;"><?php echo htmlspecialchars($it['label']); ?></span><span class="fw-semibold text-success">+<?php echo money0($it['amount']); ?></span></div>
+				<?php endforeach; foreach ($tm['out']['done'] as $it): ?>
+					<div class="d-flex justify-content-between small py-1" style="border-bottom:1px solid #f1f3f5;"><span class="text-muted" style="text-decoration:line-through;"><?php echo htmlspecialchars($it['label']); ?></span><span class="fw-semibold" style="color:#d9822b;">−<?php echo money0($it['amount']); ?></span></div>
+				<?php endforeach; endif; ?>
+			</div>
+			<div class="col-12 col-lg-6">
+				<div class="fw-semibold text-uppercase mb-1" style="font-size:0.64rem;letter-spacing:.04em;color:#d9822b;">◻ Still to do</div>
+				<?php $todoAll = array_merge($tm['in']['todo'], $tm['out']['todo']);
+				if (empty($todoAll)): ?><div class="text-muted small">Everything this month is reconciled. 🎉</div>
+				<?php else: foreach ($tm['in']['todo'] as $it): ?>
+					<div class="d-flex justify-content-between small py-1" style="border-bottom:1px solid #f1f3f5;"><span><?php echo htmlspecialchars($it['label']); ?></span><span class="fw-semibold text-success">+<?php echo money0($it['amount']); ?></span></div>
+				<?php endforeach; foreach ($tm['out']['todo'] as $it): ?>
+					<div class="d-flex justify-content-between small py-1" style="border-bottom:1px solid #f1f3f5;"><span><?php echo htmlspecialchars($it['label']); ?></span><span class="fw-semibold" style="color:#d9822b;">−<?php echo money0($it['amount']); ?></span></div>
+				<?php endforeach; endif; ?>
+			</div>
+		</div>
+	</div>
+</div>
+
+<!-- Reconcile modal -->
+<div class="modal fade" id="reconcileModal" tabindex="-1" aria-hidden="true">
+	<div class="modal-dialog modal-lg modal-dialog-scrollable">
+		<div class="modal-content">
+			<div class="modal-header">
+				<h5 class="modal-title fw-bold">Reconcile <?php echo $tm['label']; ?> to reality</h5>
+				<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+			</div>
+			<div class="modal-body">
+				<p class="text-muted small">Set your <strong>actual balances right now</strong>, then tick anything below that has <strong>already happened</strong> — it's already inside those balances, so it drops out of the forecast (no double-counting a drawn loan or a bill you've paid).</p>
+
+				<div class="fw-semibold text-uppercase mb-1" style="font-size:0.64rem;letter-spacing:.04em;">Balances as of today</div>
+				<div class="table-responsive mb-3"><table class="table table-sm align-middle mb-0">
+					<tbody>
+					<?php foreach (array_merge($tm['bank_accounts'], $tm['credit_accounts']) as $acc): ?>
+						<tr>
+							<td class="small"><?php echo htmlspecialchars($acc['label']); ?> <span class="badge bg-light text-muted" style="font-size:0.54rem;"><?php echo $acc['type']==='bank'?'Bank':($acc['type']==='loc'?'LOC':'Card'); ?></span></td>
+							<td style="max-width:160px;"><div class="input-group input-group-sm"><span class="input-group-text">$</span><input type="text" class="form-control rec-bal" data-id="<?php echo (int)$acc['id']; ?>" value="<?php echo number_format((float)$acc['balance'],2,'.',''); ?>"></div></td>
+						</tr>
+					<?php endforeach; ?>
+					</tbody>
+				</table></div>
+
+				<div class="fw-semibold text-uppercase mb-1" style="font-size:0.64rem;letter-spacing:.04em;color:#2ca01c;">Cash IN — already received (in the bank now)</div>
+				<?php $allIn = array_merge($tm['in']['done'], $tm['in']['todo']);
+				if (empty($allIn)): ?><div class="text-muted small mb-2">No cash-in lines this month.</div>
+				<?php else: foreach ($allIn as $it): ?>
+					<div class="form-check"><input class="form-check-input rec-in" type="checkbox" value="<?php echo htmlspecialchars($it['key'], ENT_QUOTES); ?>"<?php echo !empty($it['received'])?' checked':''; ?> id="recin_<?php echo htmlspecialchars($it['key'], ENT_QUOTES); ?>"><label class="form-check-label small" for="recin_<?php echo htmlspecialchars($it['key'], ENT_QUOTES); ?>"><?php echo htmlspecialchars($it['label']); ?> <span class="text-success fw-semibold">+<?php echo money0($it['amount']); ?></span></label></div>
+				<?php endforeach; endif; ?>
+
+				<div class="fw-semibold text-uppercase mb-1 mt-3" style="font-size:0.64rem;letter-spacing:.04em;color:#d9822b;">Cash OUT — already paid</div>
+				<?php $allOut = array_merge($tm['out']['done'], $tm['out']['todo']);
+				if (empty($allOut)): ?><div class="text-muted small">No reconcilable cash-out lines this month.</div>
+				<?php else: foreach ($allOut as $it): ?>
+					<div class="form-check"><input class="form-check-input rec-out" type="checkbox" value="<?php echo htmlspecialchars($it['key'], ENT_QUOTES); ?>"<?php echo !empty($it['paid'])?' checked':''; ?> id="recout_<?php echo htmlspecialchars($it['key'], ENT_QUOTES); ?>"><label class="form-check-label small" for="recout_<?php echo htmlspecialchars($it['key'], ENT_QUOTES); ?>"><?php echo htmlspecialchars($it['label']); ?> <span class="fw-semibold" style="color:#d9822b;">−<?php echo money0($it['amount']); ?></span></label></div>
+				<?php endforeach; endif; ?>
+			</div>
+			<div class="modal-footer">
+				<span id="recMsg" class="small text-danger me-auto"></span>
+				<button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+				<button type="button" class="btn btn-primary" id="recSaveBtn">Save reconciliation</button>
+			</div>
+		</div>
+	</div>
 </div>
 <?php endif; ?>
 
@@ -546,6 +704,16 @@
 	$(document).on('change', '.credit-paid', function(){ var $c=$(this); $c.prop('disabled',true); $.post('/ajax/cashflow/set_event_paid.php', { id:$c.data('id'), paid:$c.is(':checked')?1:0 }, function(resp){ if($.trim(resp)==='ok') location.reload(); else { alert(resp); $c.prop('disabled',false); } }).fail(function(){ alert('Save failed'); $c.prop('disabled',false); }); });
 	// Mark a monthly cash-out line already paid (money has left the bank this month).
 	$(document).on('change', '.cashout-paid', function(){ var $c=$(this); $c.prop('disabled',true); $.post('/ajax/cashflow/toggle_cashout_paid.php', { ym:$c.data('ym'), line_key:$c.data('key'), paid:$c.is(':checked')?1:0 }, function(resp){ if(resp&&resp.ok) location.reload(); else { alert((resp&&resp.error)||'Save failed'); $c.prop('disabled',false); } }, 'json').fail(function(){ alert('Save failed'); $c.prop('disabled',false); }); });
+
+	// ── Reconcile Today: set real balances + tick what already happened this month ──
+	$('#reconcileBtn').on('click', function(){ new bootstrap.Modal(document.getElementById('reconcileModal')).show(); });
+	$('#recSaveBtn').on('click', function(){
+		var $b=$(this).prop('disabled',true); $('#recMsg').text('');
+		var balances=[]; $('.rec-bal').each(function(){ balances.push({ id:$(this).data('id'), balance:($(this).val()||'').replace(/[^0-9.\-]/g,'') }); });
+		var received=[]; $('.rec-in:checked').each(function(){ received.push($(this).val()); });
+		var paid=[]; $('.rec-out:checked').each(function(){ paid.push($(this).val()); });
+		$.post('/ajax/cashflow/reconcile.php', { ym:'<?php echo $thisMonth ? $thisMonth['ym'] : date('Y-m'); ?>', balances:JSON.stringify(balances), received:JSON.stringify(received), paid:JSON.stringify(paid) }, function(resp){ if(resp&&resp.ok) location.reload(); else { $('#recMsg').text((resp&&resp.error)||'Save failed'); $b.prop('disabled',false); } }, 'json').fail(function(){ $('#recMsg').text('Save failed'); $b.prop('disabled',false); });
+	});
 
 	// ── Hide / show prior month(s) ──
 	$(document).on('click', '.hide-month', function(e){ e.preventDefault(); $.post('/ajax/cashflow/save_settings.php', { cashflow_hide_before: $(this).data('ym') }, function(){ location.reload(); }); });

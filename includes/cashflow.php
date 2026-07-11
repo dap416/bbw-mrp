@@ -434,6 +434,8 @@
 				'actual_income'=> $m['actual_income'] ?? null,
 				'income_source'=> $m['income_source'] ?? 'suggested',
 				'is_past'      => !empty($m['is_past']),
+				'prior_shopify'=> $m['prior_shopify'] ?? null,
+				'prior_qb'     => $m['prior_qb'] ?? null,
 				'recurring'  => $recurMo,
 				'onetime'    => $onetime,
 				'debt_pay'   => $pay,
@@ -852,6 +854,27 @@
 	}
 
 	/**
+	 * Per-month cash-IN lines the user has reconciled as already received (the money is
+	 * already sitting in the bank balance, so it must NOT be counted again as a future
+	 * inflow). Mirrors cashout_paid on the cash-in side — this is what stops a loan draw
+	 * or a deposited receivable from being double-counted after you reconcile the bank.
+	 */
+	function ensure_cashin_received_table($db) {
+		$db->exec("CREATE TABLE IF NOT EXISTS cashin_received (
+			ym VARCHAR(7) NOT NULL,
+			line_key VARCHAR(80) NOT NULL,
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (ym, line_key)
+		) ENGINE=InnoDB");
+	}
+	function load_cashin_received($db) {
+		$res = [];
+		try { ensure_cashin_received_table($db); foreach ($db->query("SELECT ym, line_key FROM cashin_received") as $r) $res[$r['ym']][$r['line_key']] = true; }
+		catch (Throwable $e) {}
+		return $res;
+	}
+
+	/**
 	 * Assemble 12 rolling month blocks (current month → +11). Each block merges
 	 * automatic flows (projected sales, the Shopify-loan % cash-out, recurring
 	 * expenses, planned debt payments, bills/POs due) with the user's manual
@@ -885,6 +908,7 @@
 		$cardDone = cardpay_done_months($db);
 		$expDone  = expenses_done_months($db);
 		$paidLines = load_cashout_paid($db);   // per-month cash-out lines already paid
+		$recvLines = load_cashin_received($db); // per-month cash-in lines already received (in the bank)
 		$cash     = (float)$data['eff_cash'];
 		$reserve  = 0.0;                // tax reserve, accrues monthly, paid at quarter end
 		$firstFutureDone = false;       // PO advice shows on the current month, not the prior
@@ -905,10 +929,17 @@
 			$in = []; $out = [];
 
 			// ── Cash in ──
-			if ($row['income'] > 0) $in[] = ['label' => 'Projected sales (' . ($row['basis'] === 'qb' ? 'QB income' : 'Shopify') . ')', 'amount' => (float)$row['income'], 'week' => 0, 'source' => 'auto'];
-			foreach (($arByYm[$ym] ?? []) as $it) $in[] = ['label' => 'Receivable: ' . ($it['customer'] ?: $it['name']), 'amount' => (float)$it['amount'], 'week' => 0, 'source' => 'receivable'];
-			foreach (($events['by_ym'][$ym]['in'] ?? []) as $e) $in[] = ['label' => $e['label'], 'amount' => $e['amount'], 'week' => $e['week'], 'source' => 'manual', 'id' => $e['id']];
-			$inTotal = array_sum(array_map(fn($x) => $x['amount'], $in));
+			// Every cash-in line carries a stable key + 'recon' so it can be reconciled
+			// ("already received — it's in the bank now") and excluded from the forecast.
+			if ($row['income'] > 0) $in[] = ['label' => 'Projected sales (' . ($row['basis'] === 'qb' ? 'QB income' : 'Shopify') . ')', 'amount' => (float)$row['income'], 'week' => 0, 'source' => 'auto', 'key' => 'sales', 'recon' => true];
+			$arIdx = 0;
+			foreach (($arByYm[$ym] ?? []) as $it) $in[] = ['label' => 'Receivable: ' . ($it['customer'] ?: $it['name']), 'amount' => (float)$it['amount'], 'week' => 0, 'source' => 'receivable', 'key' => 'ar' . ($arIdx++), 'recon' => true];
+			foreach (($events['by_ym'][$ym]['in'] ?? []) as $e) $in[] = ['label' => $e['label'], 'amount' => $e['amount'], 'week' => $e['week'], 'source' => 'manual', 'id' => $e['id'], 'key' => 'ev' . $e['id'], 'recon' => true];
+			// Mark cash-in lines already reconciled into the bank balance and drop them
+			// from the inflow total so they are never counted twice (e.g. a drawn loan).
+			foreach ($in as &$_i) { if (!empty($_i['recon'])) $_i['received'] = !empty($recvLines[$ym][$_i['key']]); }
+			unset($_i);
+			$inTotal = array_sum(array_map(fn($x) => !empty($x['received']) ? 0 : $x['amount'], $in));
 
 			// ── Cash out BEFORE card payments ──
 			// If a month's operating expenses are already paid (reflected in the bank
@@ -1061,4 +1092,109 @@
 
 		return ['blocks' => $blocks, 'loan_pct' => $loanPct, 'start_cash' => (float)$data['eff_cash'],
 		        'buffer' => $buffer, 'tax_monthly' => $taxMo, 'po_card_plan' => build_po_card_plan($db, $data)];
+	}
+
+	/**
+	 * "This Month" progress tracker — pulls the current month out of the forecast strip
+	 * into a live reconciliation + progress view. Compares what has actually come in / gone
+	 * out (reconciled) against the month's plan, reads the pace/burn to project month-end
+	 * cash and when it would cross the buffer, and does a year-over-year vs the same month
+	 * last year (graceful when there is no prior-year history yet). Returns null if the
+	 * current month isn't in the block set.
+	 */
+	function build_this_month($db, $monthData, $data, $forecast) {
+		$curYm = date('Y-m');
+		$cur = null;
+		foreach (($monthData['blocks'] ?? []) as $b) { if ($b['ym'] === $curYm) { $cur = $b; break; } }
+		if (!$cur) return null;
+
+		$buffer = (float)($monthData['buffer'] ?? cash_buffer($db));
+		$startCash = (float)($data['eff_cash'] ?? 0);   // real bank cash right now
+
+		// ── Cash IN: planned vs already received (reconciled) ──
+		$inPlanned = 0.0; $inReceived = 0.0;
+		$inDone = []; $inTodo = [];
+		foreach (($cur['cash_in'] ?? []) as $it) {
+			$amt = (float)$it['amount']; $inPlanned += $amt;
+			if (!empty($it['received'])) { $inReceived += $amt; $inDone[] = $it; }
+			else $inTodo[] = $it;
+		}
+		$inRemaining = max(0.0, $inPlanned - $inReceived);
+
+		// ── Cash OUT (operating): only reconcilable keyed lines; debt payments tracked apart ──
+		$outPlanned = 0.0; $outPaid = 0.0;
+		$outDone = []; $outTodo = [];
+		foreach (($cur['cash_out'] ?? []) as $it) {
+			if (empty($it['key'])) continue;                 // skip avalanche/loan advice lines
+			$amt = (float)$it['amount']; $outPlanned += $amt;
+			if (!empty($it['paid'])) { $outPaid += $amt; $outDone[] = $it; }
+			else $outTodo[] = $it;
+		}
+		$outRemaining = max(0.0, $outPlanned - $outPaid);
+
+		// ── Debt payments this month (minimums + suggested avalanche) — shown as guidance ──
+		$debtPlanned = 0.0; $debtSuggested = 0.0; $debtTarget = null;
+		foreach (($cur['card_payments'] ?? []) as $cp) {
+			$debtPlanned += (float)$cp['amount'];
+			if (!empty($cp['is_target'])) { $debtTarget = $cp; }
+		}
+
+		// ── Month-end projection (following the plan) vs the buffer ──
+		$projEnd = $cur['end_cash'] === null ? null : (float)$cur['end_cash'];
+		$endStatus = 'good';
+		if ($projEnd !== null) {
+			if ($projEnd < 0) $endStatus = 'danger';
+			elseif ($projEnd < $buffer) $endStatus = 'warn';
+		}
+
+		// ── Pace / burn ──
+		$day = (int)date('j'); $daysIn = (int)date('t'); $daysLeft = max(0, $daysIn - $day);
+		$frac = $daysIn > 0 ? min(1.0, $day / $daysIn) : 0.0;
+		$netMonth = $inPlanned - $outPlanned - $debtPlanned;   // planned net for the whole month
+		$dailyNet = $daysIn > 0 ? $netMonth / $daysIn : 0.0;
+		// If cash is declining, the day-of-month it would cross the buffer at this pace.
+		$crossBufferDay = null;
+		if ($dailyNet < 0) {
+			$roomAboveBuffer = $startCash - $buffer;
+			if ($roomAboveBuffer > 0) {
+				$daysToBuffer = (int)ceil($roomAboveBuffer / abs($dailyNet));
+				$crossBufferDay = min($daysIn, $day + $daysToBuffer);
+				if ($daysToBuffer > $daysLeft) $crossBufferDay = null;   // stays above buffer all month
+			} else {
+				$crossBufferDay = $day;   // already below
+			}
+		}
+		// Collection pace: are receipts keeping up with the elapsed month?
+		$inExpectedByNow = $inPlanned * $frac;
+		$inPaceDelta = $inReceived - $inExpectedByNow;   // + ahead on collecting, − behind
+
+		// ── Year-over-year: same month last year (graceful when no history) ──
+		$fcRow = null;
+		foreach (($forecast['rows'] ?? []) as $r) { if ($r['ym'] === $curYm) { $fcRow = $r; break; } }
+		$thisIncome = $fcRow ? (float)($fcRow['income'] ?? 0) : $inPlanned;
+		$priorQb  = $fcRow['prior_qb'] ?? null;
+		$priorShop= $fcRow['prior_shopify'] ?? null;
+		$priorYear = $priorQb !== null ? (float)$priorQb : ($priorShop !== null ? (float)$priorShop : null);
+		$yoy = ['available' => $priorYear !== null && $priorYear != 0.0,
+		        'this' => round($thisIncome), 'prior' => $priorYear === null ? null : round($priorYear),
+		        'basis' => $priorQb !== null ? 'QB income' : ($priorShop !== null ? 'Shopify sales' : null)];
+		if ($yoy['available']) { $yoy['delta'] = round($thisIncome - $priorYear); $yoy['pct'] = round(($thisIncome - $priorYear) / $priorYear * 100); }
+
+		return [
+			'ym' => $curYm, 'label' => $cur['label'],
+			'day' => $day, 'days_in' => $daysIn, 'days_left' => $daysLeft, 'frac' => $frac,
+			'start_cash' => round($startCash), 'buffer' => round($buffer),
+			'proj_end' => $projEnd === null ? null : round($projEnd), 'end_status' => $endStatus,
+			'in' => ['planned' => round($inPlanned), 'received' => round($inReceived), 'remaining' => round($inRemaining),
+			         'pct' => $inPlanned > 0 ? min(100, round($inReceived / $inPlanned * 100)) : 0,
+			         'pace_delta' => round($inPaceDelta), 'done' => $inDone, 'todo' => $inTodo],
+			'out' => ['planned' => round($outPlanned), 'paid' => round($outPaid), 'remaining' => round($outRemaining),
+			          'pct' => $outPlanned > 0 ? min(100, round($outPaid / $outPlanned * 100)) : 0,
+			          'done' => $outDone, 'todo' => $outTodo],
+			'debt' => ['planned' => round($debtPlanned), 'target' => $debtTarget, 'payments' => $cur['card_payments'] ?? []],
+			'pace' => ['daily_net' => round($dailyNet), 'net_month' => round($netMonth), 'cross_buffer_day' => $crossBufferDay],
+			'yoy' => $yoy,
+			'bank_accounts' => $data['manual']['bank'] ?? [],
+			'credit_accounts' => $data['manual']['credit'] ?? [],
+		];
 	}

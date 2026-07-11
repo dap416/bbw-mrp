@@ -79,6 +79,13 @@ function charles_snapshot($db) {
 			'credit_out' => round($b['credit_out_total'] ?? 0),
 			'tax_reserve' => round($b['tax_reserve'] ?? 0),
 			'card_payments' => array_map(fn($c) => ['label' => $c['label'], 'amount' => round($c['amount']), 'apr' => $c['apr'], 'balance' => round($c['balance']), 'type' => $c['type'] ?? 'credit'], $b['card_payments'] ?? []),
+			// Every cash-in line, incl. the "already received (reconciled into the bank)" flag.
+			'cash_in_lines' => array_map(fn($it) => [
+				'label'    => $it['label'],
+				'amount'   => round($it['amount']),
+				'source'   => $it['source'] ?? '',
+				'received' => !empty($it['received']),
+			], $b['cash_in'] ?? []),
 			// Every cash-out line exactly as shown on the page, incl. the "already paid this month" checkmark.
 			'cash_out_lines' => array_map(fn($it) => [
 				'label'   => $it['label'],
@@ -207,6 +214,7 @@ function charles_snapshot($db) {
 		'po_card_plan' => $monthData['po_card_plan'] ?? [],
 		'months' => $months,
 		'cash_out_lines_note' => 'Each month\'s cash_out_lines mirrors the Cash Out list on the Cash Flow page line-for-line, including the "already paid" checkbox: paid=true means the owner has ticked that line as already paid this month (the money has left the bank), so it is EXCLUDED from that month\'s remaining cash-out and from the running end_cash. cash_out_paid_total / cash_out_unpaid_total summarize how much of the month is settled vs still owed. Use these to answer "what have I already paid this month" and "what is still left to pay".',
+		'reconcile_note' => 'The Cash Flow page anchors to REAL bank cash. eff_cash is the actual money in the bank right now. cash_in_lines[].received=true means that inflow has already landed in the bank (reconciled via "Reconcile now") and is therefore NOT counted again as a future inflow — this is what prevents double-counting a drawn LOC loan or a deposited receivable. Likewise cash_out_lines[].paid=true means it already left the bank. When advising, trust eff_cash as the truth and treat received/paid lines as already settled inside it. Debt paydown (card avalanche) is a SUGGESTION bounded by the cash buffer, never an obligation — never advise draining the bank below the buffer to pay down cards.',
 		'forecast' => $fc,
 		'recurring' => $recur,
 		'runway_months' => $runwayMonths,
