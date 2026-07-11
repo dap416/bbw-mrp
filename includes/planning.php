@@ -189,6 +189,16 @@
 	 *  built to order with the CDA packaging card. It shares its base animator's Shopify SKU. */
 	function is_amazon_product($name) { return stripos((string)$name, '[amazon]') !== false; }
 
+	/**
+	 * Finished-product stock AVAILABLE for a SKU = on hand − committed, summed across every
+	 * Shopify location (Shopify's per-location "available" already nets committed). Falls back
+	 * to $fallback when the SKU has no location data. $fpLoc = shopify_fp_by_location()['skus'].
+	 */
+	function fp_available_qty($fpLoc, $sku, $fallback = null) {
+		if ($sku !== '' && isset($fpLoc[$sku])) return (int)($fpLoc[$sku]['rest'] ?? 0) + (int)($fpLoc[$sku]['oregon'] ?? 0);
+		return $fallback;
+	}
+
 	function build_season_dataset($db) {
 		$today = date('Y-m-d');
 		$y = (int)date('Y');
@@ -281,7 +291,7 @@
 				'product'   => $p['name'],
 				'sku'       => $sku,
 				'is_amazon' => $isAmz,
-				'in_stock'  => $isAmz ? 0 : (($sku !== '' && isset($shopSkus[$sku])) ? (int)$shopSkus[$sku]['qty'] : null),
+				'in_stock'  => $isAmz ? 0 : fp_available_qty($fpLoc, $sku, ($sku !== '' && isset($shopSkus[$sku])) ? (int)$shopSkus[$sku]['qty'] : null),   // on hand − committed
 				'in_stock_oregon'   => $fpO,              // finished units currently AT the Oregon Warehouse (null = unknown)
 				'prior_year_sales'  => $perSeason,        // retail units for the base; Amazon (TJ Stumpf) units for the [Amazon] twin
 				'prior_year_oregon' => $perSeasonOregon,  // subset FULFILLED from the Oregon Warehouse
@@ -345,8 +355,7 @@
 			$grp = fg_group($sku, $shopSkus[$sku]['product_title'] . ' ' . $shopSkus[$sku]['variant_title']);
 			$sup = $fgSupply[$grp] ?? null;
 			// Have = on hand − committed (units already sold/awaiting fulfillment aren't available).
-			// Shopify's per-location "available" already nets committed, so rest + oregon = on_hand − committed.
-			$avail = isset($fpLoc[$sku]) ? ((int)($fpLoc[$sku]['rest'] ?? 0) + (int)($fpLoc[$sku]['oregon'] ?? 0)) : $stock;
+			$avail = fp_available_qty($fpLoc, $sku, $stock);
 			$finishedGoods[] = [
 				'sku'       => $sku,
 				'product'   => $shopSkus[$sku]['product_title'] . ' — ' . $shopSkus[$sku]['variant_title'],

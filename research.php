@@ -6,6 +6,7 @@
 		deny_access();
 	}
 	require_once(__DIR__."/includes/shopify.php");
+	require_once(__DIR__."/includes/planning.php");   // fp_available_qty()
 	require_once(__DIR__."/includes/anthropic.php");
 
 	$db = db_connect();
@@ -32,6 +33,11 @@
 	$shop = $shopConfigured ? shopify_fetch_variants() : ['error' => null, 'skus' => []];
 	$shopErr  = $shop['error'] ?? null;
 	$shopSkus = $shop['skus']  ?? [];
+	// Finished-product AVAILABLE (on hand − committed) by SKU, from the per-location data
+	// (shared cache with the season report). Used so every FP stock figure is consistent.
+	$fpLoc = ($shopConfigured && !$shopErr)
+		? (shopify_cache_remember($db, 'season_fp_loc', inventory_cache_ttl($db), fn() => shopify_fp_by_location())['data']['skus'] ?? [])
+		: [];
 
 	// ── Load products + prefetch BOM (one query, no N+1) ─────────────────────
 	$cols = "`id`, `name`";
@@ -462,7 +468,7 @@
 		<thead><tr>
 			<th>Product</th>
 			<th>Shopify SKU</th>
-			<th class="text-center">In Stock<br><small class="text-muted fw-normal">Shopify</small></th>
+			<th class="text-center">In Stock<br><small class="text-muted fw-normal">available (on hand − committed)</small></th>
 			<th class="text-center">Can Build Now<br><small class="text-muted fw-normal">from raw materials</small></th>
 			<th class="text-center">Total Available<br><small class="text-muted fw-normal">stock + buildable</small></th>
 			<th>Limiting Raw Material</th>
@@ -471,7 +477,8 @@
 		<?php foreach ($mapped as $p):
 			$sku   = $p['shopify_sku'];
 			$found = isset($shopSkus[$sku]);
-			$stock = $found ? (int)$shopSkus[$sku]['qty'] : null;
+			// Available = on hand − committed (consistent with Need to Order / Season Readiness).
+			$stock = $found ? (int)fp_available_qty($fpLoc, $sku, (int)$shopSkus[$sku]['qty']) : null;
 
 			[$buildable, $limit] = compute_buildable($bomByProd[$p['id']] ?? []);
 
