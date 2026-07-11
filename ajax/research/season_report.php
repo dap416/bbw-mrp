@@ -30,7 +30,7 @@
 	$fresh  = !empty($_POST['fresh']);  // force a recompute, ignore cache
 
 	// Bump when the payload shape changes so old caches auto-invalidate.
-	$SEASON_SCHEMA = 16;
+	$SEASON_SCHEMA = 17;
 
 	$db = db_connect();
 
@@ -187,9 +187,27 @@
 			$items[] = [
 				'sku' => $a['sku'] ?: '(no SKU)', 'demand' => $info['demand'],
 				'have' => $info['entering'], 'to_build' => $info['build'], 'buildable' => $cap,
-				'limit' => $limit, 'bom' => $bomDetail,
+				'limit' => $limit, 'bom' => $bomDetail, 'is_amazon' => !empty($a['is_amazon']),
 			];
 		}
+		// Merge a base animator and its [Amazon] twin (same SKU) into ONE display line, with a
+		// regular/Amazon split for the drill-down. The raw-material/card math above already used
+		// the separate entries (base = CD cards, twin = CDA cards), so ordering is unaffected.
+		$merged = [];
+		foreach ($items as $it) {
+			$sku = $it['sku'];
+			if (!isset($merged[$sku])) {
+				$merged[$sku] = ['sku' => $sku, 'demand' => 0, 'have' => 0, 'to_build' => 0,
+					'buildable' => null, 'limit' => null, 'bom' => [],
+					'regular' => ['demand' => 0, 'have' => 0, 'to_build' => 0],
+					'amazon'  => ['demand' => 0, 'have' => 0, 'to_build' => 0], 'has_amazon' => false];
+			}
+			$portion = !empty($it['is_amazon']) ? 'amazon' : 'regular';
+			foreach (['demand', 'have', 'to_build'] as $k) { $merged[$sku][$portion][$k] += (int)$it[$k]; $merged[$sku][$k] += (int)$it[$k]; }
+			if (!empty($it['is_amazon'])) $merged[$sku]['has_amazon'] = true;
+			else { $merged[$sku]['bom'] = $it['bom']; $merged[$sku]['buildable'] = $it['buildable']; $merged[$sku]['limit'] = $it['limit']; }
+		}
+		$items = array_values($merged);
 		usort($items, fn($x, $y) => $y['to_build'] <=> $x['to_build']);
 		$summary[$s['key']]['animator_items'] = $items;
 

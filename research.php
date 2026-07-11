@@ -83,8 +83,11 @@
 	}
 
 	// ── Split products into mapped (comparison table) vs unmapped ────────────
+	// [Amazon] twins share the base SKU — keep them out of Research lists so nothing is
+	// doubled (they're only shown on the Products and Packaging pages).
 	$mapped = [];
 	foreach ($products as $p) {
+		if (is_amazon_product($p['name'])) continue;
 		if (!empty($p['shopify_sku'])) $mapped[] = $p;
 	}
 
@@ -612,6 +615,7 @@
 		</tr></thead>
 		<tbody>
 		<?php foreach ($products as $p):
+			if (is_amazon_product($p['name'])) continue;   // [Amazon] twins inherit the base SKU — not shown here
 			$curSku = $p['shopify_sku'] ?? '';
 			$sugg   = ($curSku === '' && $shopConfigured && !$shopErr) ? research_suggest_sku($p['name'], $skuOptions, $usedSkus) : '';
 		?>
@@ -853,9 +857,18 @@
 		return '<span class="badge bg-danger">Short</span>';
 	}
 
+	var AMZ_CUST = <?php echo json_encode(shopify_amazon_customer()); ?>;
 	function aiExplain(it) {
 		var d = it.demand || 0, h = it.have || 0, b = it.to_build || 0, bld = (it.buildable == null ? null : it.buildable);
 		var html = '<div class="p-2" style="background:#f8f9fb;"><div class="small">';
+		// Regular vs [Amazon] split (this SKU combines the base animator + its [Amazon] twin).
+		if (it.has_amazon && it.regular && it.amazon) {
+			html += '<table class="table table-sm mb-2" style="max-width:420px;"><thead><tr><th class="small">Portion</th><th class="small text-end">Demand</th><th class="small text-end">Have</th><th class="small text-end">Build</th></tr></thead><tbody>' +
+				'<tr><td class="small">Regular <code>' + esc(it.sku) + '</code></td><td class="text-end small">' + (it.regular.demand||0) + '</td><td class="text-end small">' + (it.regular.have||0) + '</td><td class="text-end small">' + (it.regular.to_build||0) + '</td></tr>' +
+				'<tr><td class="small"><code>' + esc(it.sku) + '</code> [Amazon] <span class="text-muted">(' + AMZ_CUST + ')</span></td><td class="text-end small">' + (it.amazon.demand||0) + '</td><td class="text-end small">' + (it.amazon.have||0) + '</td><td class="text-end small stat-neg">' + (it.amazon.to_build||0) + '</td></tr>' +
+				'<tr class="fw-bold"><td class="small">Total</td><td class="text-end small">' + d + '</td><td class="text-end small">' + h + '</td><td class="text-end small">' + b + '</td></tr>' +
+				'</tbody></table>';
+		}
 		html += '<div><strong>Demand</strong> — sold last year in this same season: ' + d + '</div>';
 		html += '<div><strong>Have</strong> — already made, in stock entering this season: ' + h + '</div>';
 		if (b > 0) {
@@ -1254,7 +1267,7 @@
 							var cbCls = 'canbuild-col' + (window._showCanBuild ? '' : ' d-none');
 							cards += '<table class="table table-sm mb-2"><thead><tr><th class="small">SKU</th><th class="small text-end">Have</th><th class="small text-end">Demand</th><th class="small text-end">Need to Build</th><th class="small text-end ' + cbCls + '">Can build</th></tr></thead><tbody>';
 							q.animator_items.forEach(function(it, ai){
-								var rid = 'ai-' + si + '-' + ai; cards += '<tr class="ai-row" data-target="' + rid + '" style="cursor:pointer;"><td class="small"><i class="ti ti-chevron-right ai-chev"></i> <code>' + esc(it.sku) + '</code></td>' +
+								var rid = 'ai-' + si + '-' + ai; cards += '<tr class="ai-row" data-target="' + rid + '" style="cursor:pointer;"><td class="small"><i class="ti ti-chevron-right ai-chev"></i> <code>' + esc(it.sku) + '</code>' + (it.has_amazon ? ' <span class="badge bg-light text-muted border" style="font-size:0.5rem;" title="Includes an Amazon portion — expand for the split">+AMZ</span>' : '') + '</td>' +
 									'<td class="text-end small text-muted">' + (it.have||0) + '</td>' +
 									'<td class="text-end small text-muted">' + (it.demand||0) + '</td>' +
 										'<td class="text-end small ' + (it.to_build>0?'stat-neg':'stat-pos') + '">' + it.to_build + '</td>' +
