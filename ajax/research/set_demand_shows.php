@@ -1,6 +1,7 @@
 <?php
 /** Save which tradeshows are EXCLUDED from demand (owner picks which shows to include). */
 require_once(__DIR__."/../../includes/fns.php");
+require_once(__DIR__."/../../includes/shopify.php");   // setting_get() / setting_set()
 require_login();
 require_can(can_edit('research'), 'You do not have permission to edit Research settings.');
 header('Content-Type: application/json');
