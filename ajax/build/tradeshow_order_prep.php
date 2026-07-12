@@ -36,10 +36,12 @@ foreach ($skus as $sku => $u) {
 }
 if (empty($want)) { echo json_encode(['ok' => false, 'error' => 'The selected shows have no unit sales to build from.']); exit; }
 
-// Finished-product SKU → product (only products that carry a build BOM).
+// Finished-product SKU → product (only products that carry a build BOM). Exclude the
+// "[Amazon]" twins — tradeshow sales are RETAIL (CD cards), so map each SKU to its BASE
+// animator, not the Amazon (CDA) variant that shares the same SKU.
 $prodBySku = [];
 try {
-	foreach ($db->query("SELECT pr.id, pr.name, pr.shopify_sku FROM products pr WHERE pr.shopify_sku IS NOT NULL AND pr.shopify_sku <> ''") as $pr) {
+	foreach ($db->query("SELECT pr.id, pr.name, pr.shopify_sku FROM products pr WHERE pr.shopify_sku IS NOT NULL AND pr.shopify_sku <> '' AND LOWER(pr.name) NOT LIKE '%[amazon]%'") as $pr) {
 		$prodBySku[strtolower(trim($pr['shopify_sku']))] = $pr;
 	}
 } catch (Throwable $e) { /* no shopify_sku column → everything is unmapped */ }
@@ -57,7 +59,8 @@ try {
 		try { $db->exec("DELETE FROM data_cache WHERE ckey = 'rec_fp'"); } catch (Throwable $e) {}
 		$fpLoc = shopify_cache_remember($db, 'rec_fp', inventory_cache_ttl($db), fn() => shopify_fp_by_location())['data'];
 		foreach (($fpLoc['skus'] ?? []) as $k => $v) {
-			$fpBySkuLc[strtolower(trim((string)$k))] = ['ar' => (int)($v['rest'] ?? 0), 'or' => (int)($v['oregon'] ?? 0)];
+			// Total ON HAND per location (not minus committed) — matches the Warehouse FP Stock page.
+			$fpBySkuLc[strtolower(trim((string)$k))] = ['ar' => (int)($v['rest_on_hand'] ?? 0), 'or' => (int)($v['oregon_on_hand'] ?? 0)];
 		}
 	} else { $fpError = 'Shopify is not connected — assuming 0 finished product on hand.'; }
 } catch (Throwable $e) { $fpError = 'Could not read finished-product stock — assuming 0 on hand.'; }
