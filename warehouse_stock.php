@@ -56,6 +56,7 @@ function wsRender(d) {
 		'<select id="wsCat" class="form-select form-select-sm" style="max-width:240px;"><option value="">All categories</option>';
 	catList.forEach(function(c){ html += '<option value="' + $('<div>').text(c).html() + '">' + $('<div>').text(c).html() + '</option>'; });
 	html += '</select><span id="wsCount" class="text-muted small"></span></div>';
+	html += '<div id="wsEmpty" style="display:none;"></div>';
 
 	// Finished product still parked at tradeshow/POS locations — it should be brought home.
 	var awayLocs = locs.filter(function(l){ return l.role === 'elsewhere' && Number(l.total || 0) > 0; });
@@ -132,15 +133,18 @@ function wsFilter() {
 	var q   = ($('#wsSearch').val() || '').toLowerCase().trim();
 	var cat = $('#wsCat').val() || '';
 	var shown = 0;
+	// Mark each row with the search/category verdict. We tag a CLASS rather than reading
+	// :visible below, because :visible is false for anything inside a hidden ancestor — so
+	// once a location was hidden, its rows looked empty and it could never be shown again.
 	$('.ws-item').each(function() {
 		var $r = $(this);
 		var ok = (q === '' || $r.attr('data-search').indexOf(q) !== -1) && (cat === '' || $r.attr('data-cat') === cat);
-		$r.toggle(ok);
+		$r.toggleClass('ws-hit', ok).toggle(ok);
 		if (ok) shown++;
 	});
-	// Hide empty category sections and empty location blocks.
+	// Hide empty category sections and empty location blocks — judged on the class, not the DOM.
 	$('.ws-cat').each(function() {
-		$(this).toggle($(this).find('.ws-item:visible').length > 0);
+		$(this).toggle($(this).find('.ws-item.ws-hit').length > 0);
 	});
 	$('.ws-loc').each(function() {
 		// Each location carries its true role from the server: oregon | arkansas | elsewhere.
@@ -148,9 +152,19 @@ function wsFilter() {
 		// under Arkansas (it used to, because "Arkansas" just meant "not Oregon").
 		var role = $(this).attr('data-role') || 'arkansas';
 		var locMatch = (wsView === 'both') || (wsView === role);
-		$(this).toggle(locMatch && $(this).find('.ws-item:visible').length > 0);
+		$(this).toggle(locMatch && $(this).find('.ws-item.ws-hit').length > 0);
 	});
 	$('#wsCount').text((q !== '' || cat !== '') ? (shown + ' match' + (shown === 1 ? '' : 'es')) : '');
+
+	// Say why the page is empty rather than just showing nothing.
+	if (!$('.ws-loc:visible').length) {
+		var why = (wsView === 'elsewhere')
+			? 'No finished product is sitting at a tradeshow location right now — everything is at a warehouse. That is exactly what you want.'
+			: ((q !== '' || cat !== '') ? 'Nothing matches that search or category in this view.' : 'No tracked stock in this view.');
+		$('#wsEmpty').html('<div class="alert alert-light border text-muted mb-0">' + why + '</div>').show();
+	} else {
+		$('#wsEmpty').hide().empty();
+	}
 }
 $(document).on('input', '#wsSearch', wsFilter);
 $(document).on('change', '#wsCat', wsFilter);
