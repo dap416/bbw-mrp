@@ -984,9 +984,41 @@
 		return ['error' => null, 'by_sku_oregon' => $oregon, 'by_sku_rest' => $rest, 'orders' => $orders, 'min_value' => $minValue];
 	}
 
+	/** Tradeshow/POS Shopify location ids => show name, keyed by NUMERIC id. */
+	function shopify_show_location_ids() {
+		static $map = null;
+		if ($map !== null) return $map;
+		$map = [];
+		foreach (tradeshow_locations() as $show) {
+			foreach (($show['ids'] ?? []) as $lid) $map[(string)$lid] = $show['name'];
+		}
+		return $map;
+	}
+
 	/**
-	 * Finished-product available inventory per SKU, split by location:
-	 *   [sku => ['oregon' => qty at Oregon Warehouse, 'rest' => qty everywhere else]]
+	 * Which warehouse a Shopify location belongs to: 'oregon', 'arkansas', or 'elsewhere'.
+	 * 'elsewhere' = a tradeshow/POS location (or any other non-warehouse location). Finished
+	 * product there is TEMPORARY — it should be moved back to Arkansas or Oregon after the
+	 * show — so it must never be counted as shippable warehouse stock.
+	 */
+	function shopify_location_role($locationGid) {
+		$oregonId = shopify_oregon_location_id();
+		if ($oregonId !== '' && $locationGid === $oregonId) return 'oregon';
+		$num = preg_replace('/\D/', '', strrchr((string)$locationGid, '/') ?: (string)$locationGid);
+		$shows = shopify_show_location_ids();
+		if ($num !== '' && isset($shows[$num])) return 'elsewhere';
+		return 'arkansas';
+	}
+
+	/**
+	 * Finished-product inventory per SKU, split by WAREHOUSE:
+	 *   oregon…     = the Oregon Warehouse location
+	 *   arkansas…   = the primary (Arkansas) warehouse — every non-Oregon, non-show location
+	 *   elsewhere…  = tradeshow / POS locations: stock that is physically AT a show and is NOT
+	 *                 shippable from a warehouse until it is moved back. 'elsewhere_at' lists
+	 *                 where those units are so the UI can prompt to bring them home.
+	 * Each bucket carries available / committed / on_hand. 'rest*' is kept as
+	 * arkansas + elsewhere for callers that want the whole non-Oregon side.
 	 * Negative (oversold) values are preserved so a backorder increases build need.
 	 */
 	function shopify_fp_by_location() {
@@ -996,11 +1028,12 @@
 		  productVariants(first: 50, after: $cursor) {
 		    pageInfo { hasNextPage endCursor }
 		    edges { node { sku inventoryItem { inventoryLevels(first: 20) {
-		      edges { node { location { id } quantities(names: ["available","committed","on_hand"]) { name quantity } } }
+		      edges { node { location { id name } quantities(names: ["available","committed","on_hand"]) { name quantity } } }
 		    } } } }
 		  }
 		}';
 		$bySku = []; $cursor = null; $pages = 0;
+		$showNames = shopify_show_location_ids();
 		do {
 			$res = shopify_graphql($query, ['cursor' => $cursor]);
 			if (!empty($res['error'])) return ['error' => $res['error'], 'skus' => []];
@@ -1011,16 +1044,46 @@
 				$v   = $ve['node'];
 				$sku = trim((string)($v['sku'] ?? ''));
 				if ($sku === '') continue;
-				$oa=0;$oc=0;$oh=0;$ra=0;$rc=0;$rh=0;
+				$b = [
+					'oregon'   => ['available'=>0,'committed'=>0,'on_hand'=>0],
+					'arkansas' => ['available'=>0,'committed'=>0,'on_hand'=>0],
+					'elsewhere'=> ['available'=>0,'committed'=>0,'on_hand'=>0],
+				];
+				$at = [];   // where the elsewhere units actually are
 				foreach (($v['inventoryItem']['inventoryLevels']['edges'] ?? []) as $le) {
 					$lvl = $le['node'];
 					$lid = $lvl['location']['id'] ?? '';
 					$qm = ['available'=>0,'committed'=>0,'on_hand'=>0];
 					foreach (($lvl['quantities'] ?? []) as $qn) { $nm = $qn['name'] ?? ''; if (isset($qm[$nm])) $qm[$nm] = (int)($qn['quantity'] ?? 0); }
-					if ($oregonId !== '' && $lid === $oregonId) { $oa += $qm['available']; $oc += $qm['committed']; $oh += $qm['on_hand']; }
-					else { $ra += $qm['available']; $rc += $qm['committed']; $rh += $qm['on_hand']; }
+
+					$role = shopify_location_role($lid);
+					foreach ($qm as $k => $qv) $b[$role][$k] += $qv;
+
+					if ($role === 'elsewhere' && ($qm['on_hand'] !== 0 || $qm['committed'] !== 0)) {
+						$num  = preg_replace('/\D/', '', strrchr((string)$lid, '/') ?: '');
+						$name = $showNames[$num] ?? trim((string)($lvl['location']['name'] ?? '')) ?: 'Unknown location';
+						if (!isset($at[$name])) $at[$name] = ['name'=>$name, 'on_hand'=>0, 'committed'=>0];
+						$at[$name]['on_hand']   += $qm['on_hand'];
+						$at[$name]['committed'] += $qm['committed'];
+					}
 				}
-				$bySku[$sku] = ['oregon'=>$oa,'rest'=>$ra,'oregon_committed'=>$oc,'rest_committed'=>$rc,'oregon_on_hand'=>$oh,'rest_on_hand'=>$rh];
+				usort($at, fn($x, $y) => $y['on_hand'] <=> $x['on_hand']);
+				$bySku[$sku] = [
+					'oregon'              => $b['oregon']['available'],
+					'oregon_committed'    => $b['oregon']['committed'],
+					'oregon_on_hand'      => $b['oregon']['on_hand'],
+					'arkansas'            => $b['arkansas']['available'],
+					'arkansas_committed'  => $b['arkansas']['committed'],
+					'arkansas_on_hand'    => $b['arkansas']['on_hand'],
+					'elsewhere'           => $b['elsewhere']['available'],
+					'elsewhere_committed' => $b['elsewhere']['committed'],
+					'elsewhere_on_hand'   => $b['elsewhere']['on_hand'],
+					'elsewhere_at'        => array_values($at),
+					// Legacy: the whole non-Oregon side (Arkansas + anything left at a show).
+					'rest'                => $b['arkansas']['available'] + $b['elsewhere']['available'],
+					'rest_committed'      => $b['arkansas']['committed'] + $b['elsewhere']['committed'],
+					'rest_on_hand'        => $b['arkansas']['on_hand']   + $b['elsewhere']['on_hand'],
+				];
 			}
 
 			$cursor  = $pv['pageInfo']['endCursor']  ?? null;
@@ -1205,7 +1268,9 @@
 		foreach ($locName as $lid => $nm) {
 			$total = 0;
 			foreach (($data[$lid] ?? []) as $b) $total += $b['subtotal'];
-			$locs[] = ['id' => $lid, 'name' => $nm, 'total' => $total];
+			// role: oregon | arkansas | elsewhere (a tradeshow/POS location — stock there is
+			// temporary and can't ship from a warehouse until it's moved back).
+			$locs[] = ['id' => $lid, 'name' => $nm, 'total' => $total, 'role' => shopify_location_role($lid)];
 		}
 		usort($locs, function($a, $b) {
 			$rank = function($n) {

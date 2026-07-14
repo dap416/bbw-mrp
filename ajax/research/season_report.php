@@ -30,7 +30,7 @@
 	$fresh  = !empty($_POST['fresh']);  // force a recompute, ignore cache
 
 	// Bump when the payload shape changes so old caches auto-invalidate.
-	$SEASON_SCHEMA = 18;
+	$SEASON_SCHEMA = 19;
 
 	$db = db_connect();
 
@@ -49,7 +49,7 @@
 	// On a forced Refresh, drop cached LIVE Shopify inventory so "Have" re-pulls from
 	// Shopify (otherwise stock is up to 3h stale even after clicking Refresh).
 	if ($fresh) {
-		try { $db->exec("DELETE FROM data_cache WHERE ckey = 'season_fp_loc' OR ckey LIKE 'season_loc_%' OR ckey LIKE 'season_src_%'"); } catch (Throwable $e) {}
+		try { $db->exec("DELETE FROM data_cache WHERE ckey = 'season_fp_loc_v2' OR ckey LIKE 'season_loc_%' OR ckey LIKE 'season_src_%'"); } catch (Throwable $e) {}
 	}
 
 	// Refresh Best Stock Levels from current build history + omit before reading them —
@@ -189,6 +189,11 @@
 				'have' => $info['entering'], 'to_build' => $info['build'], 'buildable' => $cap,
 				'limit' => $limit, 'bom' => $bomDetail, 'is_amazon' => !empty($a['is_amazon']),
 				'sources' => $a['demand_sources'][$s['key']] ?? demand_sources_empty(),
+				// Where the on-hand stock physically sits (same for every season — it's today's stock).
+				'at_arkansas' => (int)($a['in_stock_arkansas'] ?? 0),
+				'at_oregon'   => (int)($a['in_stock_oregon'] ?? 0),
+				'at_shows'    => (int)($a['in_stock_elsewhere'] ?? 0),
+				'at_shows_detail' => $a['in_stock_elsewhere_at'] ?? [],
 			];
 		}
 		// Merge a base animator and its [Amazon] twin (same SKU) into ONE display line, with a
@@ -200,6 +205,7 @@
 			if (!isset($merged[$sku])) {
 				$merged[$sku] = ['sku' => $sku, 'demand' => 0, 'have' => 0, 'to_build' => 0,
 					'buildable' => null, 'limit' => null, 'bom' => [], 'sources' => demand_sources_empty(),
+					'at_arkansas' => 0, 'at_oregon' => 0, 'at_shows' => 0, 'at_shows_detail' => [],
 					'regular' => ['demand' => 0, 'have' => 0, 'to_build' => 0],
 					'amazon'  => ['demand' => 0, 'have' => 0, 'to_build' => 0], 'has_amazon' => false];
 			}
@@ -207,7 +213,12 @@
 			foreach (['demand', 'have', 'to_build'] as $k) { $merged[$sku][$portion][$k] += (int)$it[$k]; $merged[$sku][$k] += (int)$it[$k]; }
 			$merged[$sku]['sources'] = merge_demand_sources($merged[$sku]['sources'], $it['sources']);
 			if (!empty($it['is_amazon'])) $merged[$sku]['has_amazon'] = true;
-			else { $merged[$sku]['bom'] = $it['bom']; $merged[$sku]['buildable'] = $it['buildable']; $merged[$sku]['limit'] = $it['limit']; }
+			else {
+				$merged[$sku]['bom'] = $it['bom']; $merged[$sku]['buildable'] = $it['buildable']; $merged[$sku]['limit'] = $it['limit'];
+				// Physical location of stock lives on the base product ([Amazon] twins hold none).
+				foreach (['at_arkansas', 'at_oregon', 'at_shows'] as $k) $merged[$sku][$k] = (int)$it[$k];
+				$merged[$sku]['at_shows_detail'] = $it['at_shows_detail'];
+			}
 		}
 		$items = array_values($merged);
 		usort($items, fn($x, $y) => $y['to_build'] <=> $x['to_build']);

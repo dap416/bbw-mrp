@@ -47,22 +47,38 @@ function wsRender(d) {
 	// Filter bar.
 	html += '<div class="d-flex align-items-center gap-2 flex-wrap mb-3">' +
 		'<div class="btn-group btn-group-sm" role="group" aria-label="Location view">' +
-			'<button type="button" id="wsViewBoth" class="btn btn-outline-primary" onclick="wsSetView(\'both\')">Both</button>' +
+			'<button type="button" id="wsViewBoth" class="btn btn-outline-primary" onclick="wsSetView(\'both\')">All</button>' +
 			'<button type="button" id="wsViewArk" class="btn btn-outline-primary" onclick="wsSetView(\'arkansas\')">Arkansas</button>' +
 			'<button type="button" id="wsViewOre" class="btn btn-outline-primary" onclick="wsSetView(\'oregon\')">Oregon</button>' +
+			'<button type="button" id="wsViewAway" class="btn btn-outline-warning" onclick="wsSetView(\'elsewhere\')">At shows</button>' +
 		'</div>' +
 		'<input type="text" id="wsSearch" class="form-control form-control-sm" style="max-width:280px;" placeholder="Search SKU or product…">' +
 		'<select id="wsCat" class="form-select form-select-sm" style="max-width:240px;"><option value="">All categories</option>';
 	catList.forEach(function(c){ html += '<option value="' + $('<div>').text(c).html() + '">' + $('<div>').text(c).html() + '</option>'; });
 	html += '</select><span id="wsCount" class="text-muted small"></span></div>';
 
+	// Finished product still parked at tradeshow/POS locations — it should be brought home.
+	var awayLocs = locs.filter(function(l){ return l.role === 'elsewhere' && Number(l.total || 0) > 0; });
+	if (awayLocs.length) {
+		var awayTotal = awayLocs.reduce(function(a, l){ return a + Number(l.total || 0); }, 0);
+		html += '<div class="alert alert-warning py-2"><div class="fw-bold small mb-1">' +
+			'<i class="ti ti-alert-triangle me-1"></i>' + awayTotal.toLocaleString() + ' unit' + (awayTotal === 1 ? '' : 's') +
+			' of finished product still at a show location</div>' +
+			'<div class="small mb-1">Show stock is meant to be temporary. Until it is moved back to Arkansas or Oregon in Shopify, it can\'t ship from a warehouse — and the build planners will not count it, so they will tell you to build more than you need.</div>' +
+			'<div class="small">' + awayLocs.map(function(l){
+				return $('<div>').text(l.name).html() + ' <b>(' + Number(l.total).toLocaleString() + ')</b>';
+			}).join(' · ') + '</div></div>';
+	}
+
 	html += '<div class="row g-3">';
 	locs.forEach(function(loc) {
 		var blocks = data[loc.id] || [];
 		var totColor = loc.total < 0 ? '#e64545' : '#2ca01c';
-		html += '<div class="col-12 col-xl-6 ws-loc" data-locname="' + $('<div>').text((loc.name||'').toLowerCase()).html() + '"><div class="card h-100" style="border-top:3px solid #4680ff;"><div class="card-body">';
+		var isAway = (loc.role === 'elsewhere');
+		var awayBadge = isAway ? ' <span class="badge bg-warning text-dark" style="font-size:0.6rem;" title="Tradeshow/POS location — move this stock back to a warehouse">SHOW</span>' : '';
+		html += '<div class="col-12 col-xl-6 ws-loc" data-role="' + $('<div>').text(loc.role || 'arkansas').html() + '" data-locname="' + $('<div>').text((loc.name||'').toLowerCase()).html() + '"><div class="card h-100" style="border-top:3px solid ' + (isAway ? '#e8a33d' : '#4680ff') + ';"><div class="card-body">';
 		html += '<div class="d-flex justify-content-between align-items-center mb-2">' +
-			'<h5 class="fw-bold mb-0">' + $('<div>').text(loc.name).html() + '</h5>' +
+			'<h5 class="fw-bold mb-0">' + $('<div>').text(loc.name).html() + awayBadge + '</h5>' +
 			'<span class="badge" style="background:' + totColor + ';">' + Number(loc.total).toLocaleString() + ' units</span></div>';
 
 		if (!blocks.length) { html += '<div class="text-muted small ws-empty">No tracked stock here.</div>'; }
@@ -104,8 +120,9 @@ function wsRender(d) {
 var wsView = 'both';
 function wsSetView(v) {
 	wsView = v;
-	$('#wsViewBoth,#wsViewArk,#wsViewOre').removeClass('active');
-	$('#wsView' + (v === 'arkansas' ? 'Ark' : (v === 'oregon' ? 'Ore' : 'Both'))).addClass('active');
+	$('#wsViewBoth,#wsViewArk,#wsViewOre,#wsViewAway').removeClass('active');
+	var btn = { arkansas: 'Ark', oregon: 'Ore', elsewhere: 'Away' }[v] || 'Both';
+	$('#wsView' + btn).addClass('active');
 	$('.ws-loc').toggleClass('col-xl-6', v === 'both'); // full width when a single location is chosen
 	wsFilter();
 }
@@ -126,9 +143,11 @@ function wsFilter() {
 		$(this).toggle($(this).find('.ws-item:visible').length > 0);
 	});
 	$('.ws-loc').each(function() {
-		var isOregon = ($(this).attr('data-locname') || '').indexOf('oregon') !== -1;
-		// "Arkansas" view = everything that isn't Oregon (the app's Oregon-vs-rest split).
-		var locMatch = (wsView === 'both') || (wsView === 'oregon' ? isOregon : !isOregon);
+		// Each location carries its true role from the server: oregon | arkansas | elsewhere.
+		// "elsewhere" = a tradeshow/POS location — stock there is temporary and does NOT belong
+		// under Arkansas (it used to, because "Arkansas" just meant "not Oregon").
+		var role = $(this).attr('data-role') || 'arkansas';
+		var locMatch = (wsView === 'both') || (wsView === role);
 		$(this).toggle(locMatch && $(this).find('.ws-item:visible').length > 0);
 	});
 	$('#wsCount').text((q !== '' || cat !== '') ? (shown + ' match' + (shown === 1 ? '' : 'es')) : '');

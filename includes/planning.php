@@ -247,6 +247,63 @@
 	}
 
 	/**
+	 * Finished product ON HAND at the primary (Arkansas) warehouse only — i.e. what can actually
+	 * ship from Arkansas. Deliberately EXCLUDES units still sitting at a tradeshow/POS location:
+	 * those are physically at a show and can't ship until they're brought home, so counting them
+	 * here would under-build. Use fp_elsewhere_onhand()/fp_elsewhere_at() to surface them instead.
+	 */
+	function fp_arkansas_onhand($fpLoc, $sku, $fallback = 0) {
+		if ($sku !== '' && isset($fpLoc[$sku])) return (int)($fpLoc[$sku]['arkansas_on_hand'] ?? 0);
+		return $fallback;
+	}
+
+	/** Finished product ON HAND at the Oregon Warehouse only. */
+	function fp_oregon_onhand($fpLoc, $sku, $fallback = 0) {
+		if ($sku !== '' && isset($fpLoc[$sku])) return (int)($fpLoc[$sku]['oregon_on_hand'] ?? 0);
+		return $fallback;
+	}
+
+	/** Finished product stranded at tradeshow/POS locations — should be moved back to AR or OR. */
+	function fp_elsewhere_onhand($fpLoc, $sku) {
+		if ($sku !== '' && isset($fpLoc[$sku])) return (int)($fpLoc[$sku]['elsewhere_on_hand'] ?? 0);
+		return 0;
+	}
+
+	/** Where that stranded stock is: [['name'=>show, 'on_hand'=>n, 'committed'=>n], …]. */
+	function fp_elsewhere_at($fpLoc, $sku) {
+		if ($sku !== '' && isset($fpLoc[$sku]) && is_array($fpLoc[$sku]['elsewhere_at'] ?? null)) return $fpLoc[$sku]['elsewhere_at'];
+		return [];
+	}
+
+	/**
+	 * One SKU's FP figures for a warehouse scope. $fp = one row of shopify_fp_by_location()['skus'].
+	 *   'oregon'   → the Oregon Warehouse only
+	 *   'arkansas' → the Arkansas warehouse only — EXCLUDES anything still at a show, which can't
+	 *                ship from Arkansas and would otherwise mask a real shortfall
+	 *   'all'      → every location, show stock included (it's still your inventory)
+	 * Returns ['available'=>, 'committed'=>, 'on_hand'=>].
+	 */
+	function fp_scope_qty($fp, $scope) {
+		$g = fn($k) => (int)($fp[$k] ?? 0);
+		if ($scope === 'oregon')   return ['available'=>$g('oregon'),   'committed'=>$g('oregon_committed'),   'on_hand'=>$g('oregon_on_hand')];
+		if ($scope === 'arkansas') return ['available'=>$g('arkansas'), 'committed'=>$g('arkansas_committed'), 'on_hand'=>$g('arkansas_on_hand')];
+		return ['available' => $g('oregon') + $g('rest'),
+		        'committed' => $g('oregon_committed') + $g('rest_committed'),
+		        'on_hand'   => $g('oregon_on_hand') + $g('rest_on_hand')];
+	}
+
+	/** Prior-window units per SKU for a warehouse scope (sums both sides when scope is 'all'). */
+	function fp_scope_sales($sales, $scope) {
+		if ($scope === 'oregon') return $sales['by_sku_oregon'] ?? [];
+		if ($scope === 'all') {
+			$out = $sales['by_sku_rest'] ?? [];
+			foreach (($sales['by_sku_oregon'] ?? []) as $sku => $u) $out[$sku] = ($out[$sku] ?? 0) + (int)$u;
+			return $out;
+		}
+		return $sales['by_sku_rest'] ?? [];   // 'arkansas' — everything not fulfilled from Oregon
+	}
+
+	/**
 	 * Turn one SKU's raw source buckets (shopify_demand_sources) into the three-row
 	 * breakdown the Research drill-down shows: Online store (web + big/small drafts),
 	 * Shows (one line per tradeshow), and Other.
@@ -395,7 +452,7 @@
 
 		// Current finished-product inventory split by location (Oregon vs rest).
 		$fpLoc = $shopReady
-			? (shopify_cache_remember($db, 'season_fp_loc', $ttl, fn() => shopify_fp_by_location())['data']['skus'] ?? [])
+			? (shopify_cache_remember($db, 'season_fp_loc_v2', $ttl, fn() => shopify_fp_by_location())['data']['skus'] ?? [])
 			: [];
 
 		// ── Products + BOM (animators = products with a BOM) ──────────────────
@@ -471,6 +528,11 @@
 				'sku'       => $sku,
 				'is_amazon' => $isAmz,
 				'in_stock'  => $isAmz ? 0 : fp_onhand_qty($fpLoc, $sku, ($sku !== '' && isset($shopSkus[$sku])) ? (int)$shopSkus[$sku]['qty'] : null),   // total physical on hand
+				// On hand split by WAREHOUSE. 'elsewhere' = still at a tradeshow location: counted in
+				// in_stock (it's still ours) but it can't ship from a warehouse until it's brought back.
+				'in_stock_arkansas'     => $isAmz ? 0 : fp_arkansas_onhand($fpLoc, $sku),
+				'in_stock_elsewhere'    => $isAmz ? 0 : fp_elsewhere_onhand($fpLoc, $sku),
+				'in_stock_elsewhere_at' => $isAmz ? [] : fp_elsewhere_at($fpLoc, $sku),
 				'in_stock_oregon'   => $fpO,              // finished units currently AT the Oregon Warehouse (null = unknown)
 				'prior_year_sales'  => $perSeason,        // retail units for the base; Amazon (TJ Stumpf) units for the [Amazon] twin
 				'prior_year_oregon' => $perSeasonOregon,  // subset FULFILLED from the Oregon Warehouse
@@ -541,6 +603,9 @@
 				'product'   => $shopSkus[$sku]['product_title'] . ' — ' . $shopSkus[$sku]['variant_title'],
 				'group'     => $grp,
 				'in_stock'  => $avail,
+				'in_stock_arkansas'     => fp_arkansas_onhand($fpLoc, $sku),
+				'in_stock_elsewhere'    => fp_elsewhere_onhand($fpLoc, $sku),
+				'in_stock_elsewhere_at' => fp_elsewhere_at($fpLoc, $sku),
 				'in_stock_oregon'   => isset($fpLoc[$sku]) ? (int)$fpLoc[$sku]['oregon'] : null,
 				'prior_year_sales'  => $perSeason,
 				'prior_year_oregon' => $perSeasonOregon,
@@ -606,7 +671,7 @@
 				'parts_coverage'    => 'raw_materials lists EVERY part in MRP inventory with on_hand, on_order, base_stock_level, moq, lead_time_days, unit_cost. animator_component=true marks a direct BOM component of an animator. Packaging cards (CD-* and Amazon CDA-*), plates, rods and packaging are all included even when they are not BOM components — their demand tracks the animator they package (matchable by part-number brand code, e.g. LDA→CD-LD/CDA-LD; AXLA→CD-AX-L/CDA-AX-L; AXRA→CD-AX-R/CDA-AX-R; KMA→CD-KM/CDA-KM). NOTE: on_order is a total quantity, not a list of POs with ETAs.',
 				'packaging_card_rule' => 'Each animator uses ONE packaging card per unit built. Units sold to the Amazon customer (' . shopify_amazon_customer() . ') OR on any order tagged "' . shopify_amazon_tag() . '" in Shopify use the Amazon CDA-<brand> card; ALL other units use the regular CD-<brand> card. Per animator: prior_year_amazon = units needing a CDA card; (prior_year_sales − prior_year_amazon) = units needing a CD card. So CDA-<brand> demand = that animator\'s prior_year_amazon; CD-<brand> demand = prior_year_sales − prior_year_amazon. Match the CD/CDA card to the animator by brand code in the part number.',
 				'sales_coverage'    => 'prior_year_sales counts EVERY Shopify order in the window (line-item quantities) EXCEPT cancelled orders. This INCLUDES: online/web, point-of-sale (POS/tradeshows), completed/paid draft orders, and Collective/wholesale. Native Shopify bundles are exploded into their component SKUs. It EXCLUDES: open/un-completed draft orders (no sale yet) and anything not recorded in Shopify (e.g. an off-platform Amazon or wholesale PO). sales_by_channel below shows the actual channel mix so you can confirm coverage. Seasons are quarter-granular (jul_sep, oct_dec, jan_mar) — a sub-quarter date range maps to whole quarters.',
-				'location_split'    => 'You CAN answer Oregon-vs-Arkansas questions. For each animator and finished good: prior_year_oregon = the subset of prior_year_sales that was FULFILLED from the Oregon Warehouse Shopify location (the rest — Arkansas + POS/tradeshows + online shipped elsewhere — is prior_year_sales − prior_year_oregon). in_stock_oregon = finished units currently sitting AT the Oregon Warehouse (null = the SKU was not found in Shopify location inventory). Use these for "how much do I need in Oregon" / "what to ship to Oregon" questions: Oregon demand for a SKU = prior_year_oregon for the season(s) the date spans; units short at Oregon = max(0, Oregon demand − in_stock_oregon). To express that shortfall as RAW MATERIALS to ship/build, multiply the short units by the animator\'s bom qty_per_unit (and one packaging card per unit). NOTE: prior_year_oregon is fulfillment-location based, not the customer\'s shipping state; it is the best available proxy for "Oregon orders". oregon_split_status reports if this data loaded.',
+				'location_split'    => 'You CAN answer Oregon-vs-Arkansas questions. SALES: prior_year_oregon = the subset of prior_year_sales FULFILLED from the Oregon Warehouse Shopify location (the rest — Arkansas + POS/tradeshows + online shipped elsewhere — is prior_year_sales − prior_year_oregon). STOCK is split three ways and in_stock is the sum of all three: in_stock_oregon = finished units AT the Oregon Warehouse; in_stock_arkansas = units AT the Arkansas warehouse; in_stock_elsewhere = units still sitting AT A TRADESHOW/POS LOCATION (in_stock_elsewhere_at lists which shows and how many). Stock at a show is TEMPORARY and is NOT shippable from either warehouse until it is physically moved back — so when answering "what can Arkansas ship" or "what must I build", use in_stock_arkansas ONLY, never in_stock_arkansas + in_stock_elsewhere. If in_stock_elsewhere > 0, say so and recommend moving those units back to Arkansas or Oregon (in Shopify), because leaving them there makes the build look smaller than it is. Use these for "how much do I need in Oregon" / "what to ship to Oregon" questions: Oregon demand for a SKU = prior_year_oregon for the season(s) the date spans; units short at Oregon = max(0, Oregon demand − in_stock_oregon). To express that shortfall as RAW MATERIALS to ship/build, multiply the short units by the animator\'s bom qty_per_unit (and one packaging card per unit). NOTE: prior_year_oregon is fulfillment-location based, not the customer\'s shipping state; it is the best available proxy for "Oregon orders". oregon_split_status reports if this data loaded.',
 			],
 			'open_wholesale_orders' => $wholesaleOrders,
 			'sales_by_channel'  => $priorChannel,
@@ -641,15 +706,19 @@
 		$lyStart = date('Y-m-d', strtotime('-1 year', strtotime($today)));
 		$lyEnd   = date('Y-m-d', strtotime('-1 year', $ts));
 
+		// whId = 0 means ALL warehouses — it must include Oregon on both the sales and the stock
+		// side (it used to read only the non-Oregon buckets, silently dropping Oregon).
+		$scope = $whId ? ($isOregon ? 'oregon' : 'arkansas') : 'all';
+
 		$sales = shopify_cache_remember($db, 'rec_sales_'.$lyStart.'_'.$lyEnd, inventory_cache_ttl($db), fn() => shopify_sales_by_location($lyStart, $lyEnd))['data'];
 		if (!empty($sales['error'])) return ['error' => $sales['error'], 'meta' => [], 'rows' => []];
-		$retailBySku = $isOregon ? ($sales['by_sku_oregon'] ?? []) : ($sales['by_sku_rest'] ?? []);
+		$retailBySku = fp_scope_sales($sales, $scope);
 
 		// Demand now uses Shopify "committed" (already-sold, unfulfilled) rather than open
 		// draft orders; committed comes from the finished-product location data below.
 		$draftErr = null; $draftOrders = 0;
 
-		$fpLoc   = shopify_cache_remember($db, 'rec_fp', inventory_cache_ttl($db), fn() => shopify_fp_by_location())['data'];
+		$fpLoc   = shopify_cache_remember($db, 'rec_fp_v2', inventory_cache_ttl($db), fn() => shopify_fp_by_location())['data'];
 		$fpBySku = $fpLoc['skus'] ?? [];
 
 		$hasSku   = column_exists($db, 'products', 'shopify_sku');
@@ -678,9 +747,11 @@
 
 			$retail    = $sku !== '' ? (int)($retailBySku[$sku] ?? 0) : 0;
 			$fp        = ($sku !== '' && isset($fpBySku[$sku])) ? $fpBySku[$sku] : [];
-			$available = (int)($isOregon ? ($fp['oregon'] ?? 0) : ($fp['rest'] ?? 0));            // sellable (on_hand - committed); may be negative
-			$committed = (int)($isOregon ? ($fp['oregon_committed'] ?? 0) : ($fp['rest_committed'] ?? 0));
-			$onHand    = (int)($isOregon ? ($fp['oregon_on_hand'] ?? 0) : ($fp['rest_on_hand'] ?? 0));
+			$q         = fp_scope_qty($fp, $scope);
+			$available = $q['available'];                                                         // sellable (on_hand - committed); may be negative
+			$committed = $q['committed'];
+			$onHand    = $q['on_hand'];
+			$away      = (int)($fp['elsewhere_on_hand'] ?? 0);                                    // still at a show — not shippable
 			$demand    = $retail + $committed;                                                    // last-year sales + already-committed
 			$fpStock   = $available;                                                              // kept = available for existing consumers
 			$pipeline  = (int)($pipelineByProd[$p['id']] ?? 0);
@@ -709,6 +780,8 @@
 				'demand'     => $demand,
 				'fp_stock'   => $fpStock,
 				'fp_on_hand' => $onHand,
+				'fp_away'    => $away,                                    // still at a show location
+				'fp_away_at' => is_array($fp['elsewhere_at'] ?? null) ? $fp['elsewhere_at'] : [],
 				'pipeline'   => $pipeline,
 				'recommend'  => $recommend,
 				'buildable'  => $buildable,
@@ -727,11 +800,15 @@
 				'prior_window' => "$lyStart to $lyEnd",
 				'warehouse'    => $whName ?: 'All',
 				'is_oregon'    => $isOregon,
+				'fp_scope'     => $scope,
+				'fp_away_total' => array_sum(array_column($rows, 'fp_away')),
 				'scope'        => (empty($sales['oregon_location'])
 					? '⚠ The Shopify app is missing the "read_locations" permission, so it cannot split by warehouse yet — add that scope (Dev Dashboard → Versions), reinstall, and Save on Integrations. '
-					: '') . ($isOregon
-					? 'Oregon Warehouse: only orders fulfilled from Oregon.'
-					: ($whName ? $whName . ': everything NOT fulfilled from Oregon (incl. POS/tradeshows + open wholesale drafts).' : 'All warehouses.')),
+					: '') . ($scope === 'oregon'
+					? 'Oregon Warehouse: only orders fulfilled from Oregon; stock on hand at Oregon.'
+					: ($scope === 'arkansas'
+						? $whName . ': orders NOT fulfilled from Oregon (incl. POS/tradeshows + open wholesale drafts). Stock on hand AT the Arkansas warehouse — units still sitting at a tradeshow location are excluded, since they can\'t ship from here until they\'re moved back.'
+						: 'All warehouses: every location, including any finished product still at a tradeshow.')),
 				'draft_orders' => $draftOrders,
 				'draft_error'  => $draftErr,
 				'oregon_location' => $sales['oregon_location'] ?? '',
@@ -846,16 +923,19 @@
 		$lyEnd   = date('Y-m-d', strtotime('-1 year', $ts));
 		$ttl     = inventory_cache_ttl($db);
 
+		// whId = 0 means ALL warehouses — include Oregon on both the sales and the stock side.
+		$scope = $whId ? ($isOregon ? 'oregon' : 'arkansas') : 'all';
+
 		// Prior-year retail (all channels) bucketed by warehouse.
 		$sales = shopify_cache_remember($db, 'rec_sales_'.$lyStart.'_'.$lyEnd, $ttl, fn() => shopify_sales_by_location($lyStart, $lyEnd))['data'];
 		if (!empty($sales['error'])) return ['error' => $sales['error'], 'meta' => [], 'rows' => []];
-		$retailBySku = $isOregon ? ($sales['by_sku_oregon'] ?? []) : ($sales['by_sku_rest'] ?? []);
+		$retailBySku = fp_scope_sales($sales, $scope);
 
 		// Large one-off POs (fulfilled, >= threshold) in the same window last year —
 		// isolated so a PO that recurs this year (as committed) isn't double-counted.
 		$largePoMin = 2000;
 		$large      = shopify_cache_remember($db, 'rec_largepo_'.$lyStart.'_'.$lyEnd.'_'.$largePoMin, $ttl, fn() => shopify_large_orders($lyStart, $lyEnd, $largePoMin))['data'];
-		$largeBySku = $isOregon ? ($large['by_sku_oregon'] ?? []) : ($large['by_sku_rest'] ?? []);
+		$largeBySku = fp_scope_sales($large, $scope);
 
 		// Per-show sales for the prior window: one call per show (returns all SKUs).
 		$showsBySku = []; $showNames = [];
@@ -874,7 +954,7 @@
 		}
 
 		// Finished-product committed / on-hand by SKU (bucketed).
-		$fpLoc   = shopify_cache_remember($db, 'rec_fp', $ttl, fn() => shopify_fp_by_location())['data'];
+		$fpLoc   = shopify_cache_remember($db, 'rec_fp_v2', $ttl, fn() => shopify_fp_by_location())['data'];
 		$fpBySku = $fpLoc['skus'] ?? [];
 
 		$hasSku   = column_exists($db, 'products', 'shopify_sku');
@@ -906,8 +986,10 @@
 			$online    = max(0, $retail - $showTotal - $largePo);
 
 			$fp        = ($sku !== '' && isset($fpBySku[$sku])) ? $fpBySku[$sku] : [];
-			$committed = (int)($isOregon ? ($fp['oregon_committed'] ?? 0) : ($fp['rest_committed'] ?? 0));
-			$onHand    = (int)($isOregon ? ($fp['oregon_on_hand'] ?? 0) : ($fp['rest_on_hand'] ?? 0));
+			$q         = fp_scope_qty($fp, $scope);
+			$committed = $q['committed'];
+			$onHand    = $q['on_hand'];
+			$away      = (int)($fp['elsewhere_on_hand'] ?? 0);   // still at a show — not shippable
 			$pipeline  = (int)($pipelineByProd[$p['id']] ?? 0);
 
 			$buildable = null; $limitPart = null;
@@ -925,6 +1007,7 @@
 				'prodid' => (int)$p['id'], 'product' => $p['name'], 'sku' => $sku,
 				'online' => $online, 'shows' => (object)$shows, 'large_po' => $largePo,
 				'committed' => $committed, 'on_hand' => $onHand, 'pipeline' => $pipeline,
+				'fp_away' => $away, 'fp_away_at' => is_array($fp['elsewhere_at'] ?? null) ? $fp['elsewhere_at'] : [],
 				'buildable' => $buildable, 'limit_part' => $limitPart,
 			];
 		}

@@ -15,7 +15,7 @@
 	// force the season report to recompute, then bounce back to a clean URL.
 	if (!empty($_GET['fresh'])) {
 		try {
-			$db->exec("DELETE FROM data_cache WHERE ckey = 'season_fp_loc' OR ckey LIKE 'season_loc_%' OR ckey LIKE 'season_src_%'");
+			$db->exec("DELETE FROM data_cache WHERE ckey = 'season_fp_loc_v2' OR ckey LIKE 'season_loc_%' OR ckey LIKE 'season_src_%'");
 			setting_set($db, 'season_cache_at', '0');
 		} catch (Throwable $e) {}
 		header('Location: /research.php'); exit;
@@ -46,7 +46,7 @@
 	// Finished-product AVAILABLE (on hand − committed) by SKU, from the per-location data
 	// (shared cache with the season report). Used so every FP stock figure is consistent.
 	$fpLoc = ($shopConfigured && !$shopErr)
-		? (shopify_cache_remember($db, 'season_fp_loc', inventory_cache_ttl($db), fn() => shopify_fp_by_location())['data']['skus'] ?? [])
+		? (shopify_cache_remember($db, 'season_fp_loc_v2', inventory_cache_ttl($db), fn() => shopify_fp_by_location())['data']['skus'] ?? [])
 		: [];
 
 	// Tradeshows + which are excluded from demand (owner picks which shows to include).
@@ -906,12 +906,40 @@
 		return h + '</tbody></table>';
 	}
 
+	// Where the on-hand stock physically sits right now. Units at a tradeshow location are
+	// still yours (they're inside On Hand) but can't ship from a warehouse until moved back.
+	function stockLocationTable(it) {
+		var ar = it.at_arkansas || 0, or_ = it.at_oregon || 0, aw = it.at_shows || 0;
+		if (!ar && !or_ && !aw) return '';
+		var h = '<table class="table table-sm mb-2" style="max-width:460px;"><thead><tr>' +
+			'<th class="small">Where that stock physically is <span class="text-muted fw-normal">(today)</span></th>' +
+			'<th class="small text-end">Units</th></tr></thead><tbody>' +
+			'<tr><td class="small">Arkansas warehouse</td><td class="small text-end">' + ar + '</td></tr>' +
+			'<tr><td class="small">Oregon warehouse</td><td class="small text-end">' + or_ + '</td></tr>';
+		if (aw > 0) {
+			h += '<tr class="table-warning"><td class="small fw-semibold">At a show — not shippable from a warehouse</td>' +
+				'<td class="small text-end fw-semibold">' + aw + '</td></tr>';
+			(it.at_shows_detail || []).forEach(function(a){
+				h += '<tr><td class="small text-muted" style="padding-left:26px;">' + esc(a.name) + '</td>' +
+					'<td class="small text-end text-muted">' + (a.on_hand || 0) + '</td></tr>';
+			});
+			h += '<tr><td colspan="2" class="small text-muted"><i class="ti ti-alert-triangle me-1"></i>' +
+				'Move these back to Arkansas or Oregon in Shopify after the show — until you do, they count as On Hand but can\'t actually ship.</td></tr>';
+		} else {
+			h += '<tr><td class="small text-muted">At a show</td><td class="small text-end text-muted">0</td></tr>';
+		}
+		return h + '</tbody></table>';
+	}
+
 	function aiExplain(it) {
 		var d = it.demand || 0, h = it.have || 0, b = it.to_build || 0, bld = (it.buildable == null ? null : it.buildable);
 		var html = '<div class="p-2" style="background:#f8f9fb;"><div class="small">';
 
 		// Where this season's demand actually comes from.
 		html += demandSourceTable(it.sources, d);
+
+		// Where the on-hand stock actually is.
+		html += stockLocationTable(it);
 
 		// Regular vs [Amazon] split (this SKU combines the base animator + its [Amazon] twin).
 		if (it.has_amazon && it.regular && it.amazon) {

@@ -222,18 +222,42 @@ function tsRenderPrep(d, names) {
 	html += '<span class="fw-bold">Combined Build/Pack Order <span class="text-muted fw-normal small">- ' + $('<div>').text(names.join(', ')).html() + '</span></span>';
 	html += '<button id="tsCreateOrder" class="btn btn-sm btn-success"><i class="ti ti-check me-1"></i>Create packaging order(s)</button></div>';
 	if (d.fp_note) html += '<div class="small text-warning mb-1"><i class="ti ti-alert-triangle"></i> ' + $('<div>').text(d.fp_note).html() + '</div>';
-	html += '<div class="text-muted small mb-2"><b>Bring</b> = combined units these shows sold last year (min 10) - what to take to the shows. <b>FP · AR</b> = finished product available in Arkansas (what the show ships from); <b>FP · OR</b> = available in Oregon if you need to transfer. <b>Build</b> = what is left to make after Arkansas stock (Bring - FP AR). Only <b>Build</b> becomes a packaging order - edit any Build qty before creating. No inventory is deducted until you finalize on the Packaging page.</div>';
+	html += '<div class="text-muted small mb-2"><b>Bring</b> = combined units these shows sold last year (min 10) - what to take to the shows. <b>FP · AR</b> = finished product at the <b>Arkansas warehouse</b> (what the show ships from); <b>FP · OR</b> = at Oregon if you need to transfer; <b>FP · Show</b> = units still sitting at a show location - they can NOT ship from Arkansas, so they do not reduce the build. <b>Build</b> = what is left to make after Arkansas stock (Bring - FP AR). Only <b>Build</b> becomes a packaging order - edit any Build qty before creating. No inventory is deducted until you finalize on the Packaging page.</div>';
+
+	// Finished product still parked at a show location — it should be moved back to a warehouse.
+	var away = rows.filter(function(r){ return Number(r.fp_away || 0) > 0; });
+	if (away.length) {
+		var awayTotal = away.reduce(function(a, r){ return a + Number(r.fp_away || 0); }, 0);
+		html += '<div class="alert alert-warning py-2 mb-2"><div class="fw-bold small mb-1">' +
+			'<i class="ti ti-alert-triangle me-1"></i>' + tsNum(awayTotal) + ' finished unit' + (awayTotal === 1 ? '' : 's') +
+			' still at a show location</div>' +
+			'<div class="small mb-1">Shopify still has this stock at a tradeshow location, so it can\'t ship from Arkansas and it is <b>not</b> reducing the Build numbers below. Move it back to Arkansas or Oregon in Shopify, then Refresh — the builds will drop accordingly.</div><ul class="small mb-0" style="padding-left:1.1rem;">';
+		away.forEach(function(r) {
+			var at = (r.fp_away_at || []).map(function(a){
+				return $('<div>').text(a.name).html() + ' (' + tsNum(a.on_hand) + ')';
+			}).join(', ');
+			html += '<li><b>' + tsNum(r.fp_away) + '</b> × ' + $('<div>').text(r.sku).html() +
+				(at ? ' — at ' + at : '') + '</li>';
+		});
+		html += '</ul></div>';
+	}
+
 	html += '<div class="table-responsive"><table class="table table-sm align-middle" style="font-size:0.88rem;"><thead><tr>' +
-		'<th>Product</th><th class="text-center">Bring</th><th class="text-center">FP · AR</th><th class="text-center">FP · OR</th><th class="text-center">Build</th><th class="text-center" style="width:130px;">Build qty</th></tr></thead><tbody>';
+		'<th>Product</th><th class="text-center">Bring</th><th class="text-center">FP · AR</th><th class="text-center">FP · OR</th><th class="text-center">FP · Show</th><th class="text-center">Build</th><th class="text-center" style="width:130px;">Build qty</th></tr></thead><tbody>';
 	rows.forEach(function(r) {
 		var note = r.short > 0
 			? '<div class="text-danger" style="font-size:0.66rem;">buildable now ' + tsNum(r.buildable) + ' - short ' + tsNum(r.short) + ' (' + $('<div>').text(r.limit_part||'raw materials').html() + ')</div>'
 			: '<div class="text-success" style="font-size:0.66rem;">buildable now ' + tsNum(r.buildable) + '</div>';
+		var awayQty = Number(r.fp_away || 0);
+		var awayCell = awayQty > 0
+			? '<span class="text-warning fw-semibold" title="Still at: ' + $('<div>').text((r.fp_away_at||[]).map(function(a){ return a.name + ' (' + a.on_hand + ')'; }).join(', ')).html() + ' — move back to a warehouse">' + tsNum(awayQty) + '</span>'
+			: '<span class="text-muted">—</span>';
 		html += '<tr>' +
 			'<td class="fw-semibold">' + $('<div>').text(r.product).html() + ' <span class="text-muted" style="font-size:0.72rem;">' + $('<div>').text(r.sku).html() + '</span></td>' +
 			'<td class="text-center fw-semibold">' + tsNum(r.demand) + '</td>' +
 			'<td class="text-center">' + tsNum(r.fp_ar) + '</td>' +
 			'<td class="text-center text-muted" title="Available at Oregon if you need to transfer">' + tsNum(r.fp_or) + '</td>' +
+			'<td class="text-center">' + awayCell + '</td>' +
 			'<td class="text-center fw-bold text-primary">' + tsNum(r.build) + '</td>' +
 			'<td class="text-center"><input type="number" min="0" class="form-control form-control-sm ts-ord-qty text-center" data-prodid="' + r.prodid + '" value="' + r.build + '">' + note + '</td>' +
 			'</tr>';

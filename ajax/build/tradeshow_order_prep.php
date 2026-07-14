@@ -56,11 +56,18 @@ try {
 	if (shopify_is_configured()) {
 		// Preparing a show order is a deliberate action — always pull LIVE finished-product
 		// inventory (drop the shared 3h cache first) so the planner reflects current stock.
-		try { $db->exec("DELETE FROM data_cache WHERE ckey = 'rec_fp'"); } catch (Throwable $e) {}
-		$fpLoc = shopify_cache_remember($db, 'rec_fp', inventory_cache_ttl($db), fn() => shopify_fp_by_location())['data'];
+		try { $db->exec("DELETE FROM data_cache WHERE ckey = 'rec_fp_v2'"); } catch (Throwable $e) {}
+		$fpLoc = shopify_cache_remember($db, 'rec_fp_v2', inventory_cache_ttl($db), fn() => shopify_fp_by_location())['data'];
 		foreach (($fpLoc['skus'] ?? []) as $k => $v) {
-			// Total ON HAND per location (not minus committed) — matches the Warehouse FP Stock page.
-			$fpBySkuLc[strtolower(trim((string)$k))] = ['ar' => (int)($v['rest_on_hand'] ?? 0), 'or' => (int)($v['oregon_on_hand'] ?? 0)];
+			// ON HAND per WAREHOUSE (not minus committed) — matches the Warehouse FP Stock page.
+			// 'away' = units still sitting at a tradeshow/POS location. They are NOT shippable from
+			// Arkansas, so they must not offset the build; they're surfaced so they get brought home.
+			$fpBySkuLc[strtolower(trim((string)$k))] = [
+				'ar'      => (int)($v['arkansas_on_hand']  ?? 0),
+				'or'      => (int)($v['oregon_on_hand']    ?? 0),
+				'away'    => (int)($v['elsewhere_on_hand'] ?? 0),
+				'away_at' => is_array($v['elsewhere_at'] ?? null) ? $v['elsewhere_at'] : [],
+			];
 		}
 	} else { $fpError = 'Shopify is not connected — assuming 0 finished product on hand.'; }
 } catch (Throwable $e) { $fpError = 'Could not read finished-product stock — assuming 0 on hand.'; }
@@ -72,9 +79,10 @@ foreach ($want as $sku => $units) {
 	$pid = (int)$pr['id'];
 
 	$demand  = max($DEMAND_MIN, (int)$units);               // combined sold last year, min 10
-	$fp      = $fpBySkuLc[strtolower($sku)] ?? ['ar' => 0, 'or' => 0];
-	$fpAr    = max(0, (int)$fp['ar']);                      // finished product available in Arkansas
-	$fpOr    = max(0, (int)$fp['or']);                      // finished product available in Oregon (backup)
+	$fp      = $fpBySkuLc[strtolower($sku)] ?? ['ar' => 0, 'or' => 0, 'away' => 0, 'away_at' => []];
+	$fpAr    = max(0, (int)$fp['ar']);                      // finished product AT the Arkansas warehouse
+	$fpOr    = max(0, (int)$fp['or']);                      // finished product at Oregon (transfer option)
+	$fpAway  = max(0, (int)($fp['away'] ?? 0));             // still at a show — not shippable from AR
 	$build   = max(0, $demand - $fpAr);                     // AR ships the show, so build the AR shortfall
 
 	// Buildable now = min over the BOM of floor(raw on-hand / per-unit need),
@@ -103,6 +111,8 @@ foreach ($want as $sku => $units) {
 		'demand'     => $demand,
 		'fp_ar'      => $fpAr,
 		'fp_or'      => $fpOr,
+		'fp_away'    => $fpAway,
+		'fp_away_at' => $fp['away_at'] ?? [],
 		'build'      => $build,
 		'buildable'  => $buildable,
 		'short'      => max(0, $build - $buildable),
