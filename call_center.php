@@ -34,6 +34,11 @@
 .cc-row         { cursor:pointer; }
 .cc-row:hover   { background:#f7f9fc; }
 .cc-ordbox      { border:1px solid #e3e6ea; border-radius:8px; padding:8px 10px; font-size:0.85rem; background:#fbfcfd; }
+/* Confirmed caller, collapsed to a single line — keeps the screen on the call itself. */
+.cc-caller-bar  { display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+                  border:1px solid #cfe0ff; background:#eef5ff; border-radius:10px; padding:10px 14px; }
+.cc-caller-bar .who  { font-weight:700; font-size:1rem; }
+.cc-caller-bar .meta { color:#5b6673; font-size:0.85rem; }
 </style>
 
 <div class="mb-3 d-flex align-items-center justify-content-between flex-wrap gap-2">
@@ -101,7 +106,11 @@
 			<i class="ti ti-user-plus me-1"></i><strong>New customer.</strong>
 			Just take their name and number and what they're after — George will call them back.
 		</div>
-		<div class="row g-2 mb-2">
+
+		<!-- Confirmed customer — collapsed to one line so the call is the focus. -->
+		<div id="ccCallerSummary" class="cc-caller-bar mb-2" style="display:none;"></div>
+
+		<div id="ccCallerFields" class="row g-2 mb-2">
 			<div class="col-12 col-md-4">
 				<label class="form-label small fw-semibold mb-1">Name <span class="text-danger">*</span></label>
 				<input id="ccName" class="form-control" placeholder="Who called">
@@ -336,14 +345,15 @@ function ccSearch() {
 		$('#ccResults').html(h);
 
 		// Exactly one match and nothing ambiguous → fill the contact details straight away,
-		// so by the time she's finished typing the name the caller is already filled in.
-		// Never do this once she has typed into the caller fields herself (we'd wipe her
-		// corrections), and never re-fill a customer who is already selected.
+		// so the caller is populated before she has finished typing the name. This does NOT
+		// collapse the search box — she may still be typing, and the guess may be wrong; she
+		// confirms by clicking the card. Never fill over details she has typed by hand, and
+		// never re-apply a customer who is already applied.
 		if (CC_EDITED) return;
 		if (custs.length === 1 && !ords.length) {
-			if ($('#ccCustId').val() !== custs[0].id) $('#ccResults .cc-pick-cust').first().trigger('click');
+			if ($('#ccCustId').val() !== custs[0].id) { ccApplyCustomer(custs[0], false); $('#ccResults .cc-hit').first().addClass('sel'); }
 		} else if (!custs.length && ords.length === 1) {
-			if ($('#ccOrderId').val() !== ords[0].id) $('#ccResults .cc-pick-order').first().trigger('click');
+			if ($('#ccOrderId').val() !== ords[0].id) { ccApplyOrder(ords[0], false); $('#ccResults .cc-hit').first().addClass('sel'); }
 		}
 	}, 'json').fail(function() {
 		if (seq !== ccSeq) return;
@@ -370,28 +380,72 @@ function ccStatusBadges(o) {
 	return b;
 }
 
-// Pick a customer → fill their details, then load their orders to choose from.
-$(document).on('click', '.cc-pick-cust', function() {
-	var c = JSON.parse($(this).attr('data-c'));
-	$('.cc-hit').removeClass('sel'); $(this).addClass('sel');
+// Once we know who's calling, collapse Step 1 + the contact fields into one line and
+// get the screen out of the way — the call itself is what matters now.
+function ccCollapseCaller(extra) {
+	var bits = [$('#ccPhone').val(), $('#ccEmail').val(), extra].filter(function(x){ return $.trim(x || ''); });
+	$('#ccCallerSummary').html(
+		'<i class="ti ti-user-check text-primary" style="font-size:1.3rem;"></i>' +
+		'<div><div class="who">' + ccEsc($('#ccName').val() || '(no name)') + '</div>' +
+		'<div class="meta">' + ccEsc(bits.join(' · ') || 'No contact details on file') + '</div></div>' +
+		'<div class="ms-auto d-flex gap-2">' +
+			'<button class="btn btn-sm btn-light border" id="ccEditCaller"><i class="ti ti-pencil me-1"></i>Edit details</button>' +
+			'<button class="btn btn-sm btn-outline-primary" id="ccChangeCust"><i class="ti ti-repeat me-1"></i>Change customer</button>' +
+		'</div>'
+	).show();
+	$('#ccSearchBox, #ccCallerFields').hide();
+	$('#ccCallerStep').text('The caller');
+}
+
+// Correct a phone number without losing the customer.
+$(document).on('click', '#ccEditCaller', function() {
+	$('#ccCallerFields').show();
+	$('#ccPhone').focus();
+});
+
+// Wrong person — back to the search box, everything about them cleared.
+$(document).on('click', '#ccChangeCust', function() {
+	CC_EDITED = false; CC_ORDER = null; ccSeq++;
+	$('#ccCustId').val(''); $('#ccOrderId').val('');
+	$('#ccName, #ccPhone, #ccEmail').val('');
+	$('#ccCallerSummary').hide().empty();
+	$('#ccOrders, #ccPickedOrder, #ccResults').empty();
+	$('#ccCallerFields').show();
+	$('#ccSearchBox').show();
+	$('#ccSearch').val('').focus();
+	$('#ccCallerStep').text('Step 2 · The caller');
+});
+
+// Apply a customer. `commit` = she clicked them, so we can collapse. The type-ahead calls
+// this with commit=false: it fills the details in but leaves the search box open and
+// focused, so she can keep typing to refine if the guess was wrong.
+function ccApplyCustomer(c, commit) {
 	$('#ccCustId').val(c.id);
 	$('#ccName').val(c.name); $('#ccPhone').val(c.phone); $('#ccEmail').val(c.email);
 	ccShowCaller();
+	if (commit) ccCollapseCaller(c.city);
 	$('#ccOrders').html('<div class="small text-muted">Loading their orders…</div>');
 	$.post('/ajax/call_center/customer_orders.php', { customer_id: c.id }, function(res) {
 		ccRenderOrders((res && res.orders) || [], res && res.note);
 	}, 'json').fail(function(){ $('#ccOrders').empty(); });
-});
+}
 
-// Pick an order directly → it also identifies the caller.
-$(document).on('click', '.cc-pick-order', function() {
-	var o = JSON.parse($(this).attr('data-o'));
-	$('.cc-hit').removeClass('sel'); $(this).addClass('sel');
+function ccApplyOrder(o, commit) {
 	$('#ccCustId').val(o.customer.id || '');
 	$('#ccName').val(o.customer.name || ''); $('#ccPhone').val(o.customer.phone || ''); $('#ccEmail').val(o.customer.email || '');
 	ccShowCaller();
+	if (commit) ccCollapseCaller(o.ship_to);
 	ccRenderOrders([o]);
 	ccSelectOrder(o);
+}
+
+$(document).on('click', '.cc-pick-cust', function() {
+	$('#ccResults .cc-hit').removeClass('sel'); $(this).addClass('sel');
+	ccApplyCustomer(JSON.parse($(this).attr('data-c')), true);
+});
+$(document).on('click', '.cc-pick-order', function() {
+	$('#ccResults .cc-hit').removeClass('sel'); $(this).addClass('sel');
+	ccApplyOrder(JSON.parse($(this).attr('data-o')), true);
 });
 
 function ccRenderOrders(orders, note) {
@@ -442,6 +496,8 @@ function ccManualEntry() {
 	CC_EDITED = true;                       // she's taking over — don't auto-fill over her
 	$('#ccCustId').val(''); $('#ccOrderId').val(''); CC_ORDER = null;
 	$('#ccResults').empty(); $('#ccPickedOrder').empty(); $('#ccOrders').empty();
+	$('#ccCallerSummary').hide().empty();   // nothing to collapse — she's typing them in
+	$('#ccCallerFields').show();
 	ccShowCaller(); $('#ccName').focus();
 }
 $('#ccManual').on('click', function(e) { e.preventDefault(); ccManualEntry(); });
@@ -536,6 +592,8 @@ function ccResetForm() {
 	$('#ccResolutionWrap, #ccRefundWrap, #ccExchangeWrap, #ccCallbackWrap').hide();
 	$('#ccCallback').prop('checked', false);
 	$('#ccSpin, #ccNewNote, #ccCallerBox, #ccFormBox, #ccSearchBox, #ccPhoneReq').hide();
+	$('#ccCallerSummary').hide().empty();
+	$('#ccCallerFields').show();
 	$('#ccCallerStep').text('Step 2 · The caller');
 	$('#ccIntro').show();
 }
