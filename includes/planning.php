@@ -246,6 +246,80 @@
 		return $fallback;
 	}
 
+	/**
+	 * Turn one SKU's raw source buckets (shopify_demand_sources) into the three-row
+	 * breakdown the Research drill-down shows: Online store (web + big/small drafts),
+	 * Shows (one line per tradeshow), and Other.
+	 *
+	 * $netAmazon = true subtracts the Amazon-customer subset from every bucket, matching how
+	 * the BASE animator's demand is computed (last-year total minus his units) — so the rows
+	 * add up to exactly the demand shown next to them.
+	 */
+	function demand_sources_display($cell, $netAmazon = true) {
+		$units = function ($b) use ($netAmazon) {
+			$u = (int)($b['u'] ?? 0);
+			return $netAmazon ? max(0, $u - (int)($b['amz'] ?? 0)) : $u;
+		};
+
+		$web   = $units($cell['web']         ?? []);
+		$big   = $units($cell['draft_big']   ?? []);
+		$small = $units($cell['draft_small'] ?? []);
+
+		$shows = [];
+		foreach (($cell['shows'] ?? []) as $name => $b) {
+			$u = $units($b);
+			if ($u > 0) $shows[] = ['name' => $name, 'units' => $u];
+		}
+		usort($shows, fn($a, $b) => $b['units'] <=> $a['units']);
+		$showTotal = array_sum(array_column($shows, 'units'));
+
+		$other = []; $otherTotal = $units($cell['other'] ?? []);
+		if ($otherTotal > 0) $other[] = ['name' => 'Collective / wholesale / other channels', 'units' => $otherTotal];
+
+		$onlineTotal = $web + $big + $small;
+		return [
+			'online' => ['total' => $onlineTotal, 'web' => $web, 'draft_big' => $big, 'draft_small' => $small],
+			'shows'  => ['total' => $showTotal,  'items' => $shows],
+			'other'  => ['total' => $otherTotal, 'items' => $other],
+			'total'  => $onlineTotal + $showTotal + $otherTotal,
+		];
+	}
+
+	/** An empty three-row breakdown (SKU had no prior-year sales in this window). */
+	function demand_sources_empty() {
+		return [
+			'online' => ['total' => 0, 'web' => 0, 'draft_big' => 0, 'draft_small' => 0],
+			'shows'  => ['total' => 0, 'items' => []],
+			'other'  => ['total' => 0, 'items' => []],
+			'total'  => 0,
+		];
+	}
+
+	/** Sum two breakdowns into one (a base animator + its [Amazon] twin share a display line). */
+	function merge_demand_sources($a, $b) {
+		if (!$a) return $b ?: demand_sources_empty();
+		if (!$b) return $a;
+		$out = demand_sources_empty();
+		foreach ([$a, $b] as $s) {
+			foreach (['total', 'web', 'draft_big', 'draft_small'] as $k) $out['online'][$k] += (int)($s['online'][$k] ?? 0);
+			foreach (['shows', 'other'] as $grp) {
+				$out[$grp]['total'] += (int)($s[$grp]['total'] ?? 0);
+				foreach (($s[$grp]['items'] ?? []) as $it) {
+					$name = (string)$it['name'];
+					$i = null;
+					foreach ($out[$grp]['items'] as $k => $ex) if ($ex['name'] === $name) { $i = $k; break; }
+					if ($i === null) $out[$grp]['items'][] = ['name' => $name, 'units' => (int)$it['units']];
+					else             $out[$grp]['items'][$i]['units'] += (int)$it['units'];
+				}
+			}
+			$out['total'] += (int)($s['total'] ?? 0);
+		}
+		foreach (['shows', 'other'] as $grp) {
+			usort($out[$grp]['items'], fn($x, $y) => $y['units'] <=> $x['units']);
+		}
+		return $out;
+	}
+
 	function build_season_dataset($db) {
 		$today = date('Y-m-d');
 		$y = (int)date('Y');
@@ -265,11 +339,12 @@
 		$priorAmazon  = [];   // season key => [sku => units sold to the Amazon/CDA customer]
 		$priorChannel = [];   // season key => [channel => units]
 		$priorOregon  = [];   // season key => [sku => units FULFILLED from the Oregon Warehouse]
+		$priorSource  = [];   // season key => [sku => source buckets: web / drafts / per-show / other]
 		$shopErr = null;
 		$ttl = $shopReady ? inventory_cache_ttl($db) : 0;
 		$seasonWindows = [];   // season key => [prior_start, prior_end]
 		foreach ($seasons as $s) {
-			if (!$shopReady) { $priorSales[$s['key']] = []; $priorAmazon[$s['key']] = []; $priorChannel[$s['key']] = []; $priorOregon[$s['key']] = []; continue; }
+			if (!$shopReady) { $priorSales[$s['key']] = []; $priorAmazon[$s['key']] = []; $priorChannel[$s['key']] = []; $priorOregon[$s['key']] = []; $priorSource[$s['key']] = []; continue; }
 			$ps = date('Y-m-d', strtotime('-1 year', strtotime($s['start'])));
 			$pe = date('Y-m-d', strtotime('-1 year', strtotime($s['end'])));
 			$seasonWindows[$s['key']] = [$ps, $pe];
@@ -279,21 +354,40 @@
 			// Oregon vs rest split by fulfillment location (cached — heavy order scan).
 			$loc = shopify_cache_remember($db, 'season_loc_'.$ps.'_'.$pe, $ttl, fn() => shopify_sales_by_location($ps, $pe))['data'];
 			$priorOregon[$s['key']] = (is_array($loc) && empty($loc['error'])) ? ($loc['by_sku_oregon'] ?? []) : [];
+			// Where each SKU's units came from — online / per tradeshow / other (cached, heavy scan).
+			$src = shopify_cache_remember($db, 'season_src_'.$ps.'_'.$pe, $ttl, fn() => shopify_demand_sources($ps, $pe))['data'];
+			$priorSource[$s['key']] = (is_array($src) && empty($src['error'])) ? ($src['by_sku'] ?? []) : [];
 			$seasons[array_search($s, $seasons, true)]['prior_window'] = "$ps to $pe";
 		}
 
 		// ── Drop excluded tradeshows from demand ──────────────────────────────
 		// Tradeshows are intermittent; the owner picks which shows to include. Any show
 		// NOT included has its POS units subtracted from that season's prior-year sales,
-		// so we don't project demand for a show we aren't attending.
+		// so we don't project demand for a show we aren't attending. We subtract the show's
+		// units as counted by the source scan (same orders, same rules as prior-year sales),
+		// so the subtraction cancels exactly and the drill-down still adds up to demand.
 		$excludedShows = $shopReady ? demand_excluded_shows($db) : [];
 		if ($excludedShows) {
-			foreach (tradeshow_locations() as $show) {
-				if (!in_array($show['name'], $excludedShows, true)) continue;
-				foreach ($seasonWindows as $key => $w) {
-					$ss = show_sales_by_sku($db, $show, $w[0], $w[1], $ttl);
-					foreach ($ss as $sku => $u) {
-						if (isset($priorSales[$key][$sku])) $priorSales[$key][$sku] = max(0, (int)$priorSales[$key][$sku] - (int)$u);
+			$excludedSet = array_flip($excludedShows);
+			foreach ($seasonWindows as $key => $w) {
+				if (empty($priorSource[$key])) {
+					// Source scan unavailable — fall back to the per-show sales call so an
+					// excluded show is still dropped from demand.
+					foreach (tradeshow_locations() as $show) {
+						if (!isset($excludedSet[$show['name']])) continue;
+						foreach (show_sales_by_sku($db, $show, $w[0], $w[1], $ttl) as $sku => $u) {
+							if (isset($priorSales[$key][$sku])) $priorSales[$key][$sku] = max(0, (int)$priorSales[$key][$sku] - (int)$u);
+						}
+					}
+					continue;
+				}
+				foreach ($priorSource[$key] as $sku => $buckets) {
+					foreach (($buckets['shows'] ?? []) as $name => $cell) {
+						if (!isset($excludedSet[$name])) continue;
+						$u = (int)($cell['u'] ?? 0); $a = (int)($cell['amz'] ?? 0);
+						if ($u > 0 && isset($priorSales[$key][$sku]))  $priorSales[$key][$sku]  = max(0, (int)$priorSales[$key][$sku] - $u);
+						if ($a > 0 && isset($priorAmazon[$key][$sku])) $priorAmazon[$key][$sku] = max(0, (int)$priorAmazon[$key][$sku] - $a);
+						unset($priorSource[$key][$sku]['shows'][$name]);
 					}
 				}
 			}
@@ -341,12 +435,23 @@
 			//     committed for the SKU) — his real, already-placed PO, built fresh with a CDA
 			//     card and no stock held. We use his committed order rather than a last-year
 			//     forecast, and it lands in the current (pre-season) window since it's on the books.
-			$perSeason = []; $perSeasonAmazon = []; $perSeasonOregon = [];
+			$perSeason = []; $perSeasonAmazon = []; $perSeasonOregon = []; $perSeasonSources = [];
 			if ($isAmz) {
 				$committed = ($sku !== '' && isset($fpLoc[$sku])) ? ((int)($fpLoc[$sku]['rest_committed'] ?? 0) + (int)($fpLoc[$sku]['oregon_committed'] ?? 0)) : 0;
 				foreach ($seasons as $i => $s) {
 					$v = ($i === 0) ? $committed : 0;   // lump the placed PO into the first (pre-season) window
 					$perSeason[$s['key']] = $v; $perSeasonAmazon[$s['key']] = $v; $perSeasonOregon[$s['key']] = 0;
+					// This demand is a real order already on the books, not a prior-year projection —
+					// it belongs under "Other", labelled so it reads as this year's committed PO.
+					$src = demand_sources_empty();
+					if ($v > 0) {
+						$src['other'] = ['total' => $v, 'items' => [[
+							'name'  => 'Amazon PO — committed in Shopify now (' . shopify_amazon_customer() . ')',
+							'units' => $v,
+						]]];
+						$src['total'] = $v;
+					}
+					$perSeasonSources[$s['key']] = $src;
 				}
 			} else {
 				foreach ($seasons as $s) {
@@ -355,6 +460,9 @@
 					$perSeason[$s['key']]       = max(0, $tot - $amz);
 					$perSeasonAmazon[$s['key']] = 0;
 					$perSeasonOregon[$s['key']] = ($sku !== '') ? (int)($priorOregon[$s['key']][$sku] ?? 0) : 0;
+					// Net the Amazon customer out of each bucket, exactly as the demand above does.
+					$cell = ($sku !== '') ? ($priorSource[$s['key']][$sku] ?? null) : null;
+					$perSeasonSources[$s['key']] = $cell ? demand_sources_display($cell, true) : demand_sources_empty();
 				}
 			}
 			$fpO = (!$isAmz && $sku !== '' && isset($fpLoc[$sku])) ? (int)$fpLoc[$sku]['oregon'] : null;
@@ -367,6 +475,7 @@
 				'prior_year_sales'  => $perSeason,        // retail units for the base; Amazon (TJ Stumpf) units for the [Amazon] twin
 				'prior_year_oregon' => $perSeasonOregon,  // subset FULFILLED from the Oregon Warehouse
 				'prior_year_amazon' => $perSeasonAmazon,  // Amazon-customer units → CDA card (lives on the [Amazon] twin)
+				'demand_sources'    => $perSeasonSources, // where that demand came from: online / shows / other
 				'bom' => array_map(fn($b) => ['part' => $b['partno'], 'qty_per_unit' => (int)$b['qty']], $bom),
 			];
 		}

@@ -451,6 +451,146 @@
 		];
 	}
 
+	/** A draft/wholesale order at or above this value is a "large" order in the demand split. */
+	function demand_big_order_min() {
+		static $v = null;
+		if ($v !== null) return $v;
+		$v = 1000.0;
+		try {
+			$db = db_connect();
+			if ($db) { $s = setting_get($db, 'demand_big_order_min'); if ($s !== null && (float)$s > 0) $v = (float)$s; }
+		} catch (Throwable $e) { /* default */ }
+		return $v;
+	}
+
+	/**
+	 * Per-SKU demand ATTRIBUTION for a window — where each SKU's units actually came from.
+	 * Scans the same orders as shopify_sales_in_range() under the same rules (cancelled
+	 * excluded, bundles exploded), but tags every unit with its source:
+	 *   web         → online-store checkout
+	 *   draft_big   → draft/wholesale order totalling >= demand_big_order_min()
+	 *   draft_small → draft/wholesale order below that
+	 *   shows       → point-of-sale units, keyed by tradeshow name (the order's retail location)
+	 *   other       → Collective/wholesale and any channel we don't recognise
+	 * Every bucket also carries its Amazon-customer subset ('amz'), so a caller that nets those
+	 * units out of demand (the base animator does) can net them out of the buckets too and have
+	 * the breakdown still add up to the demand it shows.
+	 *
+	 * Returns ['error'=>..., 'by_sku'=>[sku => ['web'=>['u'=>,'amz'=>], 'draft_big'=>…,
+	 *          'draft_small'=>…, 'other'=>…, 'shows'=>[show name => ['u'=>,'amz'=>]]]]].
+	 */
+	function shopify_demand_sources($since, $until) {
+		$mkQuery = fn($locField) => '
+		query($cursor: String, $q: String!) {
+		  orders(first: 100, after: $cursor, query: $q, sortKey: CREATED_AT) {
+		    pageInfo { hasNextPage endCursor }
+		    edges { node {
+		      sourceName
+		      cancelledAt
+		      tags
+		      customer { displayName }
+		      currentTotalPriceSet { shopMoney { amount } }
+		      ' . $locField . '
+		      lineItems(first: 50) { edges { node { quantity sku variant { id } } } }
+		    } }
+		  }
+		}';
+
+		// Shopify location id → show name, so a show's per-year duplicate locations
+		// (Squadfest 2024, Squadfest 2025…) collapse onto one line.
+		$showByLoc = [];
+		foreach (tradeshow_locations() as $show) {
+			foreach (($show['ids'] ?? []) as $lid) $showByLoc[(string)$lid] = $show['name'];
+		}
+
+		$q          = "created_at:>=$since AND created_at:<=$until";
+		$bundles    = shopify_bundle_map();
+		$amazonCust = strtoupper(shopify_amazon_customer());
+		$amazonTag  = strtolower(shopify_amazon_tag());
+		$bigMin     = demand_big_order_min();
+
+		$add = function (&$bySku, $sku, $bucket, $show, $qty, $isAmazon) {
+			if (!isset($bySku[$sku])) {
+				$bySku[$sku] = ['web' => ['u'=>0,'amz'=>0], 'draft_big' => ['u'=>0,'amz'=>0],
+				                'draft_small' => ['u'=>0,'amz'=>0], 'other' => ['u'=>0,'amz'=>0], 'shows' => []];
+			}
+			if ($bucket === 'shows') {
+				if (!isset($bySku[$sku]['shows'][$show])) $bySku[$sku]['shows'][$show] = ['u'=>0,'amz'=>0];
+				$bySku[$sku]['shows'][$show]['u'] += $qty;
+				if ($isAmazon) $bySku[$sku]['shows'][$show]['amz'] += $qty;
+				return;
+			}
+			$bySku[$sku][$bucket]['u'] += $qty;
+			if ($isAmazon) $bySku[$sku][$bucket]['amz'] += $qty;
+		};
+
+		$scan = function ($query) use ($q, $bundles, $amazonCust, $amazonTag, $bigMin, $showByLoc, $add) {
+			$bySku = []; $cursor = null; $pages = 0; $hasNext = false;
+			do {
+				$res = shopify_graphql($query, ['cursor' => $cursor, 'q' => $q]);
+				if (!empty($res['error'])) return ['error' => $res['error'], 'by_sku' => []];
+				$o = $res['data']['orders'] ?? null;
+				if ($o === null) return ['error' => 'Malformed Shopify orders response.', 'by_sku' => []];
+
+				foreach ($o['edges'] as $oe) {
+					$n = $oe['node'];
+					if (!empty($n['cancelledAt'])) continue;
+
+					$chan  = shopify_channel_label($n['sourceName'] ?? '');
+					$tags  = array_map(fn($t) => strtolower(trim($t)), $n['tags'] ?? []);
+					$total = (float)($n['currentTotalPriceSet']['shopMoney']['amount'] ?? 0);
+					$isAmazon = ($amazonCust !== '' && strtoupper(trim((string)($n['customer']['displayName'] ?? ''))) === $amazonCust)
+					         || ($amazonTag !== '' && in_array($amazonTag, $tags, true));
+
+					$show = '';
+					if ($chan === 'pos') {
+						$bucket = 'shows';
+						$gid = (string)($n['retailLocation']['id'] ?? '');
+						$lid = $gid !== '' ? preg_replace('/\D/', '', strrchr($gid, '/') ?: '') : '';
+						$show = $showByLoc[$lid] ?? trim((string)($n['retailLocation']['name'] ?? ''));
+						if ($show === '') $show = 'Point of sale (location not recorded)';
+					} elseif ($chan === 'online') {
+						$bucket = 'web';
+					} elseif ($chan === 'draft/wholesale') {
+						$bucket = $total >= $bigMin ? 'draft_big' : 'draft_small';
+					} else {
+						$bucket = 'other';
+					}
+
+					foreach ($n['lineItems']['edges'] as $le) {
+						$li  = $le['node'];
+						$sku = trim((string)($li['sku'] ?? ''));
+						$qty = (int)($li['quantity'] ?? 0);
+						if ($qty <= 0) continue;
+
+						$vid = $li['variant']['id'] ?? '';
+						if ($sku === '' && $vid && isset($bundles[$vid])) {
+							foreach ($bundles[$vid] as $c) $add($bySku, $c['sku'], $bucket, $show, $qty * (int)$c['qty'], $isAmazon);
+							continue;
+						}
+						if ($sku === '') continue;
+						$add($bySku, $sku, $bucket, $show, $qty, $isAmazon);
+					}
+				}
+
+				$cursor  = $o['pageInfo']['endCursor']  ?? null;
+				$hasNext = $o['pageInfo']['hasNextPage'] ?? false;
+				$pages++;
+			} while ($hasNext && $pages < 40);
+
+			return ['error' => null, 'by_sku' => $bySku, 'truncated' => ($hasNext && $pages >= 40)];
+		};
+
+		$out = $scan($mkQuery('retailLocation { id name }'));
+		// Order.retailLocation needs read_locations (and a recent API version). Without it we
+		// can still attribute POS units — they just land on one combined line instead of per show.
+		if (!empty($out['error']) && stripos($out['error'], 'retailLocation') !== false) {
+			$out = $scan($mkQuery(''));
+			$out['no_show_split'] = true;
+		}
+		return $out;
+	}
+
 	/**
 	 * Net sales (after discounts, EXCLUDING tax & shipping) in a date range,
 	 * grouped by calendar month, by order CREATED date. Returns

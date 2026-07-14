@@ -15,7 +15,7 @@
 	// force the season report to recompute, then bounce back to a clean URL.
 	if (!empty($_GET['fresh'])) {
 		try {
-			$db->exec("DELETE FROM data_cache WHERE ckey = 'season_fp_loc' OR ckey LIKE 'season_loc_%'");
+			$db->exec("DELETE FROM data_cache WHERE ckey = 'season_fp_loc' OR ckey LIKE 'season_loc_%' OR ckey LIKE 'season_src_%'");
 			setting_set($db, 'season_cache_at', '0');
 		} catch (Throwable $e) {}
 		header('Location: /research.php'); exit;
@@ -858,21 +858,73 @@
 	}
 
 	var AMZ_CUST = <?php echo json_encode(shopify_amazon_customer()); ?>;
+	var BIG_ORDER_MIN = <?php echo json_encode(demand_big_order_min()); ?>;
+	function money0(n) { return '$' + Math.round(n).toLocaleString(); }
+
+	// "Where the demand comes from" — three main rows (Online store, Shows, Other), each with
+	// its own sub-lines. The rows are built to add up to exactly the Demand shown on the SKU row.
+	function demandSourceTable(src, demand) {
+		if (!src) return '';
+		var main = function(label, units) {
+			return '<tr class="fw-semibold"><td class="small">' + label + '</td>' +
+				'<td class="small text-end">' + units + '</td></tr>';
+		};
+		var sub = function(label, units) {
+			return '<tr><td class="small text-muted" style="padding-left:26px;">' + label + '</td>' +
+				'<td class="small text-end text-muted">' + units + '</td></tr>';
+		};
+
+		var h = '<table class="table table-sm mb-2" style="max-width:460px;"><thead><tr>' +
+			'<th class="small">Where the demand comes from</th><th class="small text-end">Units</th>' +
+			'</tr></thead><tbody>';
+
+		// 1 — Online store
+		var on = src.online || {};
+		h += main('<i class="ti ti-world me-1"></i>Online store', on.total || 0);
+		if ((on.total || 0) > 0) {
+			if (on.web)         h += sub('web checkout', on.web);
+			if (on.draft_big)   h += sub('drafts &ge; ' + money0(BIG_ORDER_MIN), on.draft_big);
+			if (on.draft_small) h += sub('drafts &lt; ' + money0(BIG_ORDER_MIN), on.draft_small);
+		}
+
+		// 2 — Shows (POS), one sub-line per show
+		var sh = src.shows || {};
+		h += main('<i class="ti ti-tent me-1"></i>Shows <span class="text-muted fw-normal">(POS)</span>', sh.total || 0);
+		(sh.items || []).forEach(function(s){ h += sub(esc(s.name), s.units); });
+
+		// 3 — Other
+		var ot = src.other || {};
+		h += main('<i class="ti ti-dots me-1"></i>Other', ot.total || 0);
+		(ot.items || []).forEach(function(s){ h += sub(esc(s.name), s.units); });
+
+		// Anything the source scan couldn't account for (e.g. its cache is a refresh behind).
+		var gap = (demand || 0) - (src.total || 0);
+		if (gap !== 0) h += sub('<em>Unattributed — click Refresh to re-pull</em>', gap);
+
+		h += '<tr class="fw-bold" style="border-top:2px solid #dee2e6;"><td class="small">Total demand</td>' +
+			'<td class="small text-end">' + (demand || 0) + '</td></tr>';
+		return h + '</tbody></table>';
+	}
+
 	function aiExplain(it) {
 		var d = it.demand || 0, h = it.have || 0, b = it.to_build || 0, bld = (it.buildable == null ? null : it.buildable);
 		var html = '<div class="p-2" style="background:#f8f9fb;"><div class="small">';
+
+		// Where this season's demand actually comes from.
+		html += demandSourceTable(it.sources, d);
+
 		// Regular vs [Amazon] split (this SKU combines the base animator + its [Amazon] twin).
 		if (it.has_amazon && it.regular && it.amazon) {
-			html += '<table class="table table-sm mb-2" style="max-width:420px;"><thead><tr><th class="small">Portion</th><th class="small text-end">Demand</th><th class="small text-end">Have</th><th class="small text-end">Build</th></tr></thead><tbody>' +
+			html += '<table class="table table-sm mb-2" style="max-width:460px;"><thead><tr><th class="small">Portion</th><th class="small text-end">Demand</th><th class="small text-end">On Hand</th><th class="small text-end">Build</th></tr></thead><tbody>' +
 				'<tr><td class="small">Regular <code>' + esc(it.sku) + '</code></td><td class="text-end small">' + (it.regular.demand||0) + '</td><td class="text-end small">' + (it.regular.have||0) + '</td><td class="text-end small">' + (it.regular.to_build||0) + '</td></tr>' +
 				'<tr><td class="small"><code>' + esc(it.sku) + '</code> [Amazon] <span class="text-muted">(' + AMZ_CUST + ')</span></td><td class="text-end small">' + (it.amazon.demand||0) + '</td><td class="text-end small">' + (it.amazon.have||0) + '</td><td class="text-end small stat-neg">' + (it.amazon.to_build||0) + '</td></tr>' +
 				'<tr class="fw-bold"><td class="small">Total</td><td class="text-end small">' + d + '</td><td class="text-end small">' + h + '</td><td class="text-end small">' + b + '</td></tr>' +
 				'</tbody></table>';
 		}
 		html += '<div><strong>Demand</strong> — sold last year in this same season: ' + d + '</div>';
-		html += '<div><strong>Have</strong> — already made, in stock entering this season: ' + h + '</div>';
+		html += '<div><strong>On Hand</strong> — physical units in stock entering this season. Units already <em>committed</em> to open orders are <strong>not</strong> deducted: the demand above is the full season, which already includes those sales, so subtracting them here would double-count and over-build. Entering this season: ' + h + '</div>';
 		if (b > 0) {
-			html += '<div><strong>Build</strong> = demand − stock = ' + d + ' − ' + Math.min(h, d) + ' = <span class="stat-neg">' + b + '</span></div>';
+			html += '<div><strong>Build</strong> = demand − on hand = ' + d + ' − ' + Math.min(h, d) + ' = <span class="stat-neg">' + b + '</span></div>';
 		} else {
 			html += '<div><strong>Build</strong> = 0 — stock already covers demand' + (h > d ? ' (' + (h - d) + ' left over carries into next season)' : '') + '</div>';
 		}
@@ -1027,7 +1079,7 @@
 			return ia - ib || (a < b ? -1 : 1);
 		});
 		var h = '<div class="scroll-table"><table class="table dash-table align-middle"><thead><tr>' +
-			'<th>Item</th><th>Source</th><th class="text-center">Have</th><th class="text-center">Need<br><small class="text-muted fw-normal">season total · Pre·In·Post</small></th>' +
+			'<th>Item</th><th>Source</th><th class="text-center" title="Raw parts: on hand + already on order. Finished goods: physical on hand (committed not deducted).">On Hand<br><small class="text-muted fw-normal">raw: + on order</small></th><th class="text-center">Need<br><small class="text-muted fw-normal">season total · Pre·In·Post</small></th>' +
 			'<th class="text-center">Short by</th>' +
 			'<th class="text-center">Order (MOQ)</th><th class="text-center">' + (isUp ? 'Purchase by (est.)' : 'Order by') + '</th>' +
 			'<th class="text-center">Lead</th><th class="text-end">Est. Cost</th>' + (isUp ? '<th class="text-center">When</th>' : '') + '</tr></thead><tbody>';
@@ -1265,7 +1317,10 @@
 						cards += '<div class="small fw-semibold text-muted">Build (Animators):</div>';
 						if (q.animator_items && q.animator_items.length) {
 							var cbCls = 'canbuild-col' + (window._showCanBuild ? '' : ' d-none');
-							cards += '<table class="table table-sm mb-2"><thead><tr><th class="small">SKU</th><th class="small text-end">Have</th><th class="small text-end">Demand</th><th class="small text-end">Need to Build</th><th class="small text-end ' + cbCls + '">Can build</th></tr></thead><tbody>';
+							cards += '<table class="table table-sm mb-2"><thead><tr><th class="small">SKU</th>' +
+								'<th class="small text-end" title="Physical units in stock. Units committed to open orders are NOT deducted — the demand column is the full season and already includes those sales, so netting them out here would double-count.">On Hand<br><small class="text-muted fw-normal">incl. committed</small></th>' +
+								'<th class="small text-end" title="Units sold last year in this same quarter. Expand the row to see exactly where it came from.">Demand</th>' +
+								'<th class="small text-end">Need to Build</th><th class="small text-end ' + cbCls + '">Can build</th></tr></thead><tbody>';
 							q.animator_items.forEach(function(it, ai){
 								var rid = 'ai-' + si + '-' + ai; cards += '<tr class="ai-row" data-target="' + rid + '" style="cursor:pointer;"><td class="small"><i class="ti ti-chevron-right ai-chev"></i> <code>' + esc(it.sku) + '</code>' + (it.has_amazon ? ' <span class="badge bg-light text-muted border" style="font-size:0.5rem;" title="Includes an Amazon portion — expand for the split">+AMZ</span>' : '') + '</td>' +
 									'<td class="text-end small text-muted">' + (it.have||0) + '</td>' +
@@ -1280,7 +1335,7 @@
 						cards += '<div class="small fw-semibold text-muted">Buy (cases / wings):</div><ul class="small mb-0" style="padding-left:1.1rem;">';
 						q.fg_items.forEach(function(it){
 							cards += '<li><strong>' + it.order + '</strong> × <code>' + esc(it.sku) + '</code> ' +
-								'<span class="text-muted">(have ' + (it.have||0) + ', last-yr ' + (it.need||0) + ')</span></li>';
+								'<span class="text-muted">(on hand ' + (it.have||0) + ', last-yr ' + (it.need||0) + ')</span></li>';
 						});
 						cards += '</ul>';
 					}
