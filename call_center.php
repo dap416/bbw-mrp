@@ -15,7 +15,6 @@
 	$isManager = in_array($_SESSION['user_role'] ?? '', ['admin', 'master'], true);
 	$shopOk    = shopify_is_configured();
 	$agents    = active_users_list($db);
-	$owner     = owner_user($db);
 ?>
 
 <style>
@@ -66,24 +65,42 @@
 	<input type="hidden" id="ccCustId" value="">
 	<input type="hidden" id="ccOrderId" value="">
 
-	<!-- STEP 1 — who's calling -->
-	<div class="cc-step">Step 1 · Who's calling?</div>
-	<div class="input-group mb-2">
-		<span class="input-group-text bg-white"><i class="ti ti-search"></i></span>
-		<input type="text" id="ccSearch" class="form-control cc-search"
-			placeholder="Name, phone, email, or order number…" autocomplete="off" <?php echo $shopOk ? '' : 'disabled'; ?>>
-		<button class="btn btn-primary px-4" id="ccSearchBtn" <?php echo $shopOk ? '' : 'disabled'; ?>>Search</button>
+	<!-- STEP 0 — the first thing Sarah asks the caller -->
+	<div id="ccIntro" class="text-center py-4">
+		<div class="fw-bold mb-1" style="font-size:1.35rem;">Have you ordered with us before?</div>
+		<div class="text-muted small mb-3">Ask the caller, then pick one.</div>
+		<div class="d-flex justify-content-center gap-2 flex-wrap">
+			<button id="ccIntroYes" class="btn btn-primary btn-lg px-5"><i class="ti ti-user-check me-1"></i>Yes — look them up</button>
+			<button id="ccIntroNew" class="btn btn-outline-primary btn-lg px-5"><i class="ti ti-user-plus me-1"></i>No — new customer</button>
+		</div>
 	</div>
-	<div class="d-flex align-items-center gap-3 mb-2 flex-wrap">
-		<span id="ccSearchStatus" class="small text-muted"></span>
-		<a href="#" id="ccManual" class="small text-decoration-none"><i class="ti ti-user-plus me-1"></i>Not in Shopify — enter them by hand</a>
+
+	<!-- STEP 1 — who's calling (existing customers) -->
+	<div id="ccSearchBox" style="display:none;">
+		<div class="cc-step">Step 1 · Who's calling?</div>
+		<div class="input-group mb-2">
+			<span class="input-group-text bg-white"><i class="ti ti-search"></i></span>
+			<input type="text" id="ccSearch" class="form-control cc-search"
+				placeholder="Start typing a name, phone, email, or order number…" autocomplete="off" <?php echo $shopOk ? '' : 'disabled'; ?>>
+			<span class="input-group-text bg-white" id="ccSpin" style="display:none;">
+				<span class="spinner-border spinner-border-sm text-primary"></span>
+			</span>
+		</div>
+		<div class="d-flex align-items-center gap-3 mb-2 flex-wrap">
+			<span id="ccSearchStatus" class="small text-muted"></span>
+			<a href="#" id="ccManual" class="small text-decoration-none"><i class="ti ti-user-plus me-1"></i>Can't find them — enter by hand</a>
+		</div>
+		<div id="ccResults" class="row g-2 mb-3"></div>
 	</div>
-	<div id="ccResults" class="row g-2 mb-3"></div>
 
 	<!-- STEP 2 — the caller (auto-filled, always editable) -->
 	<div id="ccCallerBox" style="display:none;">
 		<hr>
-		<div class="cc-step">Step 2 · The caller</div>
+		<div class="cc-step"><span id="ccCallerStep">Step 2 · The caller</span></div>
+		<div id="ccNewNote" class="alert alert-light border py-2 small mb-2" style="display:none;">
+			<i class="ti ti-user-plus me-1"></i><strong>New customer.</strong>
+			Just take their name and number and what they're after — George will call them back.
+		</div>
 		<div class="row g-2 mb-2">
 			<div class="col-12 col-md-4">
 				<label class="form-label small fw-semibold mb-1">Name <span class="text-danger">*</span></label>
@@ -158,9 +175,7 @@
 
 			<div class="form-check form-switch">
 				<input class="form-check-input" type="checkbox" id="ccCallback" style="transform:scale(1.15);">
-				<label class="form-check-label fw-semibold" for="ccCallback">
-					<?php echo htmlspecialchars($owner['name'] ?? 'George'); ?> needs to call them back
-				</label>
+				<label class="form-check-label fw-semibold" for="ccCallback">George needs to call back</label>
 			</div>
 			<div id="ccCallbackWrap" style="display:none;" class="mt-2 ps-4">
 				<div class="row g-2 align-items-end">
@@ -170,8 +185,8 @@
 					</div>
 					<div class="col-12 col-md-9">
 						<div class="small text-muted">
-							This creates a task on <strong><?php echo htmlspecialchars($owner['name'] ?? 'the owner'); ?></strong>'s
-							<a href="/tasks.php">task list</a> with the caller's number and the reason. Untick it and the task goes away.
+							This adds it to George's <a href="/tasks.php">task list</a> with the caller's number and the reason.
+							Untick it and the task goes away.
 						</div>
 					</div>
 				</div>
@@ -260,26 +275,59 @@ var CC_MANAGER = <?php echo $isManager ? 'true' : 'false'; ?>;
 function ccEsc(s) { return $('<div>').text(s == null ? '' : String(s)).html(); }
 function ccMoney(n) { return '$' + Number(n || 0).toFixed(2); }
 
-// ── Step 1: find who's calling ────────────────────────────────────────────────
+var CC_MODE   = 'existing';   // 'existing' = looked up in Shopify, 'new' = brand-new caller
+var CC_EDITED = false;        // she has hand-typed a caller field — stop auto-filling over her
+
+// Any manual edit to the caller wins over the type-ahead from then on.
+$(document).on('input', '#ccName, #ccPhone, #ccEmail', function() { CC_EDITED = true; });
+
+// ── Step 0: have you ordered with us before? ─────────────────────────────────
+$('#ccIntroYes').on('click', function() {
+	CC_MODE = 'existing';
+	$('#ccIntro').hide();
+	$('#ccSearchBox').show();
+	$('#ccSearch').focus();
+});
+$('#ccIntroNew').on('click', function() {
+	// Brand new caller: skip the lookup entirely. Take their details and what they
+	// want, and default to George ringing them back — that's the whole point of this path.
+	CC_MODE = 'new';
+	$('#ccIntro, #ccSearchBox').hide();
+	$('#ccNewNote').show();
+	$('#ccCallerStep').text('New customer · Their details');
+	$('#ccOrders, #ccPickedOrder').empty();
+	ccShowCaller();
+	$('#ccCallback').prop('checked', true).trigger('change');
+	$('#ccName').focus();
+});
+
+// ── Step 1: find who's calling — searches as she types ───────────────────────
+var ccTimer = null, ccSeq = 0;
+
 function ccSearch() {
 	var term = $.trim($('#ccSearch').val());
-	if (!term) return;
-	$('#ccSearchStatus').removeClass('text-danger').text('Looking…');
-	$('#ccResults').empty();
+	if (term.length < 3) { $('#ccResults').empty(); $('#ccSearchStatus').text(''); return; }
+
+	var seq = ++ccSeq;                     // ignore replies that arrive out of order
+	$('#ccSpin').show();
+	$('#ccSearchStatus').removeClass('text-danger').text('');
 
 	$.post('/ajax/call_center/lookup.php', { term: term }, function(res) {
+		if (seq !== ccSeq) return;         // a newer keystroke already superseded this
+		$('#ccSpin').hide();
 		if (res.error) { $('#ccSearchStatus').addClass('text-danger').text(res.error); return; }
 		$('#ccSearchStatus').text(res.note || '');
 
+		var custs = res.customers || [], ords = res.orders || [];
 		var h = '';
-		(res.customers || []).forEach(function(c) {
+		custs.forEach(function(c) {
 			h += '<div class="col-12 col-md-6"><div class="cc-hit cc-pick-cust" data-c=\'' + ccEsc(JSON.stringify(c)) + '\'>' +
 				'<div class="fw-semibold">' + ccEsc(c.name || '(no name)') + '</div>' +
 				'<div class="small text-muted">' + ccEsc([c.phone, c.email, c.city].filter(Boolean).join(' · ') || 'No contact details') + '</div>' +
 				'<div class="small text-muted">' + c.orders + ' order' + (c.orders === 1 ? '' : 's') + ' · ' + ccMoney(c.spent) + ' lifetime</div>' +
 				'</div></div>';
 		});
-		(res.orders || []).forEach(function(o) {
+		ords.forEach(function(o) {
 			h += '<div class="col-12 col-md-6"><div class="cc-hit cc-pick-order" data-o=\'' + ccEsc(JSON.stringify(o)) + '\'>' +
 				'<div class="fw-semibold">Order ' + ccEsc(o.name) + ' <span class="text-muted fw-normal small">' + ccEsc(o.date) + '</span></div>' +
 				'<div class="small text-muted">' + ccEsc(o.customer.name || 'Guest') + ' · ' + ccMoney(o.total) + '</div>' +
@@ -287,13 +335,32 @@ function ccSearch() {
 				'</div></div>';
 		});
 		$('#ccResults').html(h);
+
+		// Exactly one match and nothing ambiguous → fill the contact details straight away,
+		// so by the time she's finished typing the name the caller is already filled in.
+		// Never do this once she has typed into the caller fields herself (we'd wipe her
+		// corrections), and never re-fill a customer who is already selected.
+		if (CC_EDITED) return;
+		if (custs.length === 1 && !ords.length) {
+			if ($('#ccCustId').val() !== custs[0].id) $('#ccResults .cc-pick-cust').first().trigger('click');
+		} else if (!custs.length && ords.length === 1) {
+			if ($('#ccOrderId').val() !== ords[0].id) $('#ccResults .cc-pick-order').first().trigger('click');
+		}
 	}, 'json').fail(function() {
+		if (seq !== ccSeq) return;
+		$('#ccSpin').hide();
 		$('#ccSearchStatus').addClass('text-danger').text('Lookup failed — you can still fill the ticket in by hand.');
-		ccManualEntry();
 	});
 }
-$('#ccSearchBtn').on('click', ccSearch);
-$('#ccSearch').on('keydown', function(e) { if (e.which === 13) { e.preventDefault(); ccSearch(); } });
+
+// Type-ahead: wait for a short pause so we don't fire a Shopify call per keystroke.
+$('#ccSearch').on('input', function() {
+	clearTimeout(ccTimer);
+	ccTimer = setTimeout(ccSearch, 350);
+});
+$('#ccSearch').on('keydown', function(e) {
+	if (e.which === 13) { e.preventDefault(); clearTimeout(ccTimer); ccSearch(); }
+});
 
 function ccStatusBadges(o) {
 	var b = '';
@@ -373,6 +440,7 @@ $(document).on('click', '.cc-clear-order', function(e) {
 
 function ccShowCaller() { $('#ccCallerBox, #ccFormBox').show(); }
 function ccManualEntry() {
+	CC_EDITED = true;                       // she's taking over — don't auto-fill over her
 	$('#ccCustId').val(''); $('#ccOrderId').val(''); CC_ORDER = null;
 	$('#ccResults').empty(); $('#ccPickedOrder').empty(); $('#ccOrders').empty();
 	ccShowCaller(); $('#ccName').focus();
@@ -405,8 +473,13 @@ $('#ccCallback').on('change', function() { $('#ccCallbackWrap').toggle($(this).i
 // ── Save ─────────────────────────────────────────────────────────────────────
 $('#ccSave').on('click', function() {
 	var name = $.trim($('#ccName').val());
-	if (!name)                 { $('#ccSaveMsg').addClass('text-danger').text('Who called? Please enter a name.'); $('#ccName').focus(); return; }
-	if (!$('#ccReason').val()) { $('#ccSaveMsg').addClass('text-danger').text('Pick a reason for the call.'); return; }
+	if (!name) { $('#ccSaveMsg').addClass('text-danger').text('Who called? Please enter a name.'); $('#ccName').focus(); return; }
+	// A brand-new caller just needs a name and a number — don't block the save on a reason chip.
+	var reason = $('#ccReason').val();
+	if (!reason) {
+		if (CC_MODE !== 'new') { $('#ccSaveMsg').addClass('text-danger').text('Pick a reason for the call.'); return; }
+		reason = 'other';
+	}
 
 	var $b = $(this).prop('disabled', true);
 	$('#ccSaveMsg').removeClass('text-danger text-success').text('Saving…');
@@ -422,7 +495,7 @@ $('#ccSave').on('click', function() {
 		order_number:  CC_ORDER ? CC_ORDER.name : '',
 		order_total:   CC_ORDER ? CC_ORDER.total : '',
 		order_status:  CC_ORDER ? [CC_ORDER.payment, CC_ORDER.fulfilment].filter(Boolean).join(' / ') : '',
-		reason:  $('#ccReason').val(),
+		reason:  reason,
 		summary: $.trim($('#ccSummary').val()),
 		actions: JSON.stringify(actions),
 		refund_amount:  $('#ccRefundWrap').is(':visible')   ? $('#ccRefund').val()   : '',
@@ -445,8 +518,11 @@ $('#ccSave').on('click', function() {
 	});
 });
 
+// Back to the very start — the next call begins with "Have you ordered with us before?"
 function ccResetForm() {
-	$('#ccId').val(0); $('#ccCustId').val(''); $('#ccOrderId').val(''); CC_ORDER = null;
+	CC_MODE = 'existing'; CC_EDITED = false; CC_ORDER = null; ccSeq++;
+	clearTimeout(ccTimer);
+	$('#ccId').val(0); $('#ccCustId').val(''); $('#ccOrderId').val('');
 	$('#ccSearch, #ccName, #ccPhone, #ccEmail, #ccSummary, #ccRefund, #ccExchange, #ccResolution').val('');
 	$('#ccResults, #ccOrders, #ccPickedOrder, #ccSearchStatus').empty();
 	$('.cc-reason, .cc-action').removeClass('on');
@@ -454,8 +530,9 @@ function ccResetForm() {
 	$('.cc-status').removeClass('on'); $('.cc-status[data-k=resolved]').addClass('on'); $('#ccStatus').val('resolved');
 	$('#ccResolutionWrap, #ccRefundWrap, #ccExchangeWrap, #ccCallbackWrap').hide();
 	$('#ccCallback').prop('checked', false);
-	$('#ccCallerBox, #ccFormBox').hide();
-	$('#ccSearch').focus();
+	$('#ccSpin, #ccNewNote, #ccCallerBox, #ccFormBox, #ccSearchBox').hide();
+	$('#ccCallerStep').text('Step 2 · The caller');
+	$('#ccIntro').show();
 }
 $('#ccReset').on('click', function(){ ccResetForm(); $('#ccSaveMsg').text(''); });
 
@@ -579,7 +656,7 @@ $(document).on('click', '.cc-del', function(e) {
 });
 
 ccLoadLog();
-<?php if ($canEdit): ?>$('#ccSearch').focus();<?php endif; ?>
+<?php if ($canEdit): ?>$('#ccIntroYes').focus();<?php endif; ?>
 </script>
 
 <?php require_once(__DIR__."/includes/footer.php"); ?>
