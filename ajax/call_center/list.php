@@ -23,7 +23,9 @@ $q      = trim((string)($_POST['q'] ?? ''));
 $where = []; $args = [];
 if ($from   !== '') { $where[] = "t.called_at >= ?"; $args[] = $from . ' 00:00:00'; }
 if ($to     !== '') { $where[] = "t.called_at <= ?"; $args[] = $to   . ' 23:59:59'; }
-if ($status !== '' && in_array($status, ['open','resolved','waiting'], true)) { $where[] = "t.status = ?"; $args[] = $status; }
+// "Still needs work" also matches the legacy 'waiting' value, which meant the same thing.
+if ($status === 'resolved')   { $where[] = "t.status = 'resolved'"; }
+elseif ($status === 'open')   { $where[] = "t.status <> 'resolved'"; }
 if ($reason !== '' && isset(call_reasons()[$reason])) { $where[] = "t.reason = ?"; $args[] = $reason; }
 if ($agent  > 0)    { $where[] = "t.agent_id = ?"; $args[] = $agent; }
 if ($q      !== '') {

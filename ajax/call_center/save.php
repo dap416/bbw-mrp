@@ -32,8 +32,11 @@ $validActions = call_actions();
 $actions = json_decode((string)($_POST['actions'] ?? '[]'), true);
 $actions = is_array($actions) ? array_values(array_intersect($actions, array_keys($validActions))) : [];
 
+// Two states only: it's either taken care of, or it still needs work. ("waiting" was a
+// third option that meant exactly the same thing as open to anyone reading the report —
+// the resolution note carries the nuance instead. Legacy rows may still hold it.)
 $status = (string)($_POST['status'] ?? 'open');
-if (!in_array($status, ['open', 'resolved', 'waiting'], true)) $status = 'open';
+if ($status !== 'resolved') $status = 'open';
 
 $callback = !empty($_POST['callback_required']) ? 1 : 0;
 $refund   = ($_POST['refund_amount'] ?? '') === '' ? null : round((float)$_POST['refund_amount'], 2);

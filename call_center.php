@@ -107,7 +107,7 @@
 				<input id="ccName" class="form-control" placeholder="Who called">
 			</div>
 			<div class="col-6 col-md-3">
-				<label class="form-label small fw-semibold mb-1">Phone</label>
+				<label class="form-label small fw-semibold mb-1">Phone <span class="text-danger" id="ccPhoneReq" style="display:none;">*</span></label>
 				<input id="ccPhone" class="form-control" placeholder="Phone">
 			</div>
 			<div class="col-6 col-md-5">
@@ -162,15 +162,14 @@
 
 		<!-- Outcome -->
 		<div class="p-3 mb-3" style="background:#f7f9fc;border-radius:10px;">
-			<label class="form-label small fw-semibold mb-2">Is it sorted?</label>
+			<label class="form-label small fw-semibold mb-2">Call outcome</label>
 			<div class="d-flex gap-2 flex-wrap mb-2">
-				<span class="cc-chip cc-status on" data-k="resolved"><i class="ti ti-check me-1"></i>Resolved — all done</span>
-				<span class="cc-chip cc-status" data-k="waiting"><i class="ti ti-clock me-1"></i>Waiting on something</span>
-				<span class="cc-chip cc-status" data-k="open"><i class="ti ti-alert-circle me-1"></i>Still open</span>
+				<span class="cc-chip cc-status on" data-k="resolved"><i class="ti ti-check me-1"></i>Taken care of</span>
+				<span class="cc-chip cc-status" data-k="open"><i class="ti ti-alert-circle me-1"></i>Still needs work</span>
 			</div>
 			<input type="hidden" id="ccStatus" value="resolved">
 			<div id="ccResolutionWrap" style="display:none;" class="mb-2">
-				<input id="ccResolution" class="form-control" placeholder="What's outstanding? (e.g. waiting on the supplier to confirm)">
+				<input id="ccResolution" class="form-control" placeholder="What's still outstanding? (e.g. waiting on the supplier to confirm)">
 			</div>
 
 			<div class="form-check form-switch">
@@ -225,9 +224,8 @@
 				<label class="form-label small fw-semibold mb-1">Status</label>
 				<select id="fStatus" class="form-select form-select-sm">
 					<option value="">Any</option>
-					<option value="open">Still open</option>
-					<option value="waiting">Waiting</option>
-					<option value="resolved">Resolved</option>
+					<option value="open">Still needs work</option>
+					<option value="resolved">Taken care of</option>
 				</select>
 			</div>
 			<div class="col-6 col-md-3">
@@ -296,6 +294,7 @@ $('#ccIntroNew').on('click', function() {
 	$('#ccNewNote').show();
 	$('#ccCallerStep').text('New customer · Their details');
 	$('#ccOrders, #ccPickedOrder').empty();
+	$('#ccPhoneReq').show();          // George can't call them back without a number
 	ccShowCaller();
 	$('#ccCallback').prop('checked', true).trigger('change');
 	$('#ccName').focus();
@@ -472,8 +471,14 @@ $('#ccCallback').on('change', function() { $('#ccCallbackWrap').toggle($(this).i
 
 // ── Save ─────────────────────────────────────────────────────────────────────
 $('#ccSave').on('click', function() {
-	var name = $.trim($('#ccName').val());
+	var name  = $.trim($('#ccName').val());
+	var phone = $.trim($('#ccPhone').val());
 	if (!name) { $('#ccSaveMsg').addClass('text-danger').text('Who called? Please enter a name.'); $('#ccName').focus(); return; }
+	// A new customer isn't in Shopify, so this number is the ONLY way to reach them back.
+	if (CC_MODE === 'new' && !phone) {
+		$('#ccSaveMsg').addClass('text-danger').text('Please get a phone number — it\'s the only way to call a new customer back.');
+		$('#ccPhone').focus(); return;
+	}
 	// A brand-new caller just needs a name and a number — don't block the save on a reason chip.
 	var reason = $('#ccReason').val();
 	if (!reason) {
@@ -488,7 +493,7 @@ $('#ccSave').on('click', function() {
 	$.post('/ajax/call_center/save.php', {
 		id: $('#ccId').val(),
 		caller_name: name,
-		caller_phone: $.trim($('#ccPhone').val()),
+		caller_phone: phone,
 		caller_email: $.trim($('#ccEmail').val()),
 		shopify_customer_id: $('#ccCustId').val(),
 		shopify_order_id: $('#ccOrderId').val(),
@@ -530,7 +535,7 @@ function ccResetForm() {
 	$('.cc-status').removeClass('on'); $('.cc-status[data-k=resolved]').addClass('on'); $('#ccStatus').val('resolved');
 	$('#ccResolutionWrap, #ccRefundWrap, #ccExchangeWrap, #ccCallbackWrap').hide();
 	$('#ccCallback').prop('checked', false);
-	$('#ccSpin, #ccNewNote, #ccCallerBox, #ccFormBox, #ccSearchBox').hide();
+	$('#ccSpin, #ccNewNote, #ccCallerBox, #ccFormBox, #ccSearchBox, #ccPhoneReq').hide();
 	$('#ccCallerStep').text('Step 2 · The caller');
 	$('#ccIntro').show();
 }
@@ -554,8 +559,8 @@ $('#fQ').on('keydown', function(e){ if (e.which === 13) { e.preventDefault(); cc
 function ccRenderStats(s) {
 	var tiles = [
 		['Calls',            s.calls,                       '#4680ff'],
-		['Resolved',         s.resolved,                    '#2ca87f'],
-		['Still open',       s.open,                        s.open ? '#e8a33d' : '#8a94a6'],
+		['Taken care of',    s.resolved,                    '#2ca87f'],
+		['Needs work',       s.open,                        s.open ? '#e8a33d' : '#8a94a6'],
 		['Callbacks due',    s.callbacks,                   s.callbacks ? '#e64545' : '#8a94a6'],
 		['Refunded',         ccMoney(s.refund_total),       '#b91c1c'],
 		['Exchanges',        s.exchanges,                   '#7e57c2']
@@ -585,9 +590,10 @@ function ccRenderLog(tickets) {
 
 	tickets.forEach(function(t, i) {
 		var when = (t.called_at || '').replace(' ', ' · ').slice(0, 16);
-		var st = t.status === 'resolved' ? '<span class="badge bg-success">Resolved</span>'
-			: (t.status === 'waiting' ? '<span class="badge bg-warning text-dark">Waiting</span>'
-			: '<span class="badge bg-danger">Open</span>');
+		// 'waiting' is a legacy value — it always meant the same thing as open: not done.
+		var st = t.status === 'resolved'
+			? '<span class="badge bg-success">Taken care of</span>'
+			: '<span class="badge bg-danger">Needs work</span>';
 		var cb = '';
 		if (t.callback_required) {
 			cb = t.callback_done
