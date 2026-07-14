@@ -29,16 +29,12 @@
 			$_SESSION['user_name']  = $user['name'];
 			$_SESSION['user_role']  = $user['role'];
 			$_SESSION['user_email'] = strtolower(trim($user['username'] ?? ''));
-			$_SESSION['user_access'] = [
-				'access_orders'         => (int)($user['access_orders']         ?? 0),
-				'access_inventory'      => (int)($user['access_inventory']      ?? 0),
-				'access_products'       => (int)($user['access_products']       ?? 0),
-				'access_build'          => (int)($user['access_build']          ?? 0),
-				'access_manufacturers'  => (int)($user['access_manufacturers']  ?? 0),
-				'access_research'       => (int)($user['access_research']       ?? 0),
-				'access_orders_create'  => (int)($user['access_orders_create']  ?? 0),
-				'access_orders_receive' => (int)($user['access_orders_receive'] ?? 0),
-			];
+			// Driven by permission_areas()/permission_flags() so a NEW area is picked up here
+			// automatically. Anything the user has no column/value for lands at 0 = no access.
+			$_SESSION['user_access'] = [];
+			foreach (array_merge(array_keys(permission_areas()), array_keys(permission_flags())) as $col) {
+				$_SESSION['user_access'][$col] = (int)($user[$col] ?? 0);
+			}
 			$_SESSION['user_menu_hidden'] = json_decode($user['menu_hidden'] ?? '[]', true) ?: [];
 
 			header('Location: /home.php');

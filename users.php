@@ -67,14 +67,7 @@
 		'master' => 'Master Admin',
 	];
 
-	$pages = [
-		'access_orders'         => 'Orders',
-		'access_inventory'      => 'Inventory',
-		'access_products'       => 'Products',
-		'access_build'          => 'Packaging',
-		'access_manufacturers'  => 'Manufacturers',
-		'access_research'       => 'Research',
-	];
+	$pages = permission_areas();   // single source of truth (includes/fns.php)
 	$levelOpts = [0 => 'No access', 1 => 'View only', 2 => 'Edit'];
 
 	while ($user = $users->fetch()) {
@@ -335,19 +328,19 @@
 	});
 
 	// SAVE ACCESS
+	// Area labels come from permission_areas() so a new area needs no JS change here.
+	var AREA_LABELS = <?php echo json_encode(permission_areas()); ?>;
+
 	$("[action=saveAccess]").click(function() {
 		var $btn    = $(this);
 		var record  = $btn.attr('record');
-		var access  = {
-			access_orders:         parseInt($("#"+record+"access_orders").val(), 10) || 0,
-			access_inventory:      parseInt($("#"+record+"access_inventory").val(), 10) || 0,
-			access_products:       parseInt($("#"+record+"access_products").val(), 10) || 0,
-			access_build:          parseInt($("#"+record+"access_build").val(), 10) || 0,
-			access_manufacturers:  parseInt($("#"+record+"access_manufacturers").val(), 10) || 0,
-			access_research:       parseInt($("#"+record+"access_research").val(), 10) || 0,
-			access_orders_create:  $("#"+record+"access_orders_create").is(":checked") ? 1 : 0,
-			access_orders_receive: $("#"+record+"access_orders_receive").is(":checked") ? 1 : 0,
-		};
+		var access  = {};
+		// Read every rendered area select by its data-col — no hardcoded key list.
+		$("#"+record+"accessChecks .access-level").each(function() {
+			access[$(this).attr('data-col')] = parseInt($(this).val(), 10) || 0;
+		});
+		access.access_orders_create  = $("#"+record+"access_orders_create").is(":checked") ? 1 : 0;
+		access.access_orders_receive = $("#"+record+"access_orders_receive").is(":checked") ? 1 : 0;
 
 		$btn.prop('disabled', true);
 		$.post('/ajax/users/save_access.php', { record: record, access: JSON.stringify(access) }, function(resp) {
@@ -362,20 +355,17 @@
 
 			var s = resp.saved || {};
 			// Re-sync the form to exactly what the database now holds — proves it persisted.
-			$("#"+record+"access_orders").val(s.access_orders);
-			$("#"+record+"access_inventory").val(s.access_inventory);
-			$("#"+record+"access_products").val(s.access_products);
-			$("#"+record+"access_build").val(s.access_build);
-			$("#"+record+"access_manufacturers").val(s.access_manufacturers);
-			$("#"+record+"access_research").val(s.access_research);
+			$("#"+record+"accessChecks .access-level").each(function() {
+				var col = $(this).attr('data-col');
+				if (s[col] !== undefined) $(this).val(s[col]);
+			});
 			$("#"+record+"access_orders_create").prop('checked', parseInt(s.access_orders_create, 10) === 1);
 			$("#"+record+"access_orders_receive").prop('checked', parseInt(s.access_orders_receive, 10) === 1);
 
 			var lvlTxt = ['No access', 'View only', 'Edit'];
-			var rows = [
-				['Orders', s.access_orders], ['Inventory', s.access_inventory], ['Products', s.access_products],
-				['Packaging', s.access_build], ['Manufacturers', s.access_manufacturers], ['Research', s.access_research]
-			].map(function(r){ return '<div>' + r[0] + ': <strong>' + lvlTxt[parseInt(r[1],10)||0] + '</strong></div>'; }).join('');
+			var rows = Object.keys(AREA_LABELS).map(function(col){
+				return '<div>' + AREA_LABELS[col] + ': <strong>' + lvlTxt[parseInt(s[col], 10) || 0] + '</strong></div>';
+			}).join('');
 			var actions = 'Can create POs: <strong>' + (parseInt(s.access_orders_create,10)===1?'Yes':'No') + '</strong>, ' +
 			              'Can receive: <strong>' + (parseInt(s.access_orders_receive,10)===1?'Yes':'No') + '</strong>';
 			var note = resp.self

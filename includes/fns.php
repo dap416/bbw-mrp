@@ -126,9 +126,51 @@
 			'physical_inventory' => 'Physical Inventory',
 			'manufacturers'      => 'Manufacturers',
 			'tasks'              => 'Task List',
+			'call_center'        => 'Call Center',
 			'cashflow'           => 'Cash Flow',
 			'research'           => 'Research',
 		];
+	}
+
+	/**
+	 * THE canonical list of permission areas: users column => label.
+	 *
+	 * This is the single source of truth — login.php (session hydration), users.php (the
+	 * permission editor) and ajax/users/save_access.php all read it. Adding an area here
+	 * is enough for it to appear everywhere; it defaults to 0 (No access) for every
+	 * standard user until a master explicitly grants it, and admin/master bypass the
+	 * check entirely via access_level(). Run the matching setup_*.php to add the column.
+	 */
+	function permission_areas() {
+		return [
+			'access_orders'         => 'Orders',
+			'access_inventory'      => 'Inventory',
+			'access_products'       => 'Products',
+			'access_build'          => 'Packaging',
+			'access_manufacturers'  => 'Manufacturers',
+			'access_research'       => 'Research',
+			'access_call_center'    => 'Call Center',
+		];
+	}
+
+	/** Boolean action flags that sit alongside the graded areas. */
+	function permission_flags() {
+		return ['access_orders_create' => 'Can create / place POs', 'access_orders_receive' => 'Can receive orders'];
+	}
+
+	/**
+	 * The owner (George) as a user row — who callbacks get assigned to. Matches the
+	 * is_owner() email allowlist first, then falls back to any master admin.
+	 * Returns ['id'=>int,'name'=>string] or null.
+	 */
+	function owner_user($db) {
+		try {
+			$s = $db->query("SELECT id, name FROM users WHERE active = 1 AND LOWER(username) IN ('gparker@bluebirdwaterfowl.com','bluebirdwaterfowl@gmail.com') ORDER BY id ASC LIMIT 1")->fetch();
+			if ($s) return ['id' => (int)$s['id'], 'name' => (string)$s['name']];
+			$s = $db->query("SELECT id, name FROM users WHERE active = 1 AND role = 'master' ORDER BY id ASC LIMIT 1")->fetch();
+			if ($s) return ['id' => (int)$s['id'], 'name' => (string)$s['name']];
+		} catch (Throwable $e) {}
+		return null;
 	}
 
 	/**
@@ -357,6 +399,81 @@
 			"ALTER TABLE tasks ADD COLUMN task_type VARCHAR(24) NOT NULL DEFAULT 'general'",
 			"ALTER TABLE tasks ADD COLUMN task_meta TEXT NULL",
 		] as $sql) { try { $db->exec($sql); } catch (Throwable $e) {} }
+	}
+
+	/**
+	 * Call Center tickets — one row per customer phone call. Kept deliberately flat and
+	 * simple: the agent fills one short form per call and the row answers George's
+	 * questions (who called, what about, was it resolved, was there an order / refund /
+	 * exchange, does George need to call them back).
+	 */
+	function call_center_ensure_tables($db) {
+		$db->exec("CREATE TABLE IF NOT EXISTS call_tickets (
+			id            INT AUTO_INCREMENT PRIMARY KEY,
+			called_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			agent_id      INT NULL,
+			agent_name    VARCHAR(190) NULL,
+
+			caller_name   VARCHAR(190) NOT NULL,
+			caller_phone  VARCHAR(60) NULL,
+			caller_email  VARCHAR(190) NULL,
+
+			shopify_customer_id  VARCHAR(64) NULL,
+			shopify_order_id     VARCHAR(64) NULL,
+			order_number         VARCHAR(40) NULL,
+			order_total          DECIMAL(10,2) NULL,
+			order_status         VARCHAR(80) NULL,
+
+			reason        VARCHAR(40) NOT NULL DEFAULT 'other',
+			summary       TEXT NULL,
+			actions       TEXT NULL,             -- JSON list: refund / exchange / replacement / …
+			refund_amount   DECIMAL(10,2) NULL,
+			exchange_notes  TEXT NULL,
+
+			status        VARCHAR(20) NOT NULL DEFAULT 'open',   -- open | resolved | waiting
+			resolution    TEXT NULL,
+
+			callback_required TINYINT NOT NULL DEFAULT 0,
+			callback_task_id  INT NULL,
+
+			created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			INDEX (called_at), INDEX (status), INDEX (reason), INDEX (agent_id), INDEX (callback_required)
+		) ENGINE=InnoDB");
+	}
+
+	/** Reason-for-call options — the label list the ticket form and the report share. */
+	function call_reasons() {
+		return [
+			'order_status' => 'Order status / where is it',
+			'shipping'     => 'Shipping problem',
+			'damaged'      => 'Damaged or defective',
+			'warranty'     => 'Warranty claim',
+			'refund'       => 'Refund request',
+			'exchange'     => 'Exchange / wrong item',
+			'return'       => 'Return',
+			'cancel'       => 'Cancel an order',
+			'product'      => 'Product question',
+			'new_order'    => 'Wants to place an order',
+			'billing'      => 'Billing / payment',
+			'dealer'       => 'Dealer / wholesale enquiry',
+			'other'        => 'Something else',
+		];
+	}
+
+	/** What the agent actually did on the call. */
+	function call_actions() {
+		return [
+			'refund_issued'    => 'Refund issued',
+			'exchange_sent'    => 'Exchange arranged',
+			'replacement_sent' => 'Replacement part sent',
+			'order_placed'     => 'Order placed',
+			'order_cancelled'  => 'Order cancelled',
+			'tracking_given'   => 'Tracking info given',
+			'question_answered'=> 'Question answered',
+			'escalated'        => 'Escalated to George',
+			'none'             => 'No action needed',
+		];
 	}
 
 	/** Active users, for assignment dropdowns. */

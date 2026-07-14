@@ -174,6 +174,15 @@
         </li>
         <?php } ?>
 
+        <?php if (has_access('call_center') && menu_visible('call_center')) { ?>
+        <li class="pc-item">
+          <a href="/call_center.php" class="pc-link">
+            <span class="pc-micon"><i class="ti ti-headset"></i></span>
+            <span class="pc-mtext">Call Center</span>
+          </a>
+        </li>
+        <?php } ?>
+
         <?php if ($navAdmin && menu_visible('cashflow')) { ?>
         <li class="pc-item">
           <a href="/cashflow.php" class="pc-link">

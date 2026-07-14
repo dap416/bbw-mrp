@@ -1564,6 +1564,147 @@
 		return ['error' => null, 'by_date' => $byDate, 'total' => $total];
 	}
 
+	// ── Call Center lookups ──────────────────────────────────────────────────────
+	// These power the ticket form: find who is calling, then pull their orders so the
+	// agent never has to retype an order number or hunt through the Shopify admin.
+	// NOTE: customer lookup needs the read_customers scope on the app.
+
+	/** Friendlier message when the app is missing a scope these lookups need. */
+	function shopify_scope_hint($err, $what) {
+		if ($err && (stripos($err, 'access denied') !== false || stripos($err, 'not approved') !== false || stripos($err, 'scope') !== false)) {
+			return "Shopify won't return $what yet — the app is missing the read_customers scope. Add it (Dev Dashboard → your app → Versions), reinstall, then press Save on the Shopify card in Integrations.";
+		}
+		return $err;
+	}
+
+	/**
+	 * Find customers by name, email or phone — the "who is calling?" lookup.
+	 * Returns ['error'=>…, 'customers'=>[['id','name','email','phone','orders','spent','city']]].
+	 */
+	function shopify_customer_search($term) {
+		$term = trim((string)$term);
+		if ($term === '') return ['error' => null, 'customers' => []];
+
+		$query = '
+		query($q: String!) {
+		  customers(first: 8, query: $q) {
+		    edges { node {
+		      id
+		      displayName
+		      defaultEmailAddress { emailAddress }
+		      defaultPhoneNumber { phoneNumber }
+		      numberOfOrders
+		      amountSpent { amount }
+		      defaultAddress { city province }
+		    } }
+		  }
+		}';
+		// Shopify's customer index matches name / email / phone. A trailing wildcard makes
+		// partial names work ("wil" → Wilson), but it must NOT be added to an email or a
+		// phone number — those are matched whole, and a '*' makes the query return nothing.
+		$esc   = str_replace(['"', '\\'], '', $term);
+		$exact = (strpos($esc, '@') !== false) || preg_match('/^[\d\s()+.-]+$/', $esc);
+		$res = shopify_graphql($query, ['q' => $exact ? $esc : $esc . '*']);
+		if (!empty($res['error'])) return ['error' => shopify_scope_hint($res['error'], 'customers'), 'customers' => []];
+
+		$out = [];
+		foreach (($res['data']['customers']['edges'] ?? []) as $e) {
+			$n = $e['node'];
+			$addr = $n['defaultAddress'] ?? [];
+			$out[] = [
+				'id'     => (string)($n['id'] ?? ''),
+				'name'   => trim((string)($n['displayName'] ?? '')),
+				'email'  => (string)($n['defaultEmailAddress']['emailAddress'] ?? ''),
+				'phone'  => (string)($n['defaultPhoneNumber']['phoneNumber'] ?? ''),
+				'orders' => (int)($n['numberOfOrders'] ?? 0),
+				'spent'  => (float)($n['amountSpent']['amount'] ?? 0),
+				'city'   => trim(((string)($addr['city'] ?? '')) . (empty($addr['province']) ? '' : ', ' . $addr['province']), ', '),
+			];
+		}
+		return ['error' => null, 'customers' => $out];
+	}
+
+	/** Shape one Shopify order node into the compact form the ticket UI shows. */
+	function shopify_order_row($n) {
+		$lines = [];
+		foreach (($n['lineItems']['edges'] ?? []) as $le) {
+			$li = $le['node'];
+			$lines[] = ['sku' => (string)($li['sku'] ?? ''), 'title' => (string)($li['title'] ?? ''), 'qty' => (int)($li['quantity'] ?? 0)];
+		}
+		$track = [];
+		foreach (($n['fulfillments'] ?? []) as $f) {
+			foreach (($f['trackingInfo'] ?? []) as $t) {
+				$num = trim((string)($t['number'] ?? ''));
+				if ($num !== '') $track[] = ['number' => $num, 'url' => (string)($t['url'] ?? ''), 'company' => (string)($t['company'] ?? '')];
+			}
+		}
+		$addr = $n['shippingAddress'] ?? [];
+		return [
+			'id'        => (string)($n['id'] ?? ''),
+			'name'      => (string)($n['name'] ?? ''),               // e.g. #1042
+			'date'      => substr((string)($n['createdAt'] ?? ''), 0, 10),
+			'cancelled' => !empty($n['cancelledAt']),
+			'payment'   => (string)($n['displayFinancialStatus'] ?? ''),
+			'fulfilment'=> (string)($n['displayFulfillmentStatus'] ?? ''),
+			'total'     => (float)($n['currentTotalPriceSet']['shopMoney']['amount'] ?? 0),
+			'refunded'  => (float)($n['totalRefundedSet']['shopMoney']['amount'] ?? 0),
+			'customer'  => [
+				'id'    => (string)($n['customer']['id'] ?? ''),
+				'name'  => (string)($n['customer']['displayName'] ?? ''),
+				'email' => (string)($n['customer']['defaultEmailAddress']['emailAddress'] ?? ''),
+				'phone' => (string)($n['customer']['defaultPhoneNumber']['phoneNumber'] ?? ''),
+			],
+			'ship_to'   => trim(((string)($addr['city'] ?? '')) . (empty($addr['province']) ? '' : ', ' . $addr['province']), ', '),
+			'tracking'  => $track,
+			'lines'     => $lines,
+		];
+	}
+
+	/** The GraphQL used by both order lookups below. */
+	function shopify_order_query() {
+		return '
+		query($q: String!) {
+		  orders(first: 10, query: $q, sortKey: CREATED_AT, reverse: true) {
+		    edges { node {
+		      id
+		      name
+		      createdAt
+		      cancelledAt
+		      displayFinancialStatus
+		      displayFulfillmentStatus
+		      currentTotalPriceSet { shopMoney { amount } }
+		      totalRefundedSet { shopMoney { amount } }
+		      customer { id displayName defaultEmailAddress { emailAddress } defaultPhoneNumber { phoneNumber } }
+		      shippingAddress { city province }
+		      fulfillments(first: 5) { trackingInfo { number url company } }
+		      lineItems(first: 25) { edges { node { quantity sku title } } }
+		    } }
+		  }
+		}';
+	}
+
+	/** Recent orders for one customer (GID), newest first — shown when the agent picks a caller. */
+	function shopify_customer_orders($customerGid) {
+		$num = preg_replace('/\D/', '', strrchr((string)$customerGid, '/') ?: (string)$customerGid);
+		if ($num === '') return ['error' => null, 'orders' => []];
+		$res = shopify_graphql(shopify_order_query(), ['q' => "customer_id:$num"]);
+		if (!empty($res['error'])) return ['error' => $res['error'], 'orders' => []];
+		$out = [];
+		foreach (($res['data']['orders']['edges'] ?? []) as $e) $out[] = shopify_order_row($e['node']);
+		return ['error' => null, 'orders' => $out];
+	}
+
+	/** Look an order up by its number ("1042", "#1042") — the caller usually reads it out. */
+	function shopify_order_lookup($orderName) {
+		$name = ltrim(trim((string)$orderName), '#');
+		if ($name === '') return ['error' => null, 'orders' => []];
+		$res = shopify_graphql(shopify_order_query(), ['q' => 'name:' . $name]);
+		if (!empty($res['error'])) return ['error' => $res['error'], 'orders' => []];
+		$out = [];
+		foreach (($res['data']['orders']['edges'] ?? []) as $e) $out[] = shopify_order_row($e['node']);
+		return ['error' => null, 'orders' => $out];
+	}
+
 	/** Map a Shopify sourceName to a friendly channel label. */
 	function shopify_channel_label($source) {
 		$s = strtolower($source);

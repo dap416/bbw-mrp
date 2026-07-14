@@ -21,8 +21,9 @@
 	// Self-heal: make sure the permission columns exist even if the one-time
 	// migration (setup_user_perms.php) was never run on this server. Without
 	// this, the UPDATE below would throw a 500 and the save would silently fail.
-	$levelCols = ['access_orders','access_inventory','access_products','access_build','access_manufacturers','access_research'];
-	$flagCols  = ['access_orders_create','access_orders_receive'];
+	// Columns are driven by permission_areas()/permission_flags() — a new area needs no edit here.
+	$levelCols = array_keys(permission_areas());
+	$flagCols  = array_keys(permission_flags());
 	foreach (array_merge($levelCols, $flagCols) as $col) {
 		try { $db->exec("ALTER TABLE `users` ADD COLUMN `$col` TINYINT NOT NULL DEFAULT 0"); }
 		catch (Throwable $e) { /* duplicate column = already there, fine */ }
@@ -33,25 +34,19 @@
 	$flag = fn($k) => !empty($access[$k]) ? 1 : 0;
 
 	try {
-		$stmt = $db->prepare(
-			"UPDATE `users` SET
-				`access_orders` = ?, `access_inventory` = ?, `access_products` = ?,
-				`access_build` = ?, `access_manufacturers` = ?, `access_research` = ?,
-				`access_orders_create` = ?, `access_orders_receive` = ?
-			 WHERE `id` = ?");
-		$stmt->execute([
-			$lvl('access_orders'), $lvl('access_inventory'), $lvl('access_products'),
-			$lvl('access_build'), $lvl('access_manufacturers'), $lvl('access_research'),
-			$flag('access_orders_create'), $flag('access_orders_receive'),
-			$record,
-		]);
+		$sets = []; $vals = [];
+		foreach ($levelCols as $col) { $sets[] = "`$col` = ?"; $vals[] = $lvl($col); }
+		foreach ($flagCols  as $col) { $sets[] = "`$col` = ?"; $vals[] = $flag($col); }
+		$vals[] = $record;
+		$db->prepare("UPDATE `users` SET " . implode(', ', $sets) . " WHERE `id` = ?")->execute($vals);
 	} catch (Throwable $e) {
 		echo json_encode(['ok' => false, 'error' => 'Save failed: ' . $e->getMessage()]);
 		exit;
 	}
 
 	// Read the row back so the UI can prove what's now stored in the database.
-	$row = $db->prepare("SELECT name, access_orders, access_inventory, access_products, access_build, access_manufacturers, access_research, access_orders_create, access_orders_receive FROM `users` WHERE `id` = ?");
+	$cols = implode(', ', array_map(fn($c) => "`$c`", array_merge($levelCols, $flagCols)));
+	$row = $db->prepare("SELECT `name`, $cols FROM `users` WHERE `id` = ?");
 	$row->execute([$record]);
 	$saved = $row->fetch() ?: [];
 
