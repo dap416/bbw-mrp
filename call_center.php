@@ -39,6 +39,37 @@
                   border:1px solid #cfe0ff; background:#eef5ff; border-radius:10px; padding:10px 14px; }
 .cc-caller-bar .who  { font-weight:700; font-size:1rem; }
 .cc-caller-bar .meta { color:#5b6673; font-size:0.85rem; }
+
+/* Call log as stacked cards — used on phones instead of the wide table. */
+.cc-card        { border:1px solid #e3e6ea; border-radius:12px; background:#fff; padding:12px 14px; margin-bottom:10px; }
+.cc-card-head   { cursor:pointer; }
+.cc-card-head:active { opacity:.7; }
+.cc-card .cc-detail  { margin-top:10px; border-top:1px solid #eef0f3; }
+.cc-tel         { font-weight:600; text-decoration:none; }
+
+/* ── Phone layout: bigger targets, one thing at a time ────────────────────── */
+@media (max-width: 767.98px) {
+	/* Stack the "ordered before?" buttons full-width so they're easy to hit. */
+	#ccIntro .d-flex { flex-direction:column; }
+	#ccIntro .btn    { width:100%; }
+	#ccIntro .fw-bold { font-size:1.2rem; }
+
+	/* Roomier chips and search for thumbs. */
+	.cc-chip   { padding:9px 15px; font-size:0.92rem; margin:0 8px 8px 0; }
+	.cc-search { font-size:1.1rem; }
+
+	/* Save / Clear span the width and are tall enough to tap confidently. */
+	#ccSave  { flex:1 1 auto; padding:14px; font-size:1.05rem; }
+	#ccReset { padding:14px 18px; }
+
+	/* Compact stat tiles, three across. */
+	#ccStats .cc-stat   { padding:10px 8px; text-align:center; }
+	#ccStats .cc-stat .v { font-size:1.3rem; }
+	#ccStats .cc-stat .l { font-size:0.66rem; }
+
+	/* Filters hide behind a toggle so the log is what you see first. */
+	#ccFilters.cc-collapsed { display:none; }
+}
 </style>
 
 <div class="mb-3 d-flex align-items-center justify-content-between flex-wrap gap-2">
@@ -220,7 +251,10 @@
 
 	<div class="card">
 	<div class="card-body">
-		<div class="row g-2 align-items-end mb-3">
+		<button id="ccFilterToggle" class="btn btn-light btn-sm w-100 mb-2 d-md-none">
+			<i class="ti ti-filter me-1"></i>Filters &amp; search
+		</button>
+		<div id="ccFilters" class="row g-2 align-items-end mb-3 cc-collapsed">
 			<div class="col-6 col-md-2">
 				<label class="form-label small fw-semibold mb-1">From</label>
 				<input id="fFrom" type="date" class="form-control form-control-sm" value="<?php echo date('Y-m-d', strtotime('-30 days')); ?>">
@@ -614,6 +648,9 @@ function ccLoadLog() {
 $('#fApply').on('click', ccLoadLog);
 $('#fQ').on('keydown', function(e){ if (e.which === 13) { e.preventDefault(); ccLoadLog(); } });
 
+// On phones the filters start collapsed so the log is front-and-center.
+$('#ccFilterToggle').on('click', function(){ $('#ccFilters').toggleClass('cc-collapsed'); });
+
 function ccRenderStats(s) {
 	var tiles = [
 		['Calls',            s.calls,                       '#4680ff'],
@@ -625,7 +662,7 @@ function ccRenderStats(s) {
 	];
 	var h = '';
 	tiles.forEach(function(t) {
-		h += '<div class="col-6 col-md-2"><div class="cc-stat">' +
+		h += '<div class="col-4 col-md-2"><div class="cc-stat">' +
 			'<div class="v" style="color:' + t[2] + ';">' + ccEsc(t[1]) + '</div><div class="l">' + t[0] + '</div></div></div>';
 	});
 	// Top reasons — what people actually ring about.
@@ -639,8 +676,16 @@ function ccRenderStats(s) {
 	$('#ccStats').html(h);
 }
 
+// Phones get a stacked-card list; anything wider gets the full table.
+var CC_MOBILE = window.matchMedia('(max-width: 767.98px)');
+function ccOnBreakpoint() { if (window._ccTickets) ccRenderLog(window._ccTickets); }
+try { CC_MOBILE.addEventListener('change', ccOnBreakpoint); }
+catch (e) { CC_MOBILE.addListener(ccOnBreakpoint); }   // older Safari
+
 function ccRenderLog(tickets) {
+	window._ccTickets = tickets;
 	if (!tickets.length) { $('#ccLog').html('<div class="alert alert-light border mb-0 text-muted">No calls match these filters.</div>'); return; }
+	if (CC_MOBILE.matches) { ccRenderLogCards(tickets); return; }
 
 	var h = '<div class="table-responsive"><table class="table align-middle" style="font-size:0.88rem;"><thead><tr>' +
 		'<th>When</th><th>Caller</th><th>About</th><th>Order</th><th>Outcome</th><th>Taken by</th><th></th>' +
@@ -676,6 +721,45 @@ function ccRenderLog(tickets) {
 	});
 	$('#ccLog').html(h + '</tbody></table></div>');
 	window._ccTickets = tickets;
+}
+
+// Same data as the table, laid out as tap-to-open cards for phones. The header is
+// what's tappable; the phone number and the expanded detail sit outside it so
+// tapping "call back" or a link inside the detail doesn't collapse the card.
+function ccRenderLogCards(tickets) {
+	var h = '';
+	tickets.forEach(function(t, i) {
+		var when = (t.called_at || '').replace(' ', ' · ').slice(0, 16);
+		var st = t.status === 'resolved'
+			? '<span class="badge bg-success">Taken care of</span>'
+			: '<span class="badge bg-danger">Needs work</span>';
+		var cb = '';
+		if (t.callback_required) {
+			cb = t.callback_done
+				? ' <span class="badge bg-light text-dark border">Called back</span>'
+				: ' <span class="badge" style="background:#e64545;">Callback due</span>';
+		}
+		var money = '';
+		if (t.refund_amount > 0) money += ' <span class="badge bg-light text-dark border">Refund ' + ccMoney(t.refund_amount) + '</span>';
+		if (t.actions.indexOf('exchange_sent') !== -1) money += ' <span class="badge bg-light text-dark border">Exchange</span>';
+
+		h += '<div class="cc-card">' +
+			'<div class="cc-row cc-card-head" data-t="' + i + '">' +
+				'<div class="d-flex justify-content-between align-items-start gap-2 mb-1">' +
+					'<div class="fw-bold" style="font-size:1.02rem;">' + ccEsc(t.caller_name) + '</div>' +
+					'<div class="text-nowrap">' + st + cb + '</div>' +
+				'</div>' +
+				'<div class="small mb-1">' + ccEsc(CC_REASONS[t.reason] || t.reason) + money + '</div>' +
+				(t.order_number ? '<div class="small text-muted">Order ' + ccEsc(t.order_number) + ' · ' + ccMoney(t.order_total) + '</div>' : '') +
+				'<div class="text-muted small">' + ccEsc(when) + (t.agent_name ? ' · ' + ccEsc(t.agent_name) : '') + '</div>' +
+			'</div>' +
+			(t.caller_phone
+				? '<div class="small mt-1"><a class="cc-tel" href="tel:' + ccEsc(t.caller_phone) + '"><i class="ti ti-phone me-1"></i>' + ccEsc(t.caller_phone) + '</a></div>'
+				: (t.caller_email ? '<div class="small text-muted mt-1">' + ccEsc(t.caller_email) + '</div>' : '')) +
+			'<div class="cc-detail" id="ccd' + i + '" style="display:none;">' + ccDetail(t) + '</div>' +
+			'</div>';
+	});
+	$('#ccLog').html(h);
 }
 
 function ccDetail(t) {
