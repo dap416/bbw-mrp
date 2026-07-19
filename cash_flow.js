@@ -47,7 +47,6 @@
 	$('#cfBuffer').on('change', function(){ saveSetting({ cash_buffer: $(this).val() }).always(() => location.reload()); });
 	$('#cfTax').on('change', function(){ saveSetting({ avg_sales_tax_pct: $(this).val() }).always(() => location.reload()); });
 	$('#cfAvailDebt').on('change', function(){ saveSetting({ cf_avail_debt: $(this).val() }).always(() => location.reload()); });
-	$('#cfGrowth').on('change', function(){ const g = parseInt($(this).val(), 10) || 0; const u = new URL(location.href); u.searchParams.set('growth', g); location.href = u.toString(); });
 
 	/* ---- snapshot ---- */
 	$('#cfSnapBtn').on('click', function(){

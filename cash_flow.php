@@ -21,7 +21,7 @@ $hs      = cf_horizon_start();
 $buffer  = cash_buffer($db);
 $taxPct  = cf_avg_sales_tax_pct($db);
 $shopPct = shopify_loan_pct($db);
-$growth  = isset($_GET['growth']) ? (float)$_GET['growth'] : 0.0;
+$growth  = 0.0;   // no growth control in the design; kept at 0 (prior-year baseline)
 $availDebt = (float)(setting_get($db, 'cf_avail_debt') ?: 12000);
 
 $acc     = cf_opening_accounts($db, $hs);   // projection opening (snapshot if present, else live)
@@ -134,9 +134,9 @@ $nav = [
 		['label' => 'Cash Management', 'icon' => 'clipboard', 'href' => '/cashflow.php'],
 	],
 ];
-$statsHtml = t_stat(cf_money($cashNow), 'Cash on hand', 'good')
-	. t_stat(cf_money($availNow), 'Avail credit', 'accent')
-	. t_stat(cf_money($debtNow), 'Total debt', 'warn');
+// Top bar intentionally minimal — the liquidity readouts live in the control bar
+// below (avoids duplicating them), and the module name is already in the sidebar.
+$statsHtml = '';
 ?>
 <!doctype html>
 <html lang="en">
@@ -144,11 +144,22 @@ $statsHtml = t_stat(cf_money($cashNow), 'Cash on hand', 'good')
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
 	<title>Cash Flow · BBW MRP</title>
-	<link rel="stylesheet" href="/titan-bbw/titan-bbw.css">
+	<link rel="preconnect" href="https://fonts.googleapis.com">
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+	<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+	<link rel="stylesheet" href="/titan-bbw/titan-bbw.css?v=<?php echo @filemtime(__DIR__ . '/titan-bbw/titan-bbw.css'); ?>">
 	<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
 	<style>
 	/* ---- module-local styles (matrix, control bar, modals) ---- */
-	.cf-bar{ display:flex; align-items:center; gap:16px; flex-wrap:wrap; margin-bottom:18px; }
+	/* flush, divider-joined layout (locked together — no floating rounded cards) */
+	.titan-app .t-content{ padding:0; }
+	.titan-app .t-panel{ background:transparent; border:0; border-radius:0; box-shadow:none; margin:0 !important; border-bottom:1px solid var(--line); }
+	.titan-app .t-panel-body{ padding:16px 22px; }
+	.cf-view > .t-panel:last-child{ border-bottom:none; }
+	.cf-strip{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:10px 22px; border-bottom:1px solid var(--line); }
+	.cf-bar{ display:flex; align-items:center; gap:16px; flex-wrap:wrap; padding:13px 22px; border-bottom:1px solid var(--line); }
+	.titan-app .t-table tfoot td{ border-top:1px solid var(--line-2); font-family:var(--font-num); font-variant-numeric:tabular-nums; color:var(--tx-hi); font-weight:700; padding-top:9px; }
+	.titan-app .t-table tfoot .lbl{ font-family:var(--font-mono); font-size:9px; letter-spacing:.06em; text-transform:uppercase; color:var(--tx-lo); font-weight:600; }
 	.cf-ctrl{ display:flex; align-items:center; gap:8px; }
 	.cf-mini{ display:flex; align-items:center; gap:6px; background:var(--bg-inset); border:1px solid var(--line-2); border-radius:8px; padding:5px 10px; }
 	.cf-mini label{ font-family:var(--font-mono); font-size:9.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--tx-lo); }
@@ -159,7 +170,7 @@ $statsHtml = t_stat(cf_money($cashNow), 'Cash on hand', 'good')
 	.cf-ro-val{ font-family:var(--font-num); font-variant-numeric:tabular-nums; font-size:16px; font-weight:700; color:var(--tx-hi); }
 	.cf-ro.accent .cf-ro-val{ color:var(--accent); }
 
-	.cf-mx-wrap{ overflow-x:auto; border-radius:11px; border:1px solid var(--line); background:var(--bg-inset); }
+	.cf-mx-wrap{ overflow-x:auto; }
 	table.cf-mx{ border-collapse:collapse; width:100%; min-width:1000px; }
 	.cf-mx th, .cf-mx td{ padding:7px 12px; border-bottom:1px solid var(--line); white-space:nowrap; }
 	.cf-mx thead th{ position:sticky; top:0; z-index:2; background:var(--bg-inset); font-family:var(--font-mono); font-size:9.5px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--tx-lo); text-align:right; }
@@ -179,8 +190,10 @@ $statsHtml = t_stat(cf_money($cashNow), 'Cash on hand', 'good')
 
 	.cf-view{ display:none; }
 	.cf-view.on{ display:block; }
-	.cf-acct-grid{ display:grid; grid-template-columns:0.8fr 1.1fr 1.1fr; gap:14px; }
-	@media(max-width:1100px){ .cf-acct-grid{ grid-template-columns:1fr; } }
+	.cf-acct-grid{ display:grid; grid-template-columns:minmax(0,0.8fr) minmax(0,1.1fr) minmax(0,1.1fr); gap:0; }
+	.cf-acct-grid > .t-panel{ border-bottom:none; border-right:1px solid var(--line); }
+	.cf-acct-grid > .t-panel:last-child{ border-right:none; }
+	@media(max-width:1100px){ .cf-acct-grid{ grid-template-columns:1fr; } .cf-acct-grid > .t-panel{ border-right:none; border-bottom:1px solid var(--line); } }
 	.cf-modal-body{ padding:20px 22px; }
 	.cf-modal-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; }
 	.cf-x{ background:none; border:none; color:var(--tx-lo); cursor:pointer; font-size:18px; line-height:1; }
@@ -198,7 +211,7 @@ $statsHtml = t_stat(cf_money($cashNow), 'Cash on hand', 'good')
 	</style>
 </head>
 <body>
-<?php echo t_shell_open('Cash Flow', $nav, $statsHtml, 'dark'); ?>
+<?php echo t_shell_open('', $nav, $statsHtml, 'dark'); ?>
 
 	<!-- ===== CONTROL BAR ===== -->
 	<div class="cf-bar">
@@ -209,7 +222,6 @@ $statsHtml = t_stat(cf_money($cashNow), 'Cash on hand', 'good')
 		</div>
 		<div class="cf-mini"><label>Cash buffer</label><span style="color:var(--tx-lo)">$</span><input id="cfBuffer" value="<?php echo (int)$buffer; ?>"></div>
 		<div class="cf-mini"><label>Avg sales tax</label><input id="cfTax" value="<?php echo rtrim(rtrim(number_format($taxPct, 2), '0'), '.'); ?>"><span style="color:var(--tx-lo)">%</span></div>
-		<div class="cf-mini"><label>Growth vs LY</label><input id="cfGrowth" value="<?php echo (int)$growth; ?>"><span style="color:var(--tx-lo)">%</span></div>
 		<div class="cf-readouts">
 			<div class="cf-ro"><div class="cf-ro-lbl">Cash on hand</div><div class="cf-ro-val"><?php echo cf_money($cashNow); ?></div></div>
 			<div class="cf-ro"><div class="cf-ro-lbl">Avail credit</div><div class="cf-ro-val"><?php echo cf_money($availNow); ?></div></div>
@@ -218,10 +230,10 @@ $statsHtml = t_stat(cf_money($cashNow), 'Cash on hand', 'good')
 		</div>
 	</div>
 
-	<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+	<div class="cf-strip">
 		<span class="t-eyebrow"><?php
-			if ($snap) echo 'Opening balances · ' . strtoupper(date('M j', strtotime($snap['captured_at']))) . ' snapshot (' . htmlspecialchars($snap['source']) . ')';
-			else echo 'Opening balances · LIVE (no snapshot yet)';
+			if ($snap) { $srcLbl = ($snap['source'] === 'cron') ? 'auto · month-end' : 'manual'; echo 'Opening balances · frozen ' . strtoupper(date('M j', strtotime($snap['captured_at']))) . ' · ' . $srcLbl; }
+			else echo 'Opening balances · live (not frozen yet)';
 		?></span>
 		<button class="t-btn sm" id="cfSnapBtn" data-frozen="<?php echo $snap ? '1' : '0'; ?>"><?php echo titan_icon('upload', 13); ?><span>Take starting snapshot</span></button>
 		<?php if ($snap): ?>
@@ -341,6 +353,11 @@ $statsHtml = t_stat(cf_money($cashNow), 'Cash on hand', 'good')
 
 	<!-- ============ VIEW: ACCOUNTS ============ -->
 	<div class="cf-view" id="view-accounts">
+		<?php
+		$bankTot = 0.0; foreach ($live['banks'] as $b) $bankTot += $b['balance'];
+		$cardBal = 0.0; $cardLim = 0.0; foreach ($live['cards'] as $c) { $cardBal += $c['balance']; $cardLim += ($c['limit'] ?? 0); } $cardAvail = $cardLim - $cardBal;
+		$locDrawn = 0.0; $locCeil = 0.0; foreach ($live['locs'] as $l) { $locDrawn += $l['drawn']; $locCeil += $l['ceiling']; } $locAvail = $locCeil - $locDrawn;
+		?>
 		<div class="cf-acct-grid">
 			<div class="t-panel"><div class="t-panel-body">
 				<div class="t-panel-head"><h6 class="t-panel-title">Cash accounts<?php echo cf_asof_html($live['banks']); ?></h6><button class="t-btn sm cf-acct-add" data-group="banks">+ Add</button></div>
@@ -349,7 +366,7 @@ $statsHtml = t_stat(cf_money($cashNow), 'Cash on hand', 'good')
 					<tr><td><?php echo htmlspecialchars($b['label']); ?><?php if (!empty($b['qb_id'])) echo ' <span class="t-chip accent" title="Balance auto-synced from QuickBooks nightly">Auto</span>'; ?></td><td class="num" style="text-align:right"><?php echo cf_money($b['balance']); ?></td><td class="id"><?php echo htmlspecialchars(strtoupper((string)$b['as_of'])); ?></td>
 					<td style="text-align:right"><button class="t-btn sm icon cf-acct-edit" data-group="banks" data-id="<?php echo $b['id']; ?>"><?php echo titan_icon('pen', 13); ?></button></td></tr>
 				<?php } ?>
-				</tbody></table>
+				</tbody><tfoot><tr><td class="lbl">Total</td><td class="num" style="text-align:right"><?php echo cf_money($bankTot); ?></td><td></td><td></td></tr></tfoot></table>
 			</div></div>
 
 			<div class="t-panel"><div class="t-panel-body">
@@ -362,7 +379,7 @@ $statsHtml = t_stat(cf_money($cashNow), 'Cash on hand', 'good')
 					<td class="num" style="text-align:right"><?php echo $c['apr'] !== null ? rtrim(rtrim(number_format((float)$c['apr'], 2), '0'), '.') . '%' : cf_dash(); ?></td>
 					<td style="text-align:right"><button class="t-btn sm icon cf-acct-edit" data-group="cards" data-id="<?php echo $c['id']; ?>"><?php echo titan_icon('pen', 13); ?></button></td></tr>
 				<?php } ?>
-				</tbody></table></div>
+				</tbody><tfoot><tr><td class="lbl">Total</td><td class="num" style="text-align:right"><?php echo cf_money($cardBal); ?></td><td class="num" style="text-align:right"><?php echo cf_money($cardLim); ?></td><td class="num" style="text-align:right;color:var(--good)"><?php echo cf_money($cardAvail); ?></td><td></td><td></td></tr></tfoot></table></div>
 			</div></div>
 
 			<div class="t-panel"><div class="t-panel-body">
@@ -377,7 +394,7 @@ $statsHtml = t_stat(cf_money($cashNow), 'Cash on hand', 'good')
 					<td class="num" style="text-align:right"><?php echo $l['payout'] ? (rtrim(rtrim(number_format((float)$l['payout_pct'], 1), '0'), '.') . '% sales') : ($l['payment'] ? cf_money($l['payment']) . '/mo' : cf_dash()); ?></td>
 					<td style="text-align:right"><button class="t-btn sm icon cf-acct-edit" data-group="locs" data-id="<?php echo $l['id']; ?>"><?php echo titan_icon('pen', 13); ?></button></td></tr>
 				<?php } ?>
-				</tbody></table></div>
+				</tbody><tfoot><tr><td class="lbl">Total</td><td class="num" style="text-align:right"><?php echo cf_money($locDrawn); ?></td><td class="num" style="text-align:right"><?php echo cf_money($locCeil); ?></td><td class="num" style="text-align:right;color:var(--good)"><?php echo cf_money($locAvail); ?></td><td></td><td></td><td></td></tr></tfoot></table></div>
 			</div></div>
 		</div>
 	</div>
@@ -396,6 +413,6 @@ const CF = <?php echo json_encode([
 ], JSON_UNESCAPED_UNICODE); ?>;
 </script>
 <script src="/titan-bbw/titan-theme.js"></script>
-<script src="/cash_flow.js"></script>
+<script src="/cash_flow.js?v=<?php echo @filemtime(__DIR__ . '/cash_flow.js'); ?>"></script>
 </body>
 </html>
