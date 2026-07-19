@@ -13,11 +13,13 @@ $db = db_connect();
 if (!$db) { http_response_code(500); echo json_encode(['error' => 'DB connection failed.']); exit; }
 
 $source = in_array($_POST['source'] ?? '', ['cron', 'seed', 'manual'], true) ? $_POST['source'] : 'manual';
+$force  = !empty($_POST['force']);   // deliberate re-freeze of an already-frozen month
 
 try {
-	// Manual capture always freezes the current month's opening (pulls QB first).
-	$res = cf_capture_balances($db, true, $source);
-	echo json_encode(['ok' => true, 'snap_ym' => $res['froze'], 'qb_updated' => $res['qb_updated'],
+	// Freezes the current month's opening (pulls QB first). Write-once unless $force.
+	$res = cf_capture_balances($db, true, $source, $force);
+	echo json_encode(['ok' => true, 'snap_ym' => $res['froze'], 'already_frozen' => $res['already_frozen'],
+		'qb_updated' => $res['qb_updated'],
 		'cash_total' => $res['accounts']['start_cash'], 'credit_total' => $res['accounts']['credit_used']]);
 } catch (Throwable $e) {
 	http_response_code(500);

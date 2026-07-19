@@ -547,9 +547,14 @@ function cf_upsert_qb_balances($db) {
 /**
  * Capture balances: pull QB into cash_balances, write today's DAILY snapshot,
  * and (when $freezeMonth) freeze this month's OPENING snapshot + header.
+ *
+ * The monthly opening is WRITE-ONCE: once a month is frozen it is NOT
+ * overwritten (the whole point of the month-grained model — the baseline you
+ * forecast from must not drift). Pass $force = true only for a deliberate
+ * "re-freeze" correction. The daily snapshot always refreshes for the day.
  * Called nightly by cron/cashflow_sync.php and manually by the snapshot button.
  */
-function cf_capture_balances($db, $freezeMonth = false, $source = 'cron') {
+function cf_capture_balances($db, $freezeMonth = false, $source = 'cron', $force = false) {
 	cf_ensure_tables($db);
 	$updated = cf_upsert_qb_balances($db);      // QB -> cash_balances (auto-synced accounts)
 	$acc  = cf_live_accounts($db);              // now current
@@ -564,7 +569,10 @@ function cf_capture_balances($db, $freezeMonth = false, $source = 'cron') {
 			credit_limit=VALUES(credit_limit), apr=VALUES(apr), payout=VALUES(payout), source=VALUES(source), captured_at=NOW()");
 	foreach ($rows as $x) $insD->execute([$today, $x['account_id'], $x['label'], $x['acct_type'], $x['balance'], $x['credit_limit'], $x['apr'], $x['payout'], $source]);
 
-	if ($freezeMonth) {
+	$froze = null; $alreadyFrozen = false;
+	if ($freezeMonth && !$force && cf_month_has_opening($db, $ym)) {
+		$alreadyFrozen = true;   // opening already set this month — leave it intact
+	} elseif ($freezeMonth) {
 		$insM = $db->prepare("INSERT INTO cf_balance_monthly
 			(snap_ym, account_id, label, acct_type, balance, credit_limit, apr, payout, source, captured_at)
 			VALUES (?,?,?,?,?,?,?,?,?,NOW())
@@ -575,8 +583,9 @@ function cf_capture_balances($db, $freezeMonth = false, $source = 'cron') {
 			VALUES (?, NOW(), ?, ?, ?)
 			ON DUPLICATE KEY UPDATE captured_at=NOW(), source=VALUES(source), cash_total=VALUES(cash_total), credit_total=VALUES(credit_total)")
 			->execute([$ym, $source, $acc['start_cash'], $acc['credit_used']]);
+		$froze = $ym;
 	}
-	return ['accounts' => $acc, 'qb_updated' => $updated, 'froze' => $freezeMonth ? $ym : null];
+	return ['accounts' => $acc, 'qb_updated' => $updated, 'froze' => $froze, 'already_frozen' => $alreadyFrozen];
 }
 
 /** Does this month already have a frozen opening? */

@@ -209,7 +209,10 @@ $statsHtml = t_stat(cf_money($cashNow), 'Cash on hand', 'good')
 			if ($snap) echo 'Opening balances · ' . strtoupper(date('M j', strtotime($snap['captured_at']))) . ' snapshot (' . htmlspecialchars($snap['source']) . ')';
 			else echo 'Opening balances · LIVE (no snapshot yet)';
 		?></span>
-		<button class="t-btn sm" id="cfSnapBtn"><?php echo titan_icon('upload', 13); ?><span>Take starting snapshot</span></button>
+		<button class="t-btn sm" id="cfSnapBtn" data-frozen="<?php echo $snap ? '1' : '0'; ?>"><?php echo titan_icon('upload', 13); ?><span>Take starting snapshot</span></button>
+		<?php if ($snap): ?>
+		<span class="t-chip warn" title="This month's opening is already locked in and is re-captured automatically at month-end. Re-taking now replaces your <?php echo cf_month_label($hs)['name']; ?> baseline — rarely needed."><?php echo cf_month_label($hs)['name']; ?> already snapshotted · re-take replaces the baseline</span>
+		<?php endif; ?>
 	</div>
 
 	<!-- ============ VIEW: CASH FLOW ============ -->

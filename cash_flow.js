@@ -51,9 +51,13 @@
 
 	/* ---- snapshot ---- */
 	$('#cfSnapBtn').on('click', function(){
-		if (!confirm('Pull the latest QuickBooks balances and freeze them as the opening snapshot for ' + mLabel(0) + '? This starts the month-grained projection.')) return;
+		const frozen = String($(this).data('frozen')) === '1';
+		const msg = frozen
+			? mLabel(0) + ' already has a snapshot. Re-taking REPLACES your locked-in opening and re-forecasts from the current balances. This is rarely needed — the month-end snapshot handles it going forward. Continue?'
+			: 'Pull the latest QuickBooks balances and freeze them as the opening snapshot for ' + mLabel(0) + '? This starts the month-grained projection.';
+		if (!confirm(msg)) return;
 		const $b = $(this).prop('disabled', true);
-		post('/ajax/cash_flow/snapshot.php', { ym: CF.hs, source: 'seed' })
+		post('/ajax/cash_flow/snapshot.php', { ym: CF.hs, source: 'seed', force: 1 })
 			.done(r => { if (r && r.ok) location.reload(); else { alert((r && r.error) || 'Snapshot failed'); $b.prop('disabled', false); } })
 			.fail(() => { alert('Snapshot failed'); $b.prop('disabled', false); });
 	});
