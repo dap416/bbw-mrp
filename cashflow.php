@@ -48,7 +48,7 @@
 
 <div class="mb-3 d-flex justify-content-between align-items-end flex-wrap gap-2">
 	<div>
-		<h2 class="fw-bold mb-0">Cash Flow<?php echo $data['qb_company'] ? ' <span class="text-muted fw-normal" style="font-size:0.6em;">· '.htmlspecialchars($data['qb_company']).'</span>' : ''; ?></h2>
+		<h2 class="fw-bold mb-0">Cash Management<?php echo $data['qb_company'] ? ' <span class="text-muted fw-normal" style="font-size:0.6em;">· '.htmlspecialchars($data['qb_company']).'</span>' : ''; ?></h2>
 		<div class="text-muted small">12-month rolling plan. Each month combines projected sales, the <?php echo rtrim(rtrim(number_format($loanPct,2),'0'),'.'); ?>% Shopify loan, recurring costs, debt payments, bills/POs, and your own cash events.</div>
 	</div>
 	<div class="d-flex align-items-center gap-3 flex-wrap">

@@ -1,0 +1,362 @@
+/* ============================================================
+   TITAN DOP — BBW MRP PORT
+   A drop-in stylesheet for building a NEW Titan-styled module
+   inside the Blue Bird Waterfowl MRP app (plain PHP + Berry).
+
+   Everything is scoped under `.titan-app` so it CANNOT leak into
+   or restyle the existing Berry UI. Wrap your module's content
+   in a single <div class="titan-app" data-theme="dark"> … </div>.
+
+   Dark-first, with a light theme under [data-theme="light"].
+   Ported verbatim from titan-theme.css (Future Automotive Group).
+   Do not hand-tune these values — they ARE the design system.
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+/* ============================================================
+   1. TOKENS  — scoped to the module root, DARK (default)
+   ============================================================ */
+.titan-app,
+.titan-app[data-theme="dark"]{
+	--bg-0:#0a0d12;           /* app backdrop          */
+	--bg-1:#0f141b;           /* panel / sub-surface   */
+	--bg-2:#141a23;           /* card                  */
+	--bg-3:#1a212c;           /* raised / hover        */
+	--bg-inset:#0c1016;       /* wells, table stripes  */
+
+	--line:rgba(255,255,255,.07);
+	--line-2:rgba(255,255,255,.12);
+
+	--tx-hi:#eef2f8;
+	--tx-mid:#98a3b3;
+	--tx-lo:#5b6573;
+
+	--accent:#3b82f6;
+	--accent-deep:#2563eb;
+	--accent-soft:rgba(59,130,246,.14);
+	--accent-line:rgba(59,130,246,.40);
+
+	--good:#34d27b;  --good-soft:rgba(52,210,123,.13);  --good-line:rgba(52,210,123,.38);
+	--warn:#f5b133;  --warn-soft:rgba(245,177,51,.13);  --warn-line:rgba(245,177,51,.40);
+	--crit:#fb5b5b;  --crit-soft:rgba(251,91,91,.13);   --crit-line:rgba(251,91,91,.42);
+
+	--grid-line:rgba(255,255,255,.05);
+	--shadow:0 1px 0 rgba(255,255,255,.03) inset, 0 8px 24px -12px rgba(0,0,0,.7);
+	--shadow-pop:0 18px 50px -18px rgba(0,0,0,.85);
+
+	/* type families */
+	--font-ui:'Hanken Grotesk', system-ui, -apple-system, sans-serif;
+	--font-num:'Space Grotesk', system-ui, sans-serif;
+	--font-mono:'JetBrains Mono', ui-monospace, 'SFMono-Regular', monospace;
+
+	/* radii */
+	--radius-chip:4px;   --radius-sm:6px;  --radius-md:8px;   --radius-btn:9px;
+	--radius-inset:11px; --radius-card:14px; --radius-modal:16px; --radius-pill:999px;
+
+	--transition:.14s ease;
+}
+
+/* ---------- LIGHT ---------- */
+.titan-app[data-theme="light"]{
+	--bg-0:#eef0f4;
+	--bg-1:#f7f8fa;
+	--bg-2:#ffffff;
+	--bg-3:#f1f3f7;
+	--bg-inset:#f4f6f9;
+
+	--line:rgba(15,23,42,.09);
+	--line-2:rgba(15,23,42,.16);
+
+	--tx-hi:#0d1521;
+	--tx-mid:#586374;
+	--tx-lo:#8a93a3;
+
+	--accent:#2563eb;
+	--accent-deep:#1d4ed8;
+	--accent-soft:rgba(37,99,235,.10);
+	--accent-line:rgba(37,99,235,.32);
+
+	--good:#15a35b;  --good-soft:rgba(21,163,91,.10);   --good-line:rgba(21,163,91,.34);
+	--warn:#c87f0a;  --warn-soft:rgba(200,127,10,.11);  --warn-line:rgba(200,127,10,.34);
+	--crit:#dc3a3a;  --crit-soft:rgba(220,58,58,.09);   --crit-line:rgba(220,58,58,.34);
+
+	--grid-line:rgba(15,23,42,.06);
+	--shadow:0 1px 2px rgba(15,23,42,.04), 0 10px 26px -16px rgba(15,23,42,.28);
+	--shadow-pop:0 18px 50px -18px rgba(15,23,42,.32);
+}
+
+/* ============================================================
+   2. ROOT FRAME
+   ============================================================ */
+.titan-app{
+	font-family:var(--font-ui);
+	background:var(--bg-0);
+	color:var(--tx-hi);
+	min-height:100%;
+	-webkit-font-smoothing:antialiased;
+	text-rendering:optimizeLegibility;
+	position:relative;
+}
+.titan-app *,
+.titan-app *::before,
+.titan-app *::after{ box-sizing:border-box; }
+
+.titan-app ::-webkit-scrollbar{ height:8px; width:8px; }
+.titan-app ::-webkit-scrollbar-thumb{ background:var(--line-2); border-radius:8px; }
+
+/* type helpers */
+.titan-app .mono{ font-family:var(--font-mono); }
+.titan-app .num{ font-family:var(--font-num); font-variant-numeric:tabular-nums; letter-spacing:-.01em; }
+
+/* ============================================================
+   3. MOTION  — only `crit` animates. Transitions are .14s.
+   ============================================================ */
+@keyframes tcpulse{ 0%,100%{opacity:1;} 50%{opacity:.42;} }
+@keyframes ledpulse{ 0%{transform:scale(1);opacity:.8;} 100%{transform:scale(2.1);opacity:0;} }
+@keyframes tcfade{ from{opacity:0;} to{opacity:1;} }
+
+/* ============================================================
+   4. ATOMS  — the canonical .t-* class contract (verbatim)
+   ============================================================ */
+.titan-app .t-eyebrow{
+	font-family:var(--font-mono);
+	font-size:11px; font-weight:500; letter-spacing:.14em;
+	text-transform:uppercase; color:var(--tx-lo);
+}
+
+.titan-app .t-chip{
+	display:inline-flex; align-items:center; gap:5px;
+	font-family:var(--font-mono);
+	font-size:10.5px; font-weight:600; letter-spacing:.04em;
+	padding:3px 7px; border-radius:999px; white-space:nowrap;
+	text-transform:uppercase;
+}
+.titan-app .t-chip.good{  color:var(--good);   background:var(--good-soft);   box-shadow:inset 0 0 0 1px var(--good-line); }
+.titan-app .t-chip.warn{  color:var(--warn);   background:var(--warn-soft);   box-shadow:inset 0 0 0 1px var(--warn-line); }
+.titan-app .t-chip.crit{  color:var(--crit);   background:var(--crit-soft);   box-shadow:inset 0 0 0 1px var(--crit-line); }
+.titan-app .t-chip.accent{color:var(--accent); background:var(--accent-soft); box-shadow:inset 0 0 0 1px var(--accent-line); }
+.titan-app .t-chip.ghost{ color:var(--tx-mid); background:var(--bg-3);        box-shadow:inset 0 0 0 1px var(--line); }
+
+.titan-app .t-dot{ width:7px; height:7px; border-radius:50%; flex:0 0 auto; display:inline-block; }
+.titan-app .t-dot.good{  background:var(--good);   box-shadow:0 0 0 3px var(--good-soft); }
+.titan-app .t-dot.warn{  background:var(--warn);   box-shadow:0 0 0 3px var(--warn-soft); }
+.titan-app .t-dot.crit{  background:var(--crit);   box-shadow:0 0 0 3px var(--crit-soft); }
+.titan-app .t-dot.accent{background:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+.titan-app .t-dot.pulse{ animation:tcpulse 1.6s infinite; }
+.titan-app .t-dot.nohalo{ box-shadow:none; }
+
+.titan-app .t-card{
+	background:var(--bg-2);
+	border:1px solid var(--line);
+	border-radius:14px;
+	box-shadow:var(--shadow);
+}
+
+.titan-app .t-btn{
+	display:inline-flex; align-items:center; gap:6px;
+	font-family:var(--font-ui); font-size:12.5px; font-weight:600;
+	color:var(--tx-mid); background:transparent; border:1px solid var(--line-2);
+	padding:6px 11px; border-radius:9px; cursor:pointer; transition:.14s;
+	text-decoration:none;
+}
+.titan-app .t-btn:hover{ color:var(--tx-hi); border-color:var(--tx-lo); background:var(--bg-3); }
+.titan-app .t-btn.solid{ background:var(--accent-deep); border-color:transparent; color:#fff; }
+.titan-app .t-btn.solid:hover{ background:var(--accent); }
+.titan-app .t-btn.sm{ font-size:11.5px; padding:4px 9px; }
+.titan-app .t-btn.icon{ padding:6px; }
+
+.titan-app .t-delta{
+	font-family:var(--font-mono); font-size:12px; font-weight:600;
+	display:inline-flex; align-items:center; gap:3px;
+}
+.titan-app .t-delta.up{ color:var(--good); }
+.titan-app .t-delta.down{ color:var(--crit); }
+.titan-app .t-delta.flat{ color:var(--tx-mid); }
+
+/* ============================================================
+   5. STAT READOUT  — dot + tabular number + mono caption
+   ============================================================ */
+.titan-app .t-stat{ display:flex; align-items:center; gap:9px; }
+.titan-app .t-stat .t-stat-val{ font-family:var(--font-num); font-variant-numeric:tabular-nums;
+	letter-spacing:-.01em; font-size:19px; font-weight:700; color:var(--tx-hi); line-height:1.05; }
+.titan-app .t-stat .t-stat-lbl{ font-family:var(--font-mono); font-size:8.5px; color:var(--tx-lo);
+	text-transform:uppercase; letter-spacing:.08em; margin-top:2px; }
+.titan-app .t-stat.good  .t-stat-val{ color:var(--good); }
+.titan-app .t-stat.warn  .t-stat-val{ color:var(--warn); }
+.titan-app .t-stat.crit  .t-stat-val{ color:var(--crit); }
+.titan-app .t-stat.accent .t-stat-val{ color:var(--accent); }
+
+/* ============================================================
+   6. SIGNAL LED  — glowing category lamp; crit rings out
+   ============================================================ */
+.titan-app .t-led{ position:relative; width:9px; height:9px; flex:0 0 auto; display:inline-block; }
+.titan-app .t-led::before{ content:""; position:absolute; inset:0; border-radius:50%;
+	background:var(--good); box-shadow:0 0 8px var(--good), 0 0 3px var(--good); }
+.titan-app .t-led.warn::before{ background:var(--warn); box-shadow:0 0 8px var(--warn), 0 0 3px var(--warn); }
+.titan-app .t-led.crit::before{ background:var(--crit); box-shadow:0 0 8px var(--crit), 0 0 3px var(--crit); }
+.titan-app .t-led.accent::before{ background:var(--accent); box-shadow:0 0 8px var(--accent), 0 0 3px var(--accent); }
+.titan-app .t-led.idle::before{ background:var(--tx-lo); box-shadow:none; opacity:.4; }
+.titan-app .t-led.crit::after{ content:""; position:absolute; inset:-3px; border-radius:50%;
+	border:1.5px solid var(--crit); animation:ledpulse 1.5s ease-out infinite; }
+
+/* ============================================================
+   7. KPI TILE  — 2px top accent rule + big tabular number
+   Titan replacement for Berry's .kpi-card. Severity via
+   data-sev="good|warn|crit|accent" (default accent).
+   ============================================================ */
+.titan-app .t-kpi{
+	position:relative; overflow:hidden;
+	background:var(--bg-2); border:1px solid var(--line);
+	border-top:2px solid var(--accent);
+	border-radius:14px; padding:16px 18px 15px;
+	box-shadow:var(--shadow); display:block; text-decoration:none;
+}
+.titan-app .t-kpi[data-sev="good"]{ border-top-color:var(--good); }
+.titan-app .t-kpi[data-sev="warn"]{ border-top-color:var(--warn); }
+.titan-app .t-kpi[data-sev="crit"]{ border-top-color:var(--crit); }
+.titan-app a.t-kpi{ cursor:pointer; transition:.14s; }
+.titan-app a.t-kpi:hover{ background:var(--bg-3); }
+.titan-app .t-kpi .t-kpi-label{ font-family:var(--font-mono); font-size:10px; font-weight:600;
+	letter-spacing:.1em; text-transform:uppercase; color:var(--tx-lo); }
+.titan-app .t-kpi .t-kpi-value{ font-family:var(--font-num); font-variant-numeric:tabular-nums;
+	letter-spacing:-.01em; font-size:26px; font-weight:700; color:var(--tx-hi); line-height:1.1; margin:6px 0 2px; }
+.titan-app .t-kpi .t-kpi-sub{ font-size:11.5px; color:var(--tx-mid); }
+.titan-app .t-kpi .t-kpi-icon{ position:absolute; right:14px; top:13px; color:var(--tx-lo); opacity:.5; }
+
+/* ============================================================
+   8. PANEL  — content card holding a table/chart
+   ============================================================ */
+.titan-app .t-panel{ background:var(--bg-2); border:1px solid var(--line);
+	border-radius:14px; box-shadow:var(--shadow); }
+.titan-app .t-panel-body{ padding:18px 20px; }
+.titan-app .t-panel-head{ display:flex; align-items:center; justify-content:space-between;
+	gap:12px; margin-bottom:14px; }
+.titan-app .t-panel-title{ font-family:var(--font-mono); font-size:11px; font-weight:600;
+	letter-spacing:.12em; text-transform:uppercase; color:var(--tx-mid); margin:0; }
+
+/* ============================================================
+   9. TABLE  — dense instrument-plate table
+   ============================================================ */
+.titan-app .t-table{ width:100%; border-collapse:collapse; margin:0; }
+.titan-app .t-table th{ font-family:var(--font-mono); font-size:9.5px; font-weight:600;
+	letter-spacing:.08em; text-transform:uppercase; color:var(--tx-lo);
+	background:var(--bg-inset); text-align:left; padding:8px 12px; white-space:nowrap;
+	border-bottom:1px solid var(--line); }
+.titan-app .t-table td{ font-size:12.5px; color:var(--tx-mid); padding:10px 12px;
+	border-bottom:1px solid var(--line); vertical-align:middle; }
+.titan-app .t-table tbody tr:last-child td{ border-bottom:none; }
+.titan-app .t-table tbody tr:hover td{ background:var(--bg-3); }
+.titan-app .t-table .num{ color:var(--tx-hi); }
+.titan-app .t-table .id{ font-family:var(--font-mono); font-size:11px; color:var(--tx-mid); text-transform:uppercase; }
+.titan-app .t-scroll{ max-height:340px; overflow-y:auto; border-radius:11px;
+	border:1px solid var(--line); background:var(--bg-inset); }
+.titan-app .t-scroll .t-table th{ position:sticky; top:0; z-index:1; }
+
+/* ============================================================
+   10. SEVERITY SPINE  — colored left edge on rows/cards
+   (hidden for Normal). Apply .spine + .crit|.warn|.good.
+   ============================================================ */
+.titan-app .spine{ border-left:3px solid transparent; }
+.titan-app .spine.crit{ border-left-color:var(--crit); }
+.titan-app .spine.warn{ border-left-color:var(--warn); }
+.titan-app .spine.good{ border-left-color:var(--good); }
+.titan-app .spine.accent{ border-left-color:var(--accent); }
+
+/* ============================================================
+   11. CLOSE-CIRCUIT LIFECYCLE  — horizontal node tracker
+   New/Assigned → In Progress → Pending Verify → Closed.
+   Nodes: .done (check) · .current (accent ring) · .todo · .crit
+   ============================================================ */
+.titan-app .t-track{ display:flex; align-items:center; gap:0; }
+.titan-app .t-track-node{ display:flex; flex-direction:column; align-items:center; gap:6px; flex:0 0 auto; }
+.titan-app .t-track-dot{ width:22px; height:22px; border-radius:50%; display:flex;
+	align-items:center; justify-content:center; border:2px solid var(--line-2);
+	background:var(--bg-inset); color:var(--tx-lo); }
+.titan-app .t-track-node.done .t-track-dot{ border-color:var(--good); color:var(--good); background:var(--good-soft); }
+.titan-app .t-track-node.current .t-track-dot{ border-color:var(--accent); color:var(--accent);
+	background:var(--accent-soft); box-shadow:0 0 0 4px var(--accent-soft); }
+.titan-app .t-track-node.crit .t-track-dot{ border-color:var(--crit); color:var(--crit); background:var(--crit-soft); }
+.titan-app .t-track-lbl{ font-family:var(--font-mono); font-size:8.5px; letter-spacing:.06em;
+	text-transform:uppercase; color:var(--tx-lo); white-space:nowrap; }
+.titan-app .t-track-node.current .t-track-lbl{ color:var(--accent); }
+.titan-app .t-track-link{ flex:1 1 auto; height:2px; background:var(--line-2); margin:0 4px 20px; min-width:24px; }
+.titan-app .t-track-link.done{ background:var(--good); }
+
+/* ============================================================
+   12. FORMS  — inset well + accent focus ring
+   ============================================================ */
+.titan-app .t-field{ display:flex; flex-direction:column; gap:6px; }
+.titan-app .t-label{ font-family:var(--font-mono); font-size:10.5px; font-weight:600;
+	letter-spacing:.06em; text-transform:uppercase; color:var(--tx-lo); }
+.titan-app .t-input{ display:flex; align-items:center; gap:8px; background:var(--bg-inset);
+	border:1px solid var(--line-2); border-radius:8px; padding:8px 11px; transition:.14s; }
+.titan-app .t-input:focus-within{ border-color:var(--accent-line); box-shadow:0 0 0 3px var(--accent-soft); }
+.titan-app .t-input input, .titan-app .t-input select, .titan-app .t-input textarea{
+	flex:1; background:transparent; border:none; outline:none; color:var(--tx-hi);
+	font-family:var(--font-ui); font-size:13px; min-width:0; }
+.titan-app .t-input .t-input-icon{ color:var(--tx-lo); display:flex; }
+
+/* Segmented control */
+.titan-app .t-seg{ display:inline-flex; background:var(--bg-3); border-radius:9px; padding:3px;
+	gap:2px; border:1px solid var(--line); }
+.titan-app .t-seg button{ font-family:var(--font-mono); font-size:11px; font-weight:600;
+	padding:6px 11px; border-radius:6px; letter-spacing:.02em; cursor:pointer; border:none;
+	white-space:nowrap; background:transparent; color:var(--tx-mid); }
+.titan-app .t-seg button.on{ background:var(--accent-deep); color:#fff; }
+
+/* ============================================================
+   13. MODULE SHELL  — sidebar + top bar (control-panel layout)
+   ============================================================ */
+.titan-app .t-shell{ display:flex; min-height:100vh; }
+.titan-app .t-side{ width:230px; flex:0 0 230px; background:var(--bg-1);
+	border-right:1px solid var(--line); padding:16px 12px; }
+.titan-app .t-side-brand{ display:flex; align-items:center; gap:10px; padding:6px 8px 18px; }
+.titan-app .t-side-cap{ font-family:var(--font-mono); font-size:9px; font-weight:600;
+	letter-spacing:.14em; text-transform:uppercase; color:var(--tx-lo); padding:16px 10px 6px; }
+.titan-app .t-nav-item{ display:flex; align-items:center; gap:10px; padding:9px 10px;
+	border-radius:8px; color:var(--tx-mid); text-decoration:none; font-size:13px; font-weight:500;
+	transition:.14s; margin-bottom:1px; }
+.titan-app .t-nav-item:hover{ background:var(--bg-3); color:var(--tx-hi); }
+.titan-app .t-nav-item.on{ background:var(--accent-soft); color:var(--accent);
+	box-shadow:inset 0 0 0 1px var(--accent-line); }
+.titan-app .t-nav-item .t-nav-badge{ margin-left:auto; font-family:var(--font-mono); font-size:10px;
+	font-weight:600; color:var(--tx-lo); }
+.titan-app .t-main{ flex:1 1 auto; min-width:0; display:flex; flex-direction:column; }
+.titan-app .t-topbar{ display:flex; align-items:center; gap:18px; padding:14px 22px;
+	border-bottom:1px solid var(--line); background:var(--bg-1); }
+.titan-app .t-topbar h1{ font-size:16px; font-weight:700; color:var(--tx-hi); margin:0; }
+.titan-app .t-topbar-stats{ display:flex; align-items:center; gap:22px; margin-left:auto; }
+.titan-app .t-content{ padding:22px; flex:1 1 auto; }
+
+/* Brand mark */
+.titan-app .t-brand-mark{ width:32px; height:32px; border-radius:9px; flex:0 0 auto;
+	background:linear-gradient(135deg,#3b82f6,#2563eb); display:flex; align-items:center;
+	justify-content:center; color:#fff; }
+.titan-app .t-brand-name{ font-size:16px; font-weight:700; letter-spacing:-.02em; color:var(--tx-hi); line-height:1; }
+.titan-app .t-brand-sub{ font-family:var(--font-mono); font-size:8px; letter-spacing:.14em;
+	text-transform:uppercase; color:var(--tx-lo); margin-top:3px; }
+
+/* Theme toggle button */
+.titan-app .t-theme-btn{ display:inline-flex; align-items:center; justify-content:center;
+	width:34px; height:34px; border-radius:9px; border:1px solid var(--line-2);
+	background:transparent; color:var(--tx-mid); cursor:pointer; transition:.14s; }
+.titan-app .t-theme-btn:hover{ color:var(--tx-hi); background:var(--bg-3); border-color:var(--tx-lo); }
+
+/* ============================================================
+   14. MODAL  — over a blurred backdrop
+   ============================================================ */
+.titan-app .t-backdrop{ position:fixed; inset:0; background:rgba(3,6,10,.58);
+	backdrop-filter:blur(3px); animation:tcfade .14s ease; z-index:50; display:flex;
+	align-items:center; justify-content:center; padding:24px; }
+.titan-app .t-modal{ background:var(--bg-2); border:1px solid var(--line-2);
+	border-radius:16px; box-shadow:var(--shadow-pop); max-width:560px; width:100%; }
+
+/* ============================================================
+   15. UTILITIES
+   ============================================================ */
+.titan-app .t-grid{ display:grid; gap:14px; }
+.titan-app .t-row{ display:flex; align-items:center; gap:12px; }
+.titan-app .t-muted{ color:var(--tx-lo); }
+.titan-app .t-hi{ color:var(--tx-hi); }
+.titan-app hr.t-rule{ border:none; border-top:1px solid var(--line); margin:14px 0; }

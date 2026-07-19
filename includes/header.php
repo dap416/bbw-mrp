@@ -183,11 +183,20 @@
         </li>
         <?php } ?>
 
+        <?php if ($navAdmin && menu_visible('cash_flow')) { ?>
+        <li class="pc-item">
+          <a href="/cash_flow.php" class="pc-link">
+            <span class="pc-micon"><i class="ti ti-chart-line"></i></span>
+            <span class="pc-mtext">Cash Flow</span>
+          </a>
+        </li>
+        <?php } ?>
+
         <?php if ($navAdmin && menu_visible('cashflow')) { ?>
         <li class="pc-item">
           <a href="/cashflow.php" class="pc-link">
             <span class="pc-micon"><i class="ti ti-cash"></i></span>
-            <span class="pc-mtext">Cash Flow</span>
+            <span class="pc-mtext">Cash Management</span>
           </a>
         </li>
         <?php } ?>

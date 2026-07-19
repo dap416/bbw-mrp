@@ -127,7 +127,8 @@
 			'manufacturers'      => 'Manufacturers',
 			'tasks'              => 'Task List',
 			'call_center'        => 'Call Center',
-			'cashflow'           => 'Cash Flow',
+			'cashflow'           => 'Cash Management',
+			'cash_flow'          => 'Cash Flow',
 			'research'           => 'Research',
 		];
 	}

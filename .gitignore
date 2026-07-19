@@ -11,3 +11,6 @@ Thumbs.db
 screenshots/
 SCreenshots/
 GEORGE_SETUP.md
+
+# Design/source drops — do not deploy
+resources/

@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Titan DOP for BBW MRP — Live Reference</title>
+<link rel="stylesheet" href="titan-bbw.css">
+<style>
+	/* page host only — NOT part of the system. The module itself is the .titan-app below. */
+	html,body{margin:0;height:100%;background:#06080c;}
+	.spec-note{font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.12em;
+		text-transform:uppercase;color:var(--tx-lo);margin:0 0 10px;}
+	.spec-sec{margin-bottom:26px;}
+	.gallery{display:flex;flex-wrap:wrap;gap:14px;}
+	.gcell{background:var(--bg-inset);border:1px solid var(--line);border-radius:11px;
+		padding:14px;display:flex;flex-direction:column;align-items:center;gap:8px;min-width:120px;}
+	.gcell .cap{font-family:'JetBrains Mono',monospace;font-size:8.5px;letter-spacing:.08em;
+		text-transform:uppercase;color:var(--tx-lo);}
+</style>
+</head>
+<body>
+
+<div class="titan-app" data-theme="dark">
+<div class="t-shell">
+
+	<!-- ============ SIDEBAR ============ -->
+	<aside class="t-side">
+		<div class="t-side-brand">
+			<span class="t-brand-mark"><i data-ti="brand" data-s="18"></i></span>
+			<span>
+				<span class="t-brand-name">BBW</span>
+				<span class="t-brand-sub">MRP · Titan</span>
+			</span>
+		</div>
+
+		<div class="t-side-cap">MRP</div>
+		<a class="t-nav-item on" href="#"><i data-ti="gauge" data-s="17"></i><span>Dashboard</span></a>
+		<a class="t-nav-item" href="#"><i data-ti="parts" data-s="17"></i><span>Parts</span><span class="t-nav-badge">842</span></a>
+		<a class="t-nav-item" href="#"><i data-ti="file" data-s="17"></i><span>Orders</span><span class="t-led crit" style="margin-left:auto"></span></a>
+		<a class="t-nav-item" href="#"><i data-ti="drum" data-s="17"></i><span>Inventory</span></a>
+		<a class="t-nav-item" href="#"><i data-ti="hammer" data-s="17"></i><span>Build / Pack</span><span class="t-led warn" style="margin-left:auto"></span></a>
+		<a class="t-nav-item" href="#"><i data-ti="van" data-s="17"></i><span>Manufacturers</span></a>
+
+		<div class="t-side-cap">Business</div>
+		<a class="t-nav-item" href="#"><i data-ti="clipboard" data-s="17"></i><span>Tasks</span><span class="t-nav-badge">6</span></a>
+		<a class="t-nav-item" href="#"><i data-ti="chat" data-s="17"></i><span>Call Center</span></a>
+		<a class="t-nav-item" href="#"><i data-ti="ticket" data-s="17"></i><span>Cash Flow</span></a>
+		<a class="t-nav-item" href="#"><i data-ti="search" data-s="17"></i><span>Research</span></a>
+	</aside>
+
+	<!-- ============ MAIN ============ -->
+	<div class="t-main">
+		<header class="t-topbar">
+			<h1>Operations Dashboard</h1>
+			<div class="t-topbar-stats">
+				<div class="t-stat"><span class="t-dot good nohalo"></span><div><div class="t-stat-val num">$482.1K</div><div class="t-stat-lbl mono">On-Hand Value</div></div></div>
+				<div class="t-stat"><span class="t-dot accent nohalo"></span><div><div class="t-stat-val num">$96.4K</div><div class="t-stat-lbl mono">On-Order</div></div></div>
+				<div class="t-stat"><span class="t-dot crit nohalo pulse"></span><div><div class="t-stat-val num">04</div><div class="t-stat-lbl mono">Not Paid</div></div></div>
+				<button class="t-theme-btn" data-titan-theme-toggle aria-label="Toggle theme"></button>
+			</div>
+		</header>
+
+		<div class="t-content">
+
+			<!-- KPI STRIP -->
+			<div class="t-grid spec-sec" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr))">
+				<a class="t-kpi" data-sev="accent" href="#">
+					<span class="t-kpi-icon"><i data-ti="parts" data-s="20"></i></span>
+					<div class="t-kpi-label">On-Hand Value</div>
+					<div class="t-kpi-value">$482,166</div>
+					<div class="t-kpi-sub">842 parts tracked</div>
+				</a>
+				<a class="t-kpi" data-sev="good" href="#">
+					<span class="t-kpi-icon"><i data-ti="check" data-s="20"></i></span>
+					<div class="t-kpi-label">Coverage</div>
+					<div class="t-kpi-value">97.3%</div>
+					<div class="t-kpi-sub">SKUs above reorder point</div>
+				</a>
+				<a class="t-kpi" data-sev="warn" href="#">
+					<span class="t-kpi-icon"><i data-ti="clock" data-s="20"></i></span>
+					<div class="t-kpi-label">Low Stock</div>
+					<div class="t-kpi-value">18</div>
+					<div class="t-kpi-sub">below reorder point</div>
+				</a>
+				<a class="t-kpi" data-sev="crit" href="#">
+					<span class="t-kpi-icon"><i data-ti="alert" data-s="20"></i></span>
+					<div class="t-kpi-label">Out of Stock</div>
+					<div class="t-kpi-value">05</div>
+					<div class="t-kpi-sub">active demand, 0 on hand</div>
+				</a>
+			</div>
+
+			<!-- TWO PANELS -->
+			<div class="t-grid spec-sec" style="grid-template-columns:1.6fr 1fr">
+				<div class="t-panel"><div class="t-panel-body">
+					<div class="t-panel-head">
+						<h6 class="t-panel-title">Parts at risk</h6>
+						<div class="t-seg" data-seg="scope">
+							<button class="on" data-val="all">All</button>
+							<button data-val="mine">Mfr</button>
+							<button data-val="oos">OOS</button>
+						</div>
+					</div>
+					<div class="t-scroll">
+						<table class="t-table">
+							<thead><tr><th>SKU</th><th>Part</th><th>Status</th><th style="text-align:right">On hand</th><th style="text-align:right">Reorder</th><th style="text-align:right">Days cover</th></tr></thead>
+							<tbody>
+								<tr class="spine crit">
+									<td class="id">BBW-4471</td><td>Mallard decoy keel — weighted</td>
+									<td><span class="t-chip crit">Out of stock</span></td>
+									<td style="text-align:right"><span class="num">0</span></td><td style="text-align:right"><span class="num">120</span></td><td style="text-align:right"><span class="num" style="color:var(--crit)">0</span></td>
+								</tr>
+								<tr class="spine warn">
+									<td class="id">BBW-2210</td><td>Flocked head — drake pintail</td>
+									<td><span class="t-chip warn">Low</span></td>
+									<td style="text-align:right"><span class="num">34</span></td><td style="text-align:right"><span class="num">80</span></td><td style="text-align:right"><span class="num">6</span></td>
+								</tr>
+								<tr class="spine warn">
+									<td class="id">BBW-8830</td><td>Rigging line, 200ft spool</td>
+									<td><span class="t-chip warn">Low</span></td>
+									<td style="text-align:right"><span class="num">12</span></td><td style="text-align:right"><span class="num">25</span></td><td style="text-align:right"><span class="num">9</span></td>
+								</tr>
+								<tr class="spine good">
+									<td class="id">BBW-1004</td><td>Anchor weight, 8oz cast</td>
+									<td><span class="t-chip good">Covered</span></td>
+									<td style="text-align:right"><span class="num">560</span></td><td style="text-align:right"><span class="num">150</span></td><td style="text-align:right"><span class="num">41</span></td>
+								</tr>
+								<tr class="spine good">
+									<td class="id">BBW-3390</td><td>Foam body blank — goose</td>
+									<td><span class="t-chip good">Covered</span></td>
+									<td style="text-align:right"><span class="num">288</span></td><td style="text-align:right"><span class="num">100</span></td><td style="text-align:right"><span class="num">33</span></td>
+								</tr>
+							</tbody>
+						</table>
+					</div>
+				</div></div>
+
+				<div class="t-panel"><div class="t-panel-body">
+					<div class="t-panel-head"><h6 class="t-panel-title">Inventory health</h6></div>
+					<div class="t-row" style="justify-content:space-around;margin-bottom:16px">
+						<div style="text-align:center">
+							<div class="t-viz" data-viz="gauge" data-pct="97.3" data-value="97" data-label="COVER" data-color="var(--good)" data-size="92"></div>
+						</div>
+						<div style="text-align:center">
+							<div class="t-viz" data-viz="donut" data-segs='[{"v":642,"color":"var(--good)"},{"v":18,"color":"var(--warn)"},{"v":5,"color":"var(--crit)"}]' data-center="665" data-size="92"></div>
+							<div class="mono" style="font-size:8.5px;color:var(--tx-lo);letter-spacing:.08em;margin-top:4px">ACTIVE SKUS</div>
+						</div>
+					</div>
+					<hr class="t-rule">
+					<div class="t-eyebrow" style="margin-bottom:8px">On-hand value · 12 wk</div>
+					<div class="t-viz" data-viz="trendline" data-data="[402,410,398,430,445,438,452,461,455,470,476,482]" data-color="var(--accent)" data-obj-pct="0.85"></div>
+					<div class="t-row" style="justify-content:space-between;margin-top:12px">
+						<span class="t-delta up">&#9650; 12.4% QoQ</span>
+						<span class="t-eyebrow">Target $560K</span>
+					</div>
+				</div></div>
+			</div>
+
+			<!-- LIFECYCLE + PATTERNS -->
+			<div class="t-panel spec-sec"><div class="t-panel-body">
+				<div class="t-panel-head"><h6 class="t-panel-title">Purchase order · close-circuit</h6>
+					<span class="t-chip accent"><i data-ti="clock" data-s="12"></i> PO-48817</span></div>
+				<div class="t-track" style="max-width:640px">
+					<div class="t-track-node done"><div class="t-track-dot"><i data-ti="check" data-s="12"></i></div><div class="t-track-lbl">Requested</div></div>
+					<div class="t-track-link done"></div>
+					<div class="t-track-node done"><div class="t-track-dot"><i data-ti="check" data-s="12"></i></div><div class="t-track-lbl">Ordered</div></div>
+					<div class="t-track-link done"></div>
+					<div class="t-track-node current"><div class="t-track-dot">3</div><div class="t-track-lbl">In transit</div></div>
+					<div class="t-track-link"></div>
+					<div class="t-track-node todo"><div class="t-track-dot">4</div><div class="t-track-lbl">Received</div></div>
+					<div class="t-track-link"></div>
+					<div class="t-track-node todo"><div class="t-track-dot">5</div><div class="t-track-lbl">Closed</div></div>
+				</div>
+			</div></div>
+
+			<!-- SPECIMEN GALLERIES -->
+			<div class="t-grid spec-sec" style="grid-template-columns:1fr 1fr">
+
+				<div class="t-panel"><div class="t-panel-body">
+					<div class="t-panel-head"><h6 class="t-panel-title">Atoms</h6></div>
+					<p class="spec-note">Buttons</p>
+					<div class="t-row" style="margin-bottom:16px">
+						<button class="t-btn solid"><i data-ti="plus" data-s="15"></i>New order</button>
+						<button class="t-btn"><i data-ti="upload" data-s="15"></i>Import</button>
+						<button class="t-btn"><i data-ti="reopen" data-s="15"></i>Reopen</button>
+						<button class="t-btn sm">Push date</button>
+					</div>
+					<p class="spec-note">Chips · status</p>
+					<div class="t-row" style="flex-wrap:wrap;margin-bottom:16px">
+						<span class="t-chip good">Covered</span>
+						<span class="t-chip warn">Low</span>
+						<span class="t-chip crit">Out of stock</span>
+						<span class="t-chip accent">In transit</span>
+						<span class="t-chip ghost">Draft</span>
+					</div>
+					<p class="spec-note">Dots · LEDs · delta</p>
+					<div class="t-row" style="gap:18px;flex-wrap:wrap">
+						<span class="t-dot good"></span><span class="t-dot warn"></span>
+						<span class="t-dot crit pulse"></span><span class="t-dot accent"></span>
+						<span style="width:1px;height:18px;background:var(--line)"></span>
+						<span class="t-led"></span><span class="t-led warn"></span>
+						<span class="t-led crit"></span><span class="t-led idle"></span>
+						<span style="width:1px;height:18px;background:var(--line)"></span>
+						<span class="t-delta up">&#9650; 8%</span>
+						<span class="t-delta down">&#9660; 4%</span>
+					</div>
+				</div></div>
+
+				<div class="t-panel"><div class="t-panel-body">
+					<div class="t-panel-head"><h6 class="t-panel-title">Forms &amp; micro-viz</h6></div>
+					<div class="t-field" style="margin-bottom:14px">
+						<label class="t-label">Search parts</label>
+						<div class="t-input"><span class="t-input-icon"><i data-ti="search" data-s="15"></i></span><input placeholder="SKU or name…"></div>
+					</div>
+					<div class="t-row" style="margin-bottom:18px">
+						<div class="t-field" style="flex:1"><label class="t-label">Warehouse</label>
+							<div class="t-input"><select><option>Main · Concord</option><option>Overflow</option></select></div></div>
+						<div class="t-seg" style="align-self:flex-end"><button class="on" data-val="d">Today</button><button data-val="w">WTD</button><button data-val="m">MTD</button></div>
+					</div>
+					<p class="spec-note">Sparkline · stackbar · progress</p>
+					<div class="t-row" style="margin-bottom:12px"><div class="t-viz" data-viz="sparkline" data-data="[4,6,5,8,7,9,8,11,10,12]" data-color="var(--good)"></div>
+						<span class="num" style="font-size:18px;color:var(--tx-hi)">+34</span></div>
+					<div style="margin-bottom:12px"><div class="t-viz" data-viz="stackbar" data-segs='[{"v":642,"color":"var(--good)"},{"v":18,"color":"var(--warn)"},{"v":5,"color":"var(--crit)"}]' data-h="10"></div></div>
+					<div class="t-viz" data-viz="progressbar" data-pct="72" data-color="var(--accent)" data-h="8"></div>
+				</div></div>
+			</div>
+
+			<!-- ICON SET -->
+			<div class="t-panel spec-sec"><div class="t-panel-body">
+				<div class="t-panel-head"><h6 class="t-panel-title">Icon set · titan_icon()</h6></div>
+				<div class="gallery" id="iconGallery"></div>
+			</div></div>
+
+		</div>
+	</div>
+</div>
+</div>
+
+<!-- Titan module scripts -->
+<script>
+/* Inline mirror of titan-icons.php for the static reference page.
+   In the PHP app you call titan_icon('name', size) instead. */
+(function(){
+	var P = {
+		wrench:[1.9,'<path d="M14.7 6.3a4 4 0 0 0 5 5l-1.6 1.6a1 1 0 0 1-1.4 0l-7.9 7.9a2.1 2.1 0 0 1-3-3l7.9-7.9a1 1 0 0 1 0-1.4z"/>'],
+		drum:[1.8,'<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M5 9h14M5 15h14M10 3v18"/>'],
+		flame:[1.8,'<path d="M12 2c1 3 4 4.5 4 8a4 4 0 0 1-8 0c0-1 .3-1.8.7-2.5C9 8 11 7 12 2z"/><path d="M8 14a4 4 0 0 0 8 0"/>'],
+		gauge:[1.8,'<path d="M12 14l4-4M4.5 18a9 9 0 1 1 15 0z"/>'],
+		shield:[1.8,'<path d="M12 3l7 3v5c0 5-3.5 8-7 10-3.5-2-7-5-7-10V6z"/>'],
+		file:[1.8,'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h6"/>'],
+		leaf:[1.8,'<path d="M11 20A7 7 0 0 1 4 13c0-5 4-9 16-9 0 11-5 16-9 16z"/><path d="M8 17c3-4 6-5 9-6"/>'],
+		clipboard:[1.8,'<rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 4V3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1M9 10h6M9 14h6"/>'],
+		parts:[1.9,'<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="m3.3 7 8.7 5 8.7-5M12 22V12"/>'],
+		van:[1.9,'<path d="M2 7h11v8H2zM13 10h4l3 3v2h-7z"/><circle cx="6.5" cy="17" r="1.6"/><circle cx="16.5" cy="17" r="1.6"/>'],
+		hammer:[1.9,'<path d="m15 12-8.4 8.4a2.1 2.1 0 1 1-3-3L12 9"/><path d="M17.6 15 22 10.6"/><path d="M20.9 11.7 19.6 10.4c-.6-.6-.9-1.4-.9-2.2v-.9L16 4.6A5.6 5.6 0 0 0 12 3H9l.9.8A6.2 6.2 0 0 1 12 8.4V10l2 2h1.6c.8 0 1.6.3 2.2.9l1.3 1.3"/>'],
+		ticket:[1.9,'<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94z"/>'],
+		pen:[2,'<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>'],
+		upload:[2,'<path d="M12 16V4M7 9l5-5 5 5M5 20h14"/>'],
+		search:[2,'<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>'],
+		check:[3,'<path d="M4 12.5l5 5L20 6.5"/>'],
+		user:[1.9,'<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>'],
+		reopen:[2,'<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>'],
+		arrow:[2.2,'<path d="M5 12h14M13 6l6 6-6 6"/>'],
+		x:[2.2,'<path d="M6 6l12 12M18 6 6 18"/>'],
+		clock:[2,'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'],
+		plus:[2.4,'<path d="M12 5v14M5 12h14"/>'],
+		chevronDown:[2.4,'<path d="M6 9l6 6 6-6"/>'],
+		bell:[1.9,'<path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/>'],
+		chat:[2,'<path d="M21 11.5a8 8 0 0 1-11.6 7.1L3 21l2.4-6.4A8 8 0 1 1 21 11.5z"/>'],
+		alert:[2.4,'<path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>'],
+		sun:[2,'<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/>'],
+		moon:[2,'<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>'],
+		spark:[0,'<path d="M12 2l1.6 5.2L19 9l-5.4 1.8L12 16l-1.6-5.2L5 9l5.4-1.8z"/><path d="M19 14l.8 2.4L22 17l-2.2.8L19 20l-.8-2.2L16 17l2.2-.6z"/>'],
+		brand:[2.2,'<path d="M12 2v4M12 18v4M2 12h4M18 12h4"/><circle cx="12" cy="12" r="4"/>']
+	};
+	function svg(name,s){var g=P[name]||P.file,sw=g[0];s=s||16;
+		if(sw===0) return '<svg width="'+s+'" height="'+s+'" viewBox="0 0 24 24" fill="currentColor" style="display:block">'+g[1]+'</svg>';
+		return '<svg width="'+s+'" height="'+s+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="'+sw+'" stroke-linecap="round" stroke-linejoin="round" style="display:block">'+g[1]+'</svg>';}
+	document.querySelectorAll('[data-ti]').forEach(function(el){
+		el.outerHTML = svg(el.getAttribute('data-ti'), parseInt(el.getAttribute('data-s'))||16);
+	});
+	var gal=document.getElementById('iconGallery');
+	if(gal){ Object.keys(P).forEach(function(n){
+		gal.insertAdjacentHTML('beforeend','<div class="gcell"><span style="color:var(--tx-hi)">'+svg(n,22)+'</span><span class="cap">'+n+'</span></div>');
+	});}
+})();
+</script>
+<script src="titan-viz.js"></script>
+<script src="titan-theme.js"></script>
+</body>
+</html>

@@ -41,6 +41,13 @@ try {
 	if (isset($_POST['card_min_floor'])) {
 		setting_set($db, 'card_min_floor', (string)max(0.0, (float)$_POST['card_min_floor']));
 	}
+	// New Cash Flow module knobs.
+	if (isset($_POST['avg_sales_tax_pct'])) {
+		setting_set($db, 'avg_sales_tax_pct', (string)max(0.0, min(100.0, (float)$_POST['avg_sales_tax_pct'])));
+	}
+	if (isset($_POST['cf_avail_debt'])) {
+		setting_set($db, 'cf_avail_debt', (string)max(0.0, (float)$_POST['cf_avail_debt']));
+	}
 	if (isset($_POST['cashflow_hide_before'])) {
 		$v = trim($_POST['cashflow_hide_before']);
 		if ($v === '' || $v === 'reset')          { setting_set($db, 'cashflow_hide_before', ''); }

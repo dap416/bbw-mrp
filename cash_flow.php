@@ -1,0 +1,383 @@
+<?php
+/* ============================================================
+   CASH FLOW — the new Titan-themed forecaster module.
+   Full-bleed Titan shell (Option A): owns its own sidebar + top
+   bar, skips the Berry header/footer. Admin/master only.
+   ============================================================ */
+
+require_once(__DIR__ . "/includes/fns.php");
+require_login();
+if (!in_array($_SESSION['user_role'] ?? '', ['admin', 'master'], true)) { http_response_code(403); exit('Admins only.'); }
+
+require_once(__DIR__ . "/includes/cash_flow.php");
+require_once(__DIR__ . "/titan-bbw/titan-icons.php");
+require_once(__DIR__ . "/titan-bbw/titan-components.php");
+
+$db = db_connect();
+cf_ensure_tables($db);
+cf_seed_records_if_empty($db);
+
+$hs      = cf_horizon_start();
+$buffer  = cash_buffer($db);
+$taxPct  = cf_avg_sales_tax_pct($db);
+$shopPct = shopify_loan_pct($db);
+$growth  = isset($_GET['growth']) ? (float)$_GET['growth'] : 0.0;
+$availDebt = (float)(setting_get($db, 'cf_avail_debt') ?: 12000);
+
+$acc     = cf_opening_accounts($db, $hs);   // projection opening (snapshot if present, else live)
+$live    = cf_live_accounts($db);           // editable set for the Accounts view + readouts
+$records = cf_load_records($db);
+$opts    = ['horizon_start' => $hs, 'growth' => $growth, 'buffer' => $buffer, 'tax_pct' => $taxPct, 'shop_pct' => $shopPct];
+$rows    = cf_compute($acc, $records, $opts);
+$cols    = cf_month_cols($hs, 12);
+$debts   = cf_debts($live);
+$afford  = cf_afford_calc($live, $records, $opts);
+$suggest = cf_suggest_map($live, $availDebt);
+$snap    = cf_current_snapshot($db);
+
+// "Now" readouts
+$cashNow  = $live['start_cash'];
+$availNow = $live['credit_available'];
+$debtNow  = $live['credit_used'];
+$liquidNow= $cashNow + $availNow;
+
+// pay-method options for the record modal
+$payOptions = [['v' => 'cash', 'label' => 'Cash']];
+foreach ($live['cards'] as $c) $payOptions[] = ['v' => $c['label'], 'label' => $c['label']];
+foreach ($live['locs']  as $l) $payOptions[] = ['v' => $l['label'], 'label' => $l['label'] . ' (LOC)'];
+
+$horizonLabel = cf_month_label($hs)['name'] . " " . cf_month_label($hs)['year'] . " \xE2\x80\x93 "
+	. cf_month_label(cf_add_months($hs, 11))['name'] . " " . cf_month_label(cf_add_months($hs, 11))['year'];
+
+/* ---- matrix chart (hand-built SVG, prototype style) ---- */
+function cf_chart_svg($rows, $buffer) {
+	$W = 820; $H = 128; $padT = 10; $padB = 8;
+	$cash = array_map(fn($r) => $r['endCash'], $rows);
+	$liq  = array_map(fn($r) => $r['liquid'], $rows);
+	$max  = max(max($liq), $buffer) * 1.08;
+	$min  = min(0, min($cash));
+	$span = ($max - $min) ?: 1;
+	$n = count($rows);
+	$x = fn($i) => round(($n <= 1 ? 0 : $i / ($n - 1)) * $W, 1);
+	$y = fn($v) => round($padT + ($H - $padT - $padB) * (1 - ($v - $min) / $span), 1);
+	$pts = fn($arr) => implode(' ', array_map(fn($i) => $x($i) . ',' . $y($arr[$i]), array_keys($arr)));
+	$cashPts = $pts($cash); $liqPts = $pts($liq); $by = $y($buffer);
+	$area = 'M0,' . $y($cash[0]);
+	foreach ($cash as $i => $v) $area .= ' L' . $x($i) . ',' . $y($v);
+	$area .= ' L' . $x($n - 1) . ',' . ($H - $padB) . ' L0,' . ($H - $padB) . ' Z';
+	$dots = '';
+	foreach ($rows as $i => $r) if ($r['cashRisk']) $dots .= '<circle cx="' . $x($i) . '" cy="' . $y($r['endCash']) . '" r="3" fill="var(--crit)"/>';
+	return '<svg viewBox="0 0 ' . $W . ' ' . $H . '" preserveAspectRatio="none" style="width:100%;height:130px;display:block">'
+		. '<defs><linearGradient id="cfg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--accent)" stop-opacity="0.22"/><stop offset="1" stop-color="var(--accent)" stop-opacity="0"/></linearGradient></defs>'
+		. '<path d="' . $area . '" fill="url(#cfg)"/>'
+		. '<line x1="0" y1="' . $by . '" x2="' . $W . '" y2="' . $by . '" stroke="var(--crit)" stroke-width="1" stroke-dasharray="4 4" opacity="0.7"/>'
+		. '<polyline points="' . $liqPts . '" fill="none" stroke="var(--good)" stroke-width="2"/>'
+		. '<polyline points="' . $cashPts . '" fill="none" stroke="var(--accent)" stroke-width="2.4"/>'
+		. $dots . '</svg>';
+}
+
+/* ---- matrix row renderer ---- */
+function cf_row($cols, $rows, $c) {
+	$ind = $c['indent'] ?? 0;
+	$trAttr = '';
+	if (!empty($c['rowbg'])) $trAttr .= ' style="background:var(--bg-inset)"';
+	if (!empty($c['child']))  $trAttr .= ' class="cf-child"' . ' hidden';
+	echo '<tr' . $trAttr . '>';
+	echo '<td class="cf-stick"' . ($ind ? ' style="padding-left:' . (12 + $ind) . 'px"' : '') . '>';
+	if (!empty($c['caret'])) echo '<span class="cf-caret" id="cfIncCaret">' . $c['caret'] . '</span> ';
+	echo '<span style="color:' . ($c['labelColor'] ?? 'var(--tx-mid)') . ';font-weight:' . ($c['weight'] ?? 500) . '">' . htmlspecialchars($c['label']) . '</span>';
+	if (!empty($c['sub'])) echo '<div class="cf-sub mono">' . htmlspecialchars($c['sub']) . '</div>';
+	echo '</td>';
+	foreach ($cols as $i => $col) {
+		$r = $rows[$i];
+		$v = ($c['get'])($r);
+		if (!empty($c['managed'])) {
+			echo '<td><button type="button" class="cf-cb" data-row="' . $c['managed'] . '" data-m="' . $i . '" data-chan="' . htmlspecialchars($c['chan'] ?? '') . '">' . cf_money($v) . '</button></td>';
+		} else {
+			$disp = (abs($v) < 0.5 && !empty($c['dashzero'])) ? cf_dash() : cf_money($v);
+			$color = isset($c['color']) ? ($c['color'])($r, $v) : 'var(--tx-hi)';
+			echo '<td class="cf-num" style="color:' . $color . ';font-weight:' . ($c['weight'] ?? 500) . '">' . $disp . '</td>';
+		}
+	}
+	echo '</tr>';
+}
+function cf_group_row($label, $cols) {
+	echo '<tr class="cf-grouprow"><td class="cf-stick cf-group">' . htmlspecialchars($label) . '</td>';
+	foreach ($cols as $col) echo '<td class="cf-group"></td>';
+	echo '</tr>';
+}
+
+// nav for the Titan shell (links back into the Berry app)
+$nav = [
+	'MRP' => [
+		['label' => 'Dashboard', 'icon' => 'gauge', 'href' => '/home.php'],
+		['label' => 'Orders', 'icon' => 'file', 'href' => '/orders.php'],
+		['label' => 'Inventory', 'icon' => 'parts', 'href' => '/index.php'],
+	],
+	'Finance' => [
+		['label' => 'Cash Flow', 'icon' => 'spark', 'href' => '/cash_flow.php', 'on' => true],
+		['label' => 'Cash Management', 'icon' => 'clipboard', 'href' => '/cashflow.php'],
+	],
+];
+$statsHtml = t_stat(cf_money($cashNow), 'Cash on hand', 'good')
+	. t_stat(cf_money($availNow), 'Avail credit', 'accent')
+	. t_stat(cf_money($debtNow), 'Total debt', 'warn');
+?>
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Cash Flow · BBW MRP</title>
+	<link rel="stylesheet" href="/titan-bbw/titan-bbw.css">
+	<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+	<style>
+	/* ---- module-local styles (matrix, control bar, modals) ---- */
+	.cf-bar{ display:flex; align-items:center; gap:16px; flex-wrap:wrap; margin-bottom:18px; }
+	.cf-ctrl{ display:flex; align-items:center; gap:8px; }
+	.cf-mini{ display:flex; align-items:center; gap:6px; background:var(--bg-inset); border:1px solid var(--line-2); border-radius:8px; padding:5px 10px; }
+	.cf-mini label{ font-family:var(--font-mono); font-size:9.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--tx-lo); }
+	.cf-mini input{ width:64px; background:transparent; border:none; outline:none; color:var(--tx-hi); font-family:var(--font-num); font-size:13px; text-align:right; }
+	.cf-readouts{ display:flex; gap:22px; margin-left:auto; }
+	.cf-ro{ text-align:right; }
+	.cf-ro-lbl{ font-family:var(--font-mono); font-size:8.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--tx-lo); }
+	.cf-ro-val{ font-family:var(--font-num); font-variant-numeric:tabular-nums; font-size:16px; font-weight:700; color:var(--tx-hi); }
+	.cf-ro.accent .cf-ro-val{ color:var(--accent); }
+
+	.cf-mx-wrap{ overflow-x:auto; border-radius:11px; border:1px solid var(--line); background:var(--bg-inset); }
+	table.cf-mx{ border-collapse:collapse; width:100%; min-width:1000px; }
+	.cf-mx th, .cf-mx td{ padding:7px 12px; border-bottom:1px solid var(--line); white-space:nowrap; }
+	.cf-mx thead th{ position:sticky; top:0; z-index:2; background:var(--bg-inset); font-family:var(--font-mono); font-size:9.5px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--tx-lo); text-align:right; }
+	.cf-mx thead th .cf-yr{ display:block; font-size:8px; color:var(--tx-lo); opacity:.7; }
+	.cf-stick{ position:sticky; left:0; z-index:1; background:var(--bg-1); text-align:left; min-width:190px; }
+	.cf-mx thead .cf-stick{ z-index:3; background:var(--bg-inset); }
+	.cf-mx td.cf-num, .cf-mx td:not(.cf-stick){ text-align:right; font-family:var(--font-num); font-variant-numeric:tabular-nums; font-size:12.5px; }
+	.cf-mx td:nth-child(2){ background:var(--accent-soft); box-shadow:inset 1px 0 0 var(--accent-line), inset -1px 0 0 var(--accent-line); }
+	.cf-mx thead th:nth-child(2){ background:var(--accent-soft); }
+	.cf-sub{ font-size:8px; letter-spacing:.05em; text-transform:uppercase; color:var(--tx-lo); margin-top:2px; }
+	.cf-cb{ background:none; border:none; cursor:pointer; font-family:var(--font-num); font-variant-numeric:tabular-nums; font-size:12.5px; color:var(--tx-hi); padding:2px 4px; border-radius:5px; }
+	.cf-cb:hover{ background:var(--accent-soft); color:var(--accent); box-shadow:inset 0 0 0 1px var(--accent-line); }
+	.cf-grouprow td.cf-group{ background:var(--bg-inset); font-family:var(--font-mono); font-size:9px; letter-spacing:.12em; text-transform:uppercase; color:var(--tx-mid); padding:5px 12px; }
+	.cf-caret{ display:inline-block; cursor:pointer; color:var(--tx-lo); width:12px; user-select:none; }
+	.cf-legend{ display:flex; gap:18px; margin-top:12px; font-family:var(--font-mono); font-size:9px; letter-spacing:.06em; text-transform:uppercase; color:var(--tx-lo); flex-wrap:wrap; }
+	.cf-legend span{ display:inline-flex; align-items:center; gap:6px; }
+
+	.cf-view{ display:none; }
+	.cf-view.on{ display:block; }
+	.cf-acct-grid{ display:grid; grid-template-columns:0.8fr 1.1fr 1.1fr; gap:14px; }
+	@media(max-width:1100px){ .cf-acct-grid{ grid-template-columns:1fr; } }
+	.cf-modal-body{ padding:20px 22px; }
+	.cf-modal-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; }
+	.cf-x{ background:none; border:none; color:var(--tx-lo); cursor:pointer; font-size:18px; line-height:1; }
+	.cf-x:hover{ color:var(--tx-hi); }
+	.cf-planned-inp{ width:88px; background:var(--bg-inset); border:1px solid var(--line-2); border-radius:6px; color:var(--tx-hi); font-family:var(--font-num); font-size:12px; text-align:right; padding:3px 7px; }
+	.cf-actuals{ border:1px solid var(--warn-line); border-radius:12px; background:var(--warn-soft); margin-top:14px; }
+	.cf-pay-menu{ position:absolute; z-index:70; background:var(--bg-2); border:1px solid var(--line-2); border-radius:10px; box-shadow:var(--shadow-pop); padding:5px; min-width:180px; max-height:260px; overflow:auto; }
+	.cf-pay-menu button{ display:flex; width:100%; align-items:center; justify-content:space-between; gap:8px; background:none; border:none; color:var(--tx-mid); font-family:var(--font-ui); font-size:12.5px; padding:7px 10px; border-radius:7px; cursor:pointer; text-align:left; }
+	.cf-pay-menu button:hover{ background:var(--bg-3); color:var(--tx-hi); }
+	.cf-note-inline{ font-size:11px; color:var(--tx-lo); margin-top:6px; }
+	.cf-fieldrow{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+	.cf-seg2{ display:inline-flex; background:var(--bg-3); border-radius:8px; padding:3px; gap:2px; border:1px solid var(--line); flex-wrap:wrap; }
+	.cf-seg2 button{ font-family:var(--font-mono); font-size:10.5px; font-weight:600; padding:5px 9px; border-radius:6px; cursor:pointer; border:none; background:transparent; color:var(--tx-mid); }
+	.cf-seg2 button.on{ background:var(--accent-deep); color:#fff; }
+	</style>
+</head>
+<body>
+<?php echo t_shell_open('Cash Flow', $nav, $statsHtml, 'dark'); ?>
+
+	<!-- ===== CONTROL BAR ===== -->
+	<div class="cf-bar">
+		<div class="t-seg" id="cfViews" role="tablist">
+			<button class="on" data-view="cash">Cash Flow</button>
+			<button data-view="debt">Debt Reduction</button>
+			<button data-view="accounts">Accounts</button>
+		</div>
+		<div class="cf-mini"><label>Cash buffer</label><span style="color:var(--tx-lo)">$</span><input id="cfBuffer" value="<?php echo (int)$buffer; ?>"></div>
+		<div class="cf-mini"><label>Avg sales tax</label><input id="cfTax" value="<?php echo rtrim(rtrim(number_format($taxPct, 2), '0'), '.'); ?>"><span style="color:var(--tx-lo)">%</span></div>
+		<div class="cf-mini"><label>Growth vs LY</label><input id="cfGrowth" value="<?php echo (int)$growth; ?>"><span style="color:var(--tx-lo)">%</span></div>
+		<div class="cf-readouts">
+			<div class="cf-ro"><div class="cf-ro-lbl">Cash on hand</div><div class="cf-ro-val"><?php echo cf_money($cashNow); ?></div></div>
+			<div class="cf-ro"><div class="cf-ro-lbl">Avail credit</div><div class="cf-ro-val"><?php echo cf_money($availNow); ?></div></div>
+			<div class="cf-ro accent"><div class="cf-ro-lbl">Liquid available</div><div class="cf-ro-val"><?php echo cf_money($liquidNow); ?></div></div>
+			<div class="cf-ro"><div class="cf-ro-lbl">Total debt</div><div class="cf-ro-val"><?php echo cf_money($debtNow); ?></div></div>
+		</div>
+	</div>
+
+	<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+		<span class="t-eyebrow"><?php
+			if ($snap) echo 'Opening balances · ' . strtoupper(date('M j', strtotime($snap['captured_at']))) . ' snapshot (' . htmlspecialchars($snap['source']) . ')';
+			else echo 'Opening balances · LIVE (no snapshot yet)';
+		?></span>
+		<button class="t-btn sm" id="cfSnapBtn"><?php echo titan_icon('upload', 13); ?><span>Take starting snapshot</span></button>
+	</div>
+
+	<!-- ============ VIEW: CASH FLOW ============ -->
+	<div class="cf-view on" id="view-cash">
+		<div class="t-panel" style="margin-bottom:16px">
+			<div class="t-panel-body">
+				<div class="t-panel-head">
+					<h6 class="t-panel-title">Projected balances · <?php echo htmlspecialchars($horizonLabel); ?></h6>
+					<div style="display:flex;gap:14px;align-items:center">
+						<span class="cf-legend" style="margin:0"><span><span class="t-dot accent nohalo"></span>Ending cash</span><span><span class="t-dot good nohalo"></span>Liquid available</span><span><span style="width:12px;height:0;border-top:1px dashed var(--crit);display:inline-block"></span>Buffer</span></span>
+						<button class="t-btn sm" id="cfChartToggle"><span>Hide chart</span></button>
+					</div>
+				</div>
+				<div id="cfChart"><?php echo cf_chart_svg($rows, $buffer); ?></div>
+			</div>
+		</div>
+
+		<div class="t-panel">
+			<div class="t-panel-body">
+				<div class="cf-mx-wrap">
+					<table class="cf-mx">
+						<thead><tr>
+							<th class="cf-stick" style="text-align:left">Line item</th>
+							<?php foreach ($cols as $i => $col) {
+								$r = $rows[$i];
+								$hc = $r['cashRisk'] ? 'var(--crit)' : ($r['creditTight'] ? 'var(--warn)' : 'var(--tx-mid)');
+								echo '<th style="color:' . $hc . '">' . $col['name'] . '<span class="cf-yr">' . $col['year'] . '</span></th>';
+							} ?>
+						</tr></thead>
+						<tbody>
+						<?php
+						// 1 — Sales income (managed, expandable)
+						cf_row($cols, $rows, ['label' => 'Sales income', 'sub' => 'QBO CASH-BASIS · NET OF TAX', 'managed' => 'income', 'get' => fn($r) => $r['inc'], 'weight' => 700, 'labelColor' => 'var(--tx-hi)', 'caret' => "\xE2\x96\xB8"]);
+						cf_row($cols, $rows, ['label' => 'Online', 'child' => true, 'indent' => 16, 'managed' => 'income', 'chan' => 'Online', 'get' => fn($r) => $r['online'], 'dashzero' => true]);
+						cf_row($cols, $rows, ['label' => 'Shows', 'child' => true, 'indent' => 16, 'managed' => 'income', 'chan' => 'Shows', 'get' => fn($r) => $r['shows'], 'dashzero' => true]);
+						cf_row($cols, $rows, ['label' => 'Wholesale', 'child' => true, 'indent' => 16, 'managed' => 'income', 'chan' => 'Wholesale', 'get' => fn($r) => $r['wholesale'], 'dashzero' => true]);
+						// Cash out
+						cf_group_row('Cash out', $cols);
+						cf_row($cols, $rows, ['label' => 'Operating', 'sub' => 'MONTHLIES + MISC', 'managed' => 'operating', 'get' => fn($r) => $r['op']]);
+						cf_row($cols, $rows, ['label' => 'Purchases', 'sub' => 'PO + FP · BY CARD / CASH', 'managed' => 'purchase', 'get' => fn($r) => $r['pur']]);
+						cf_row($cols, $rows, ['label' => 'Sales tax', 'sub' => 'MANUAL SET-ASIDE', 'get' => fn($r) => $r['tax'], 'dashzero' => true, 'color' => fn($r, $v) => 'var(--tx-mid)']);
+						cf_row($cols, $rows, ['label' => 'Shopify payback', 'sub' => rtrim(rtrim(number_format($shopPct, 1), '0'), '.') . '% OF SALES', 'get' => fn($r) => $r['shopPay'], 'dashzero' => true, 'color' => fn($r, $v) => 'var(--tx-mid)']);
+						cf_row($cols, $rows, ['label' => 'Debt paydown', 'sub' => 'FROM PLANNED PAYMENTS', 'get' => fn($r) => $r['dp'], 'dashzero' => true, 'color' => fn($r, $v) => 'var(--tx-mid)']);
+						cf_row($cols, $rows, ['label' => 'Total cash out', 'sub' => 'FROM BANK', 'get' => fn($r) => $r['cashOut'], 'weight' => 600, 'labelColor' => 'var(--tx-hi)', 'rowbg' => true, 'color' => fn($r, $v) => 'var(--tx-hi)']);
+						// Position
+						cf_group_row('Position', $cols);
+						cf_row($cols, $rows, ['label' => 'Net cash flow', 'sub' => "IN \xE2\x88\x92 OUT", 'get' => fn($r) => $r['net'], 'weight' => 600, 'color' => fn($r, $v) => $v < 0 ? 'var(--crit)' : 'var(--good)']);
+						cf_row($cols, $rows, ['label' => 'Ending cash', 'sub' => 'RUNNING BANK', 'get' => fn($r) => $r['endCash'], 'weight' => 700, 'color' => fn($r, $v) => $r['cashRisk'] ? 'var(--crit)' : 'var(--tx-hi)']);
+						cf_row($cols, $rows, ['label' => 'Credit used', 'sub' => 'CARDS + LOCS', 'get' => fn($r) => $r['endCredit'], 'color' => fn($r, $v) => 'var(--tx-mid)']);
+						cf_row($cols, $rows, ['label' => 'Interest accrued', 'sub' => 'ADDED TO CARD / LOC BALANCES', 'get' => fn($r) => $r['interest'], 'color' => fn($r, $v) => 'var(--warn)']);
+						cf_row($cols, $rows, ['label' => 'Available credit', 'sub' => 'HEADROOM', 'get' => fn($r) => $r['avail'], 'color' => fn($r, $v) => $v < 0 ? 'var(--crit)' : ($r['creditTight'] ? 'var(--warn)' : 'var(--tx-mid)')]);
+						cf_row($cols, $rows, ['label' => 'Ending liquid', 'sub' => 'CASH + CREDIT', 'get' => fn($r) => $r['liquid'], 'weight' => 700, 'rowbg' => true, 'color' => fn($r, $v) => 'var(--accent)']);
+						?>
+						</tbody>
+					</table>
+				</div>
+				<div class="cf-legend">
+					<span><span class="t-dot crit nohalo"></span>Ending cash below buffer</span>
+					<span><span class="t-dot warn nohalo"></span>Credit headroom tight</span>
+					<span>Click amounts to manage records</span>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<!-- ============ VIEW: DEBT REDUCTION ============ -->
+	<div class="cf-view" id="view-debt">
+		<div class="t-panel" style="margin-bottom:16px"><div class="t-panel-body">
+			<div style="display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap">
+				<div class="t-field" style="max-width:260px">
+					<span class="t-label">Monthly amount available for debt</span>
+					<div class="t-input"><span style="color:var(--tx-lo)">$</span><input id="cfAvailDebt" value="<?php echo (int)$availDebt; ?>"></div>
+				</div>
+				<button class="t-btn" id="cfAfford"><?php echo titan_icon('gauge', 15); ?><span>What can I afford to pay?</span></button>
+				<button class="t-btn" id="cfFocus"><?php echo titan_icon('spark', 15); ?><span>Where should I focus?</span></button>
+			</div>
+			<div id="cfAssist" hidden style="margin-top:14px;padding:14px 16px;border-radius:12px;background:var(--accent-soft);box-shadow:inset 0 0 0 1px var(--accent-line)">
+				<div style="display:flex;justify-content:space-between;gap:12px">
+					<div><div style="font-weight:700;color:var(--tx-hi);margin-bottom:3px" id="cfAssistTitle"></div><div style="font-size:12.5px;color:var(--tx-mid)" id="cfAssistText"></div>
+					<div class="t-eyebrow" style="margin-top:8px">Suggestion · the forecast engine finalizes exact amounts</div></div>
+					<button class="cf-x" id="cfAssistX">&times;</button>
+				</div>
+			</div>
+		</div></div>
+
+		<div class="t-panel"><div class="t-panel-body">
+			<div class="t-panel-head"><h6 class="t-panel-title">Debts · avalanche order</h6>
+				<div style="display:flex;gap:10px;align-items:center"><span class="t-eyebrow">Planned payments feed the cash-flow debt line</span><button class="t-btn sm" id="cfUseAll" hidden>Use all</button></div>
+			</div>
+			<div class="t-scroll" style="max-height:none">
+			<table class="t-table"><thead><tr>
+				<th>Debt</th><th style="text-align:right">Balance</th><th style="text-align:right">APR</th><th style="text-align:right">Min</th><th style="text-align:right">Planned / mo</th><th style="text-align:right">Suggested</th><th></th>
+			</tr></thead><tbody>
+			<?php foreach ($debts as $d) { ?>
+				<tr data-key="<?php echo $d['key']; ?>" data-id="<?php echo $d['id']; ?>">
+					<td><?php echo htmlspecialchars($d['label']); ?> <?php if ($d['focus']) echo '<span class="t-chip accent">Focus</span>'; ?></td>
+					<td class="num" style="text-align:right"><?php echo cf_money($d['balance']); ?></td>
+					<td class="num" style="text-align:right"><?php echo $d['apr'] !== null ? rtrim(rtrim(number_format($d['apr'], 2), '0'), '.') . '%' : cf_dash(); ?></td>
+					<td class="num" style="text-align:right"><?php echo $d['min'] !== null ? cf_money($d['min']) : cf_dash(); ?></td>
+					<td style="text-align:right">
+						<?php if ($d['is_payout']) { ?><span style="color:var(--tx-lo);font-size:11px"><?php echo rtrim(rtrim(number_format((float)$d['payout_pct'], 1), '0'), '.'); ?>% of sales</span>
+						<?php } else { ?><input class="cf-planned-inp" data-id="<?php echo $d['id']; ?>" value="<?php echo (int)round($d['planned']); ?>"><?php } ?>
+					</td>
+					<td class="num cf-suggest-cell" style="text-align:right;color:var(--accent)" data-key="<?php echo $d['key']; ?>"><?php echo $d['is_payout'] ? cf_dash() : ''; ?></td>
+					<td style="text-align:right"><?php if (!$d['is_payout']) echo '<button class="t-btn sm cf-use" data-id="' . $d['id'] . '" data-key="' . $d['key'] . '" hidden>Use this</button>'; ?></td>
+				</tr>
+			<?php } ?>
+			</tbody><tfoot><tr><td colspan="4"></td><td style="text-align:right;font-family:var(--font-mono);font-size:10px;color:var(--tx-lo)">TOTAL / MO</td><td class="num" style="text-align:right;color:var(--tx-hi)"><?php echo cf_money(cf_planned_total($live)); ?></td><td></td></tr></tfoot></table>
+			</div>
+		</div></div>
+	</div>
+
+	<!-- ============ VIEW: ACCOUNTS ============ -->
+	<div class="cf-view" id="view-accounts">
+		<div class="cf-acct-grid">
+			<div class="t-panel"><div class="t-panel-body">
+				<div class="t-panel-head"><h6 class="t-panel-title">Cash accounts</h6><button class="t-btn sm cf-acct-add" data-group="banks">+ Add</button></div>
+				<table class="t-table"><thead><tr><th>Account</th><th style="text-align:right">Balance</th><th>As of</th><th></th></tr></thead><tbody>
+				<?php foreach ($live['banks'] as $b) { ?>
+					<tr><td><?php echo htmlspecialchars($b['label']); ?></td><td class="num" style="text-align:right"><?php echo cf_money($b['balance']); ?></td><td class="id"><?php echo htmlspecialchars(strtoupper((string)$b['as_of'])); ?></td>
+					<td style="text-align:right"><button class="t-btn sm icon cf-acct-edit" data-group="banks" data-id="<?php echo $b['id']; ?>"><?php echo titan_icon('pen', 13); ?></button></td></tr>
+				<?php } ?>
+				</tbody></table>
+			</div></div>
+
+			<div class="t-panel"><div class="t-panel-body">
+				<div class="t-panel-head"><h6 class="t-panel-title">Credit cards</h6><button class="t-btn sm cf-acct-add" data-group="cards">+ Add</button></div>
+				<div style="overflow-x:auto"><table class="t-table" style="min-width:560px"><thead><tr><th>Card</th><th style="text-align:right">Balance</th><th style="text-align:right">Limit</th><th style="text-align:right">Avail</th><th style="text-align:right">APR</th><th></th></tr></thead><tbody>
+				<?php foreach ($live['cards'] as $c) { $avail = ($c['limit'] ?? 0) - $c['balance']; ?>
+					<tr><td><?php echo htmlspecialchars($c['label']); ?></td><td class="num" style="text-align:right"><?php echo cf_money($c['balance']); ?></td>
+					<td class="num" style="text-align:right"><?php echo $c['limit'] !== null ? cf_money($c['limit']) : cf_dash(); ?></td>
+					<td class="num" style="text-align:right;color:var(--good)"><?php echo cf_money($avail); ?></td>
+					<td class="num" style="text-align:right"><?php echo $c['apr'] !== null ? rtrim(rtrim(number_format((float)$c['apr'], 2), '0'), '.') . '%' : cf_dash(); ?></td>
+					<td style="text-align:right"><button class="t-btn sm icon cf-acct-edit" data-group="cards" data-id="<?php echo $c['id']; ?>"><?php echo titan_icon('pen', 13); ?></button></td></tr>
+				<?php } ?>
+				</tbody></table></div>
+			</div></div>
+
+			<div class="t-panel"><div class="t-panel-body">
+				<div class="t-panel-head"><h6 class="t-panel-title">Lines of credit &amp; loans</h6><button class="t-btn sm cf-acct-add" data-group="locs">+ Add</button></div>
+				<div style="overflow-x:auto"><table class="t-table" style="min-width:600px"><thead><tr><th>Facility</th><th style="text-align:right">Drawn</th><th style="text-align:right">Ceiling</th><th style="text-align:right">Avail</th><th style="text-align:right">APR</th><th style="text-align:right">Repay</th><th></th></tr></thead><tbody>
+				<?php foreach ($live['locs'] as $l) { $avail = ($l['ceiling'] ?? 0) - $l['drawn']; ?>
+					<tr><td><?php echo htmlspecialchars($l['label']); ?><?php if ($l['payout']) echo ' <span class="t-chip ghost">Payout</span>'; ?></td>
+					<td class="num" style="text-align:right"><?php echo cf_money($l['drawn']); ?></td>
+					<td class="num" style="text-align:right"><?php echo cf_money($l['ceiling']); ?></td>
+					<td class="num" style="text-align:right;color:var(--good)"><?php echo cf_money($avail); ?></td>
+					<td class="num" style="text-align:right"><?php echo (!$l['payout'] && $l['apr'] !== null) ? rtrim(rtrim(number_format((float)$l['apr'], 2), '0'), '.') . '%' : cf_dash(); ?></td>
+					<td class="num" style="text-align:right"><?php echo $l['payout'] ? (rtrim(rtrim(number_format((float)$l['payout_pct'], 1), '0'), '.') . '% sales') : ($l['payment'] ? cf_money($l['payment']) . '/mo' : cf_dash()); ?></td>
+					<td style="text-align:right"><button class="t-btn sm icon cf-acct-edit" data-group="locs" data-id="<?php echo $l['id']; ?>"><?php echo titan_icon('pen', 13); ?></button></td></tr>
+				<?php } ?>
+				</tbody></table></div>
+			</div></div>
+		</div>
+	</div>
+
+	<div id="cfModalRoot"></div>
+
+<?php echo t_shell_close(); ?>
+
+<script>
+const CF = <?php echo json_encode([
+	'hs' => $hs, 'cols' => $cols, 'records' => $records, 'accounts' => $live,
+	'payOptions' => $payOptions, 'suggest' => $suggest, 'afford' => $afford,
+	'settings' => ['buffer' => $buffer, 'tax' => $taxPct, 'shop' => $shopPct, 'growth' => $growth, 'availDebt' => $availDebt],
+	'recOptions' => [['once', 'One-time'], ['monthly', 'Monthly'], ['quarterly', 'Quarterly'], ['annual', 'Annual']],
+	'subOptions' => ['Online', 'Shows', 'Wholesale'],
+], JSON_UNESCAPED_UNICODE); ?>;
+</script>
+<script src="/titan-bbw/titan-theme.js"></script>
+<script src="/cash_flow.js"></script>
+</body>
+</html>
