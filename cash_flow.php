@@ -34,6 +34,7 @@ $debts   = cf_debts($live);
 $afford  = cf_afford_calc($live, $records, $opts);
 $suggest = cf_suggest_map($live, $availDebt);
 $snap    = cf_current_snapshot($db);
+$qbAccounts = cf_qb_account_options($db);   // for the "auto-sync this account" picker
 
 // "Now" readouts
 $cashNow  = $live['start_cash'];
@@ -328,7 +329,7 @@ $statsHtml = t_stat(cf_money($cashNow), 'Cash on hand', 'good')
 				<div class="t-panel-head"><h6 class="t-panel-title">Cash accounts</h6><button class="t-btn sm cf-acct-add" data-group="banks">+ Add</button></div>
 				<table class="t-table"><thead><tr><th>Account</th><th style="text-align:right">Balance</th><th>As of</th><th></th></tr></thead><tbody>
 				<?php foreach ($live['banks'] as $b) { ?>
-					<tr><td><?php echo htmlspecialchars($b['label']); ?></td><td class="num" style="text-align:right"><?php echo cf_money($b['balance']); ?></td><td class="id"><?php echo htmlspecialchars(strtoupper((string)$b['as_of'])); ?></td>
+					<tr><td><?php echo htmlspecialchars($b['label']); ?><?php if (!empty($b['qb_id'])) echo ' <span class="t-chip accent" title="Balance auto-synced from QuickBooks nightly">Auto</span>'; ?></td><td class="num" style="text-align:right"><?php echo cf_money($b['balance']); ?></td><td class="id"><?php echo htmlspecialchars(strtoupper((string)$b['as_of'])); ?></td>
 					<td style="text-align:right"><button class="t-btn sm icon cf-acct-edit" data-group="banks" data-id="<?php echo $b['id']; ?>"><?php echo titan_icon('pen', 13); ?></button></td></tr>
 				<?php } ?>
 				</tbody></table>
@@ -338,7 +339,7 @@ $statsHtml = t_stat(cf_money($cashNow), 'Cash on hand', 'good')
 				<div class="t-panel-head"><h6 class="t-panel-title">Credit cards</h6><button class="t-btn sm cf-acct-add" data-group="cards">+ Add</button></div>
 				<div style="overflow-x:auto"><table class="t-table" style="min-width:560px"><thead><tr><th>Card</th><th style="text-align:right">Balance</th><th style="text-align:right">Limit</th><th style="text-align:right">Avail</th><th style="text-align:right">APR</th><th></th></tr></thead><tbody>
 				<?php foreach ($live['cards'] as $c) { $avail = ($c['limit'] ?? 0) - $c['balance']; ?>
-					<tr><td><?php echo htmlspecialchars($c['label']); ?></td><td class="num" style="text-align:right"><?php echo cf_money($c['balance']); ?></td>
+					<tr><td><?php echo htmlspecialchars($c['label']); ?><?php if (!empty($c['qb_id'])) echo ' <span class="t-chip accent" title="Balance auto-synced from QuickBooks nightly">Auto</span>'; ?></td><td class="num" style="text-align:right"><?php echo cf_money($c['balance']); ?></td>
 					<td class="num" style="text-align:right"><?php echo $c['limit'] !== null ? cf_money($c['limit']) : cf_dash(); ?></td>
 					<td class="num" style="text-align:right;color:var(--good)"><?php echo cf_money($avail); ?></td>
 					<td class="num" style="text-align:right"><?php echo $c['apr'] !== null ? rtrim(rtrim(number_format((float)$c['apr'], 2), '0'), '.') . '%' : cf_dash(); ?></td>
@@ -351,7 +352,7 @@ $statsHtml = t_stat(cf_money($cashNow), 'Cash on hand', 'good')
 				<div class="t-panel-head"><h6 class="t-panel-title">Lines of credit &amp; loans</h6><button class="t-btn sm cf-acct-add" data-group="locs">+ Add</button></div>
 				<div style="overflow-x:auto"><table class="t-table" style="min-width:600px"><thead><tr><th>Facility</th><th style="text-align:right">Drawn</th><th style="text-align:right">Ceiling</th><th style="text-align:right">Avail</th><th style="text-align:right">APR</th><th style="text-align:right">Repay</th><th></th></tr></thead><tbody>
 				<?php foreach ($live['locs'] as $l) { $avail = ($l['ceiling'] ?? 0) - $l['drawn']; ?>
-					<tr><td><?php echo htmlspecialchars($l['label']); ?><?php if ($l['payout']) echo ' <span class="t-chip ghost">Payout</span>'; ?></td>
+					<tr><td><?php echo htmlspecialchars($l['label']); ?><?php if ($l['payout']) echo ' <span class="t-chip ghost">Payout</span>'; ?><?php if (!empty($l['qb_id'])) echo ' <span class="t-chip accent" title="Balance auto-synced from QuickBooks nightly">Auto</span>'; ?></td>
 					<td class="num" style="text-align:right"><?php echo cf_money($l['drawn']); ?></td>
 					<td class="num" style="text-align:right"><?php echo cf_money($l['ceiling']); ?></td>
 					<td class="num" style="text-align:right;color:var(--good)"><?php echo cf_money($avail); ?></td>
@@ -371,7 +372,7 @@ $statsHtml = t_stat(cf_money($cashNow), 'Cash on hand', 'good')
 <script>
 const CF = <?php echo json_encode([
 	'hs' => $hs, 'cols' => $cols, 'records' => $records, 'accounts' => $live,
-	'payOptions' => $payOptions, 'suggest' => $suggest, 'afford' => $afford,
+	'payOptions' => $payOptions, 'suggest' => $suggest, 'afford' => $afford, 'qbAccounts' => $qbAccounts,
 	'settings' => ['buffer' => $buffer, 'tax' => $taxPct, 'shop' => $shopPct, 'growth' => $growth, 'availDebt' => $availDebt],
 	'recOptions' => [['once', 'One-time'], ['monthly', 'Monthly'], ['quarterly', 'Quarterly'], ['annual', 'Annual']],
 	'subOptions' => ['Online', 'Shows', 'Wholesale'],

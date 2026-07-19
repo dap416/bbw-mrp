@@ -12,12 +12,13 @@ if (!in_array($_SESSION['user_role'] ?? '', ['admin', 'master'], true)) { http_r
 $db = db_connect();
 if (!$db) { http_response_code(500); echo json_encode(['error' => 'DB connection failed.']); exit; }
 
-$ym     = preg_match('/^\d{4}-\d{2}$/', (string)($_POST['ym'] ?? '')) ? $_POST['ym'] : cf_horizon_start();
 $source = in_array($_POST['source'] ?? '', ['cron', 'seed', 'manual'], true) ? $_POST['source'] : 'manual';
 
 try {
-	$acc = cf_capture_snapshot($db, $ym, $source);
-	echo json_encode(['ok' => true, 'snap_ym' => $ym, 'cash_total' => $acc['start_cash'], 'credit_total' => $acc['credit_used']]);
+	// Manual capture always freezes the current month's opening (pulls QB first).
+	$res = cf_capture_balances($db, true, $source);
+	echo json_encode(['ok' => true, 'snap_ym' => $res['froze'], 'qb_updated' => $res['qb_updated'],
+		'cash_total' => $res['accounts']['start_cash'], 'credit_total' => $res['accounts']['credit_used']]);
 } catch (Throwable $e) {
 	http_response_code(500);
 	echo json_encode(['error' => $e->getMessage()]);

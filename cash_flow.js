@@ -51,7 +51,7 @@
 
 	/* ---- snapshot ---- */
 	$('#cfSnapBtn').on('click', function(){
-		if (!confirm('Freeze the current balances as the opening snapshot for ' + mLabel(0) + '? This starts the month-grained projection.')) return;
+		if (!confirm('Pull the latest QuickBooks balances and freeze them as the opening snapshot for ' + mLabel(0) + '? This starts the month-grained projection.')) return;
 		const $b = $(this).prop('disabled', true);
 		post('/ajax/cash_flow/snapshot.php', { ym: CF.hs, source: 'seed' })
 			.done(r => { if (r && r.ok) location.reload(); else { alert((r && r.error) || 'Snapshot failed'); $b.prop('disabled', false); } })
@@ -240,6 +240,16 @@
 			body += '<div class="t-field"><span class="t-label">' + lbl + '</span><div class="t-input">' + pre + '<input data-k="' + k + '" value="' + esc(val) + '">' + suf + '</div></div>';
 		});
 		body += '</div>';
+		// QuickBooks link — when set, this account's balance is auto-synced nightly.
+		const curQb = rec ? (rec.qb_id || '') : '';
+		if ((CF.qbAccounts || []).length){
+			body += '<div class="t-field" style="margin-top:12px"><span class="t-label">QuickBooks account · auto-sync balance</span><div class="t-input"><select data-k="qb_account_id">'
+				+ '<option value="">— Manual (no sync) —</option>'
+				+ CF.qbAccounts.map(a => '<option value="' + esc(a.id) + '"' + (a.id === curQb ? ' selected' : '') + '>' + esc(a.name) + '</option>').join('')
+				+ '</select></div><div class="cf-note-inline">Linked accounts refresh their balance from QuickBooks every night — you won\'t hand-enter them.</div></div>';
+		} else {
+			body += '<input type="hidden" data-k="qb_account_id" value="' + esc(curQb) + '"><div class="cf-note-inline" style="margin-top:10px">QuickBooks isn\'t connected — balances stay manual.</div>';
+		}
 		const html = '<div class="t-modal" style="max-width:520px"><div class="cf-modal-body">'
 			+ '<div class="cf-modal-head"><h6 class="t-panel-title">' + (isEdit ? 'Edit ' : 'New ') + gl + '</h6><button class="cf-x" id="cfModalX">&times;</button></div>'
 			+ body
@@ -258,6 +268,7 @@
 			balance: (v.balance != null ? v.balance : (v.drawn || '')),
 			credit_limit: (v.limit != null ? v.limit : (v.ceiling || '')),
 			apr: v.apr || '', monthly_payment: v.payment || '', due_day: v.due_day || '', as_of: v.as_of || '',
+			qb_account_id: v.qb_account_id || '',
 		};
 		const $b = $(this).prop('disabled', true);
 		post('/ajax/cash_flow/save_account.php', payload)

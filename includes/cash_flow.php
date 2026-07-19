@@ -95,8 +95,38 @@ function cf_ensure_tables($db) {
 		source       VARCHAR(12)  NOT NULL DEFAULT 'manual',    -- cron | seed | manual
 		cash_total   DECIMAL(14,2) NOT NULL DEFAULT 0,
 		credit_total DECIMAL(14,2) NOT NULL DEFAULT 0,
-		data         LONGTEXT     NULL,                         -- JSON: full per-facility accounts blob
+		data         LONGTEXT     NULL,                         -- legacy JSON blob (unused; detail now normalized below)
 		note         VARCHAR(255) NULL
+	) ENGINE=InnoDB");
+
+	// Normalized per-account balance history. One row per account per day
+	// (cf_balance_daily) and per opening month (cf_balance_monthly). These are
+	// the durable, queryable record; cash_balances holds only current state.
+	$db->exec("CREATE TABLE IF NOT EXISTS cf_balance_daily (
+		snap_date    DATE         NOT NULL,
+		account_id   INT          NOT NULL,                     -- cash_balances.id (stable key)
+		label        VARCHAR(120) NULL,
+		acct_type    VARCHAR(12)  NOT NULL DEFAULT 'bank',      -- bank | credit | loc
+		balance      DECIMAL(14,2) NOT NULL DEFAULT 0,
+		credit_limit DECIMAL(14,2) NULL,
+		apr          DECIMAL(6,2) NULL,
+		payout       TINYINT      NOT NULL DEFAULT 0,
+		source       VARCHAR(12)  NOT NULL DEFAULT 'manual',    -- qb | manual | seed | cron
+		captured_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (snap_date, account_id)
+	) ENGINE=InnoDB");
+	$db->exec("CREATE TABLE IF NOT EXISTS cf_balance_monthly (
+		snap_ym      VARCHAR(7)   NOT NULL,                     -- the month this opening belongs to
+		account_id   INT          NOT NULL,
+		label        VARCHAR(120) NULL,
+		acct_type    VARCHAR(12)  NOT NULL DEFAULT 'bank',
+		balance      DECIMAL(14,2) NOT NULL DEFAULT 0,
+		credit_limit DECIMAL(14,2) NULL,
+		apr          DECIMAL(6,2) NULL,
+		payout       TINYINT      NOT NULL DEFAULT 0,
+		source       VARCHAR(12)  NOT NULL DEFAULT 'manual',
+		captured_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (snap_ym, account_id)
 	) ENGINE=InnoDB");
 }
 
@@ -133,7 +163,7 @@ function cf_live_accounts($db) {
 
 	$banks = [];
 	foreach (($m['bank'] ?? []) as $b) {
-		$banks[] = ['id' => (int)$b['id'], 'label' => $b['label'], 'balance' => (float)$b['balance'], 'as_of' => $b['as_of']];
+		$banks[] = ['id' => (int)$b['id'], 'label' => $b['label'], 'balance' => (float)$b['balance'], 'as_of' => $b['as_of'], 'qb_id' => $b['qb_id'] ?? ''];
 	}
 
 	$cards = []; $locs = []; $shopLoan = 0.0;
@@ -147,14 +177,14 @@ function cf_live_accounts($db) {
 				'ceiling' => $ceiling, 'apr' => $c['apr'], 'payment' => (float)($c['payment'] ?? 0),
 				'due_day' => $c['due_day'], 'payout' => $payout,
 				'payout_pct' => $payout ? $payoutPct : null,
-				'planned' => (float)($c['payment'] ?? 0), 'as_of' => $c['as_of'],
+				'planned' => (float)($c['payment'] ?? 0), 'as_of' => $c['as_of'], 'qb_id' => $c['qb_id'] ?? '',
 			];
 		} else {
 			$cards[] = [
 				'id' => (int)$c['id'], 'label' => $c['label'], 'balance' => (float)$c['balance'],
 				'limit' => $c['limit'] !== null ? (float)$c['limit'] : null, 'apr' => $c['apr'],
 				'min_pct' => $minPct, 'min_floor' => $minFloor,
-				'planned' => (float)($c['payment'] ?? 0), 'as_of' => $c['as_of'],
+				'planned' => (float)($c['payment'] ?? 0), 'as_of' => $c['as_of'], 'qb_id' => $c['qb_id'] ?? '',
 			];
 		}
 	}
@@ -172,21 +202,64 @@ function cf_live_accounts($db) {
 	];
 }
 
+/** QuickBooks accounts available to link (for the "auto-sync this account" picker). */
+function cf_qb_account_options($db) {
+	$out = [];
+	try {
+		if (!function_exists('cf_accounts')) return $out;
+		$r = cf_accounts($db);
+		foreach (($r['accounts'] ?? []) as $a) {
+			$type = $a['AccountType'] ?? ''; $sub = $a['AccountSubType'] ?? '';
+			$keep = in_array($type, ['Bank', 'Credit Card', 'Long Term Liability', 'Other Current Liability'], true)
+				|| stripos($sub, 'LineOfCredit') !== false;
+			if (!$keep) continue;
+			$out[] = ['id' => (string)($a['Id'] ?? ''), 'name' => $a['Name'] ?? '', 'type' => $type,
+				'balance' => (float)($a['CurrentBalance'] ?? 0)];
+		}
+	} catch (Throwable $e) {}
+	return $out;
+}
+
 /**
  * OPENING account set for the projection's month 0. Prefer the current
  * month's frozen snapshot; fall back to live balances when none exists.
  */
 function cf_opening_accounts($db, $ym = null) {
-	$ym   = $ym ?: cf_horizon_start();
-	$snap = cf_load_snapshot($db, $ym);
-	if ($snap && !empty($snap['accounts'])) {
-		$a = $snap['accounts'];
-		$a['source']    = 'snapshot';
-		$a['snap_ym']   = $snap['snap_ym'];
-		$a['captured_at'] = $snap['captured_at'];
-		return $a;
+	$ym  = $ym ?: cf_horizon_start();
+	$acc = cf_live_accounts($db);   // current metadata (APR, limits, PLANNED payments) + current balances
+
+	// Overlay the frozen opening BALANCES for this month (if captured). The plan
+	// (planned payments) stays current; only the opening balances freeze.
+	$frozen = [];
+	try {
+		cf_ensure_tables($db);
+		$s = $db->prepare("SELECT account_id, balance FROM cf_balance_monthly WHERE snap_ym = ?");
+		$s->execute([$ym]);
+		foreach ($s as $r) $frozen[(int)$r['account_id']] = (float)$r['balance'];
+	} catch (Throwable $e) {}
+
+	if ($frozen) {
+		$sc = 0.0; $used = 0.0; $shop = 0.0;
+		foreach ($acc['banks'] as &$b) { if (isset($frozen[$b['id']])) $b['balance'] = $frozen[$b['id']]; $sc += $b['balance']; } unset($b);
+		foreach ($acc['cards'] as &$c) { if (isset($frozen[$c['id']])) $c['balance'] = $frozen[$c['id']]; $used += $c['balance']; } unset($c);
+		foreach ($acc['locs']  as &$l) { if (isset($frozen[$l['id']])) $l['drawn'] = $frozen[$l['id']]; $used += $l['drawn']; if (!empty($l['payout'])) $shop += $l['drawn']; } unset($l);
+		$acc['start_cash']       = $sc;
+		$acc['credit_used']      = $used;
+		$acc['shopify_loan']     = $shop;
+		$acc['credit_available'] = max(0.0, $acc['credit_limit'] - $used);
+		$acc['source']  = 'snapshot';
+		$acc['snap_ym'] = $ym;
 	}
-	return cf_live_accounts($db);
+	return $acc;
+}
+
+/** Flatten an accounts struct to per-account rows for the snapshot tables. */
+function cf_flatten_accounts($acc) {
+	$out = [];
+	foreach ($acc['banks'] as $b) $out[] = ['account_id' => $b['id'], 'label' => $b['label'], 'acct_type' => 'bank',   'balance' => $b['balance'], 'credit_limit' => null,          'apr' => null,      'payout' => 0];
+	foreach ($acc['cards'] as $c) $out[] = ['account_id' => $c['id'], 'label' => $c['label'], 'acct_type' => 'credit', 'balance' => $c['balance'], 'credit_limit' => $c['limit'],   'apr' => $c['apr'], 'payout' => 0];
+	foreach ($acc['locs']  as $l) $out[] = ['account_id' => $l['id'], 'label' => $l['label'], 'acct_type' => 'loc',    'balance' => $l['drawn'],   'credit_limit' => $l['ceiling'], 'apr' => $l['apr'], 'payout' => !empty($l['payout']) ? 1 : 0];
+	return $out;
 }
 
 /* ---- records ----------------------------------------------------------- */
@@ -429,34 +502,102 @@ function cf_afford_calc($accounts, $records, $opts) {
 	return ['amount' => $P, 'tight' => $tight, 'buffer' => $buffer, 'current' => cf_planned_total($accounts)];
 }
 
-/* ---- snapshots --------------------------------------------------------- */
+/* ---- balance sync + snapshots ----------------------------------------- */
+
+/** Current QuickBooks account balances keyed by QB account Id (from the cache). */
+function cf_qb_balances($db) {
+	$map = [];
+	try {
+		if (function_exists('cf_accounts')) {
+			$r = cf_accounts($db);   // serves the nightly-synced cache
+			foreach (($r['accounts'] ?? []) as $a) {
+				$id = (string)($a['Id'] ?? '');
+				if ($id !== '') $map[$id] = (float)($a['CurrentBalance'] ?? 0);
+			}
+		}
+	} catch (Throwable $e) {}
+	return $map;
+}
 
 /**
- * Freeze the CURRENT live/effective balances as the opening snapshot for
- * $openingYm. (The automated monthly API-pull cron will call this on the
- * last night of each month; for now it's manual / the July seed.)
+ * Refresh cash_balances.balance from QuickBooks for every account linked by
+ * qb_account_id (auto-synced accounts). Unlinked accounts (e.g. Shopify
+ * Capital) are left untouched — they stay manual. Returns the # updated.
  */
-function cf_capture_snapshot($db, $openingYm, $source = 'manual') {
-	cf_ensure_tables($db);
-	$acc = cf_live_accounts($db);
-	$db->prepare("INSERT INTO cf_snapshots (snap_ym, captured_at, source, cash_total, credit_total, data)
-		VALUES (?, NOW(), ?, ?, ?, ?)
-		ON DUPLICATE KEY UPDATE captured_at=NOW(), source=VALUES(source),
-			cash_total=VALUES(cash_total), credit_total=VALUES(credit_total), data=VALUES(data)")
-		->execute([$openingYm, $source, $acc['start_cash'], $acc['credit_used'], json_encode($acc)]);
-	return $acc;
+function cf_upsert_qb_balances($db) {
+	$map = cf_qb_balances($db);
+	if (!$map) return 0;
+	$n = 0;
+	$upd = $db->prepare("UPDATE cash_balances SET balance = ?, updated_at = NOW() WHERE id = ?");
+	try {
+		foreach ($db->query("SELECT id, acct_type, qb_account_id FROM cash_balances WHERE qb_account_id IS NOT NULL AND qb_account_id <> ''") as $r) {
+			$qid = (string)$r['qb_account_id'];
+			if (!isset($map[$qid])) continue;
+			$bal = $map[$qid];
+			// This module stores credit/LOC balances as a positive "amount owed";
+			// QuickBooks can report liabilities with the opposite sign, so normalize.
+			if (in_array($r['acct_type'], ['credit', 'loc'], true)) $bal = abs($bal);
+			$upd->execute([$bal, (int)$r['id']]);
+			$n++;
+		}
+	} catch (Throwable $e) {}
+	return $n;
 }
-function cf_load_snapshot($db, $ym) {
+
+/**
+ * Capture balances: pull QB into cash_balances, write today's DAILY snapshot,
+ * and (when $freezeMonth) freeze this month's OPENING snapshot + header.
+ * Called nightly by cron/cashflow_sync.php and manually by the snapshot button.
+ */
+function cf_capture_balances($db, $freezeMonth = false, $source = 'cron') {
+	cf_ensure_tables($db);
+	$updated = cf_upsert_qb_balances($db);      // QB -> cash_balances (auto-synced accounts)
+	$acc  = cf_live_accounts($db);              // now current
+	$rows = cf_flatten_accounts($acc);
+	$today = date('Y-m-d');
+	$ym    = cf_horizon_start();
+
+	$insD = $db->prepare("INSERT INTO cf_balance_daily
+		(snap_date, account_id, label, acct_type, balance, credit_limit, apr, payout, source, captured_at)
+		VALUES (?,?,?,?,?,?,?,?,?,NOW())
+		ON DUPLICATE KEY UPDATE label=VALUES(label), acct_type=VALUES(acct_type), balance=VALUES(balance),
+			credit_limit=VALUES(credit_limit), apr=VALUES(apr), payout=VALUES(payout), source=VALUES(source), captured_at=NOW()");
+	foreach ($rows as $x) $insD->execute([$today, $x['account_id'], $x['label'], $x['acct_type'], $x['balance'], $x['credit_limit'], $x['apr'], $x['payout'], $source]);
+
+	if ($freezeMonth) {
+		$insM = $db->prepare("INSERT INTO cf_balance_monthly
+			(snap_ym, account_id, label, acct_type, balance, credit_limit, apr, payout, source, captured_at)
+			VALUES (?,?,?,?,?,?,?,?,?,NOW())
+			ON DUPLICATE KEY UPDATE label=VALUES(label), acct_type=VALUES(acct_type), balance=VALUES(balance),
+				credit_limit=VALUES(credit_limit), apr=VALUES(apr), payout=VALUES(payout), source=VALUES(source), captured_at=NOW()");
+		foreach ($rows as $x) $insM->execute([$ym, $x['account_id'], $x['label'], $x['acct_type'], $x['balance'], $x['credit_limit'], $x['apr'], $x['payout'], $source]);
+		$db->prepare("INSERT INTO cf_snapshots (snap_ym, captured_at, source, cash_total, credit_total)
+			VALUES (?, NOW(), ?, ?, ?)
+			ON DUPLICATE KEY UPDATE captured_at=NOW(), source=VALUES(source), cash_total=VALUES(cash_total), credit_total=VALUES(credit_total)")
+			->execute([$ym, $source, $acc['start_cash'], $acc['credit_used']]);
+	}
+	return ['accounts' => $acc, 'qb_updated' => $updated, 'froze' => $freezeMonth ? $ym : null];
+}
+
+/** Does this month already have a frozen opening? */
+function cf_month_has_opening($db, $ym) {
 	try {
 		cf_ensure_tables($db);
-		$s = $db->prepare("SELECT * FROM cf_snapshots WHERE snap_ym = ?"); $s->execute([$ym]);
-		$r = $s->fetch();
-		if ($r) return ['snap_ym' => $r['snap_ym'], 'captured_at' => $r['captured_at'], 'source' => $r['source'],
-			'accounts' => json_decode($r['data'] ?? '', true) ?: null];
-	} catch (Throwable $e) {}
-	return null;
+		$s = $db->prepare("SELECT COUNT(*) AS c FROM cf_balance_monthly WHERE snap_ym = ?"); $s->execute([$ym]);
+		return (int)$s->fetch()['c'] > 0;
+	} catch (Throwable $e) { return false; }
 }
-function cf_current_snapshot($db) { return cf_load_snapshot($db, cf_horizon_start()); }
+
+/** Header row for the current month's snapshot (for the UI "opening as of" label). */
+function cf_current_snapshot($db) {
+	try {
+		cf_ensure_tables($db);
+		$s = $db->prepare("SELECT snap_ym, captured_at, source, cash_total, credit_total FROM cf_snapshots WHERE snap_ym = ?");
+		$s->execute([cf_horizon_start()]);
+		$r = $s->fetch();
+		return $r ?: null;
+	} catch (Throwable $e) { return null; }
+}
 
 /* ---- seed -------------------------------------------------------------- */
 
