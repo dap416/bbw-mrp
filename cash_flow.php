@@ -108,6 +108,20 @@ function cf_group_row($label, $cols) {
 	echo '</tr>';
 }
 
+/** "as of MON D" from the newest as_of across a set of accounts (skips zero-dates). */
+function cf_asof_label($accts) {
+	$max = '';
+	foreach ($accts as $a) {
+		$d = (string)($a['as_of'] ?? '');
+		if ($d !== '' && strpos($d, '0000') !== 0 && $d > $max) $max = $d;
+	}
+	return $max ? 'as of ' . strtoupper(date('M j', strtotime($max))) : '';
+}
+function cf_asof_html($accts) {
+	$l = cf_asof_label($accts);
+	return $l ? ' <span class="mono" style="font-size:9px;color:var(--tx-lo);font-weight:400;letter-spacing:.04em;text-transform:none;margin-left:6px">' . htmlspecialchars($l) . '</span>' : '';
+}
+
 // nav for the Titan shell (links back into the Berry app)
 $nav = [
 	'MRP' => [
@@ -329,7 +343,7 @@ $statsHtml = t_stat(cf_money($cashNow), 'Cash on hand', 'good')
 	<div class="cf-view" id="view-accounts">
 		<div class="cf-acct-grid">
 			<div class="t-panel"><div class="t-panel-body">
-				<div class="t-panel-head"><h6 class="t-panel-title">Cash accounts</h6><button class="t-btn sm cf-acct-add" data-group="banks">+ Add</button></div>
+				<div class="t-panel-head"><h6 class="t-panel-title">Cash accounts<?php echo cf_asof_html($live['banks']); ?></h6><button class="t-btn sm cf-acct-add" data-group="banks">+ Add</button></div>
 				<table class="t-table"><thead><tr><th>Account</th><th style="text-align:right">Balance</th><th>As of</th><th></th></tr></thead><tbody>
 				<?php foreach ($live['banks'] as $b) { ?>
 					<tr><td><?php echo htmlspecialchars($b['label']); ?><?php if (!empty($b['qb_id'])) echo ' <span class="t-chip accent" title="Balance auto-synced from QuickBooks nightly">Auto</span>'; ?></td><td class="num" style="text-align:right"><?php echo cf_money($b['balance']); ?></td><td class="id"><?php echo htmlspecialchars(strtoupper((string)$b['as_of'])); ?></td>
@@ -339,7 +353,7 @@ $statsHtml = t_stat(cf_money($cashNow), 'Cash on hand', 'good')
 			</div></div>
 
 			<div class="t-panel"><div class="t-panel-body">
-				<div class="t-panel-head"><h6 class="t-panel-title">Credit cards</h6><button class="t-btn sm cf-acct-add" data-group="cards">+ Add</button></div>
+				<div class="t-panel-head"><h6 class="t-panel-title">Credit cards<?php echo cf_asof_html($live['cards']); ?></h6><button class="t-btn sm cf-acct-add" data-group="cards">+ Add</button></div>
 				<div style="overflow-x:auto"><table class="t-table" style="min-width:560px"><thead><tr><th>Card</th><th style="text-align:right">Balance</th><th style="text-align:right">Limit</th><th style="text-align:right">Avail</th><th style="text-align:right">APR</th><th></th></tr></thead><tbody>
 				<?php foreach ($live['cards'] as $c) { $avail = ($c['limit'] ?? 0) - $c['balance']; ?>
 					<tr><td><?php echo htmlspecialchars($c['label']); ?><?php if (!empty($c['qb_id'])) echo ' <span class="t-chip accent" title="Balance auto-synced from QuickBooks nightly">Auto</span>'; ?></td><td class="num" style="text-align:right"><?php echo cf_money($c['balance']); ?></td>
@@ -352,7 +366,7 @@ $statsHtml = t_stat(cf_money($cashNow), 'Cash on hand', 'good')
 			</div></div>
 
 			<div class="t-panel"><div class="t-panel-body">
-				<div class="t-panel-head"><h6 class="t-panel-title">Lines of credit &amp; loans</h6><button class="t-btn sm cf-acct-add" data-group="locs">+ Add</button></div>
+				<div class="t-panel-head"><h6 class="t-panel-title">Lines of credit &amp; loans<?php echo cf_asof_html($live['locs']); ?></h6><button class="t-btn sm cf-acct-add" data-group="locs">+ Add</button></div>
 				<div style="overflow-x:auto"><table class="t-table" style="min-width:600px"><thead><tr><th>Facility</th><th style="text-align:right">Drawn</th><th style="text-align:right">Ceiling</th><th style="text-align:right">Avail</th><th style="text-align:right">APR</th><th style="text-align:right">Repay</th><th></th></tr></thead><tbody>
 				<?php foreach ($live['locs'] as $l) { $avail = ($l['ceiling'] ?? 0) - $l['drawn']; ?>
 					<tr><td><?php echo htmlspecialchars($l['label']); ?><?php if ($l['payout']) echo ' <span class="t-chip ghost">Payout</span>'; ?><?php if (!empty($l['qb_id'])) echo ' <span class="t-chip accent" title="Balance auto-synced from QuickBooks nightly">Auto</span>'; ?></td>

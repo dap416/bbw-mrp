@@ -58,7 +58,16 @@
 		if (!confirm(msg)) return;
 		const $b = $(this).prop('disabled', true);
 		post('/ajax/cash_flow/snapshot.php', { ym: CF.hs, source: 'seed', force: 1 })
-			.done(r => { if (r && r.ok) location.reload(); else { alert((r && r.error) || 'Snapshot failed'); $b.prop('disabled', false); } })
+			.done(r => {
+				if (r && r.ok) {
+					const n = r.qb_updated || 0;
+					const line = n > 0
+						? n + ' account balance(s) refreshed from QuickBooks.'
+						: 'No accounts pulled from QuickBooks — none are linked yet (or QuickBooks isn\'t synced). Link accounts via the pencil → "QuickBooks account · auto-sync".';
+					alert('Snapshot saved.\n\n• ' + line + '\n• Today\'s daily snapshot stored.\n• ' + (r.snap_ym || mLabel(0)) + ' opening frozen.');
+					location.reload();
+				} else { alert((r && r.error) || 'Snapshot failed'); $b.prop('disabled', false); }
+			})
 			.fail(() => { alert('Snapshot failed'); $b.prop('disabled', false); });
 	});
 

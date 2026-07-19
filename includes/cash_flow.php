@@ -528,7 +528,8 @@ function cf_upsert_qb_balances($db) {
 	$map = cf_qb_balances($db);
 	if (!$map) return 0;
 	$n = 0;
-	$upd = $db->prepare("UPDATE cash_balances SET balance = ?, updated_at = NOW() WHERE id = ?");
+	// Stamp as_of to today so a synced account shows when its balance was refreshed.
+	$upd = $db->prepare("UPDATE cash_balances SET balance = ?, as_of = CURDATE(), updated_at = NOW() WHERE id = ?");
 	try {
 		foreach ($db->query("SELECT id, acct_type, qb_account_id FROM cash_balances WHERE qb_account_id IS NOT NULL AND qb_account_id <> ''") as $r) {
 			$qid = (string)$r['qb_account_id'];
