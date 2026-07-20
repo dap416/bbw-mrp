@@ -101,17 +101,19 @@
 	<div class="d-flex flex-wrap gap-4 align-items-center">
 		<span class="fw-semibold small text-uppercase text-muted" style="letter-spacing:.04em;">Lines of Credit</span>
 		<?php foreach ($locFacs as $f):
-			$over = !empty($f['overdrawn']) || ($f['ceiling'] > 0 && $f['drawn'] > $f['ceiling'] + 0.005);
-			$pct  = $f['ceiling'] > 0 ? min(100, round($f['drawn'] / $f['ceiling'] * 100)) : ($f['drawn'] > 0 ? 100 : 0);
+			$isLoan = ($f['ceiling'] <= 0);   // no draw ceiling → a term loan (e.g. Shopify Capital), not a revolving line
+			$over = !$isLoan && (!empty($f['overdrawn']) || $f['drawn'] > $f['ceiling'] + 0.005);
+			$pct  = $isLoan ? 100 : min(100, round($f['drawn'] / $f['ceiling'] * 100));
 			$barColor = $over ? '#e64545' : '#6f42c1';
 		?>
 		<div style="min-width:200px;">
-			<div class="d-flex justify-content-between small"><span class="fw-semibold"><?php echo htmlspecialchars($f['name']); ?></span>
-				<?php if ($over): ?><span><strong style="color:#e64545;">−<?php echo money0(abs($f['available'])); ?></strong> <span class="text-muted">over</span></span>
+			<div class="d-flex justify-content-between small"><span class="fw-semibold"><?php echo htmlspecialchars($f['name']); ?><?php if ($isLoan): ?> <span class="badge bg-info text-dark" style="font-size:0.5rem;">LOAN</span><?php endif; ?></span>
+				<?php if ($isLoan): ?><span><strong style="color:#d9822b;"><?php echo money0($f['drawn']); ?></strong> <span class="text-muted">owed</span></span>
+				<?php elseif ($over): ?><span><strong style="color:#e64545;">−<?php echo money0(abs($f['available'])); ?></strong> <span class="text-muted">over</span></span>
 				<?php else: ?><span><strong style="color:#2ca01c;"><?php echo money0(max(0, $f['available'])); ?></strong> <span class="text-muted">avail</span></span><?php endif; ?>
 			</div>
 			<div style="height:6px;background:#eef1f5;border-radius:4px;overflow:hidden;"><div style="height:100%;width:<?php echo $pct; ?>%;background:<?php echo $barColor; ?>;"></div></div>
-			<div class="text-muted" style="font-size:0.64rem;"><?php echo money0($f['drawn']); ?> drawn of <?php echo money0($f['ceiling']); ?><?php echo empty($f['ceiling']) ? ' — set a ceiling in Planning settings' : ($over ? ' · <span style="color:#e64545;font-weight:600;">OVERDRAWN</span>' : ''); ?></div>
+			<div class="text-muted" style="font-size:0.64rem;"><?php if ($isLoan): ?>term loan · repaid from sales<?php else: ?><?php echo money0($f['drawn']); ?> drawn of <?php echo money0($f['ceiling']); ?><?php echo $over ? ' · <span style="color:#e64545;font-weight:600;">OVERDRAWN</span>' : ''; ?><?php endif; ?></div>
 		</div>
 		<?php endforeach; ?>
 	</div>
