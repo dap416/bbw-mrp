@@ -18,7 +18,7 @@
 			'qb_connected' => qb_is_connected(),
 			'qb_company'   => '',
 			'cash'    => ['accounts' => [], 'total' => 0.0, 'error' => null],
-			'credit'  => ['accounts' => [], 'total' => 0.0, 'error' => null], // credit cards + lines of credit
+			'credit'  => ['accounts' => [], 'total' => 0.0, 'card_total' => 0.0, 'loc_total' => 0.0, 'error' => null], // credit cards + lines of credit
 			'bills'   => ['items' => [], 'total' => 0.0, 'error' => null],     // QBO AP
 			'ar'      => ['items' => [], 'total' => 0.0, 'error' => null],     // Shopify receivables (owed to you)
 			'pos'     => ['items' => [], 'total' => 0.0],                       // MRP unpaid POs
@@ -50,12 +50,14 @@
 					} elseif ($type === 'Credit Card') {
 						$out['credit']['accounts'][] = ['name' => $name, 'balance' => $bal, 'kind' => 'Credit Card'];
 						$out['credit']['total'] += $bal;
+						$out['credit']['card_total'] += $bal;
 						$out['qb_accounts'][] = ['id' => $qid, 'name' => $name, 'type' => 'credit', 'balance' => $bal];
 					} elseif (stripos($sub, 'LineOfCredit') !== false
 						   || $type === 'Long Term Liability'
 						   || ($type === 'Other Current Liability' && (stripos($sub, 'Loan') !== false || stripos($sub, 'LineOfCredit') !== false))) {
 						$out['credit']['accounts'][] = ['name' => $name, 'balance' => $bal, 'kind' => 'Line of Credit / Loan'];
 						$out['credit']['total'] += $bal;
+						$out['credit']['loc_total'] += $bal;
 						$out['qb_accounts'][] = ['id' => $qid, 'name' => $name, 'type' => 'loc', 'balance' => $bal];
 					}
 				}
@@ -125,7 +127,15 @@
 
 		// Effective balances: prefer manual entries when present, else QuickBooks.
 		$out['eff_cash']      = !empty($out['manual']['bank'])   ? $out['manual']['bank_total']   : $out['cash']['total'];
-		$out['eff_credit']    = !empty($out['manual']['credit']) ? $out['manual']['credit_total'] : $out['credit']['total'];
+		// Effective credit owed = credit cards + LOC/loans, choosing the source PER bucket.
+		// Use manually-entered balances for whichever bucket you keep by hand (e.g. the LOC
+		// loans seeded into cash_balances), and fall back to QuickBooks for the rest. A single
+		// all-or-nothing switch used to drop every QB credit-card balance the moment any manual
+		// LOC row existed, making "Credit / LOC Owed" read far too low.
+		$manHasCards = false; $manHasLocs = false;
+		foreach ($out['manual']['credit'] as $mc) { if (($mc['type'] ?? '') === 'loc') $manHasLocs = true; else $manHasCards = true; }
+		$out['eff_credit']    = ($manHasCards ? $out['manual']['card_total'] : $out['credit']['card_total'])
+		                      + ($manHasLocs  ? $out['manual']['loc_total']  : $out['credit']['loc_total']);
 		$out['cash_source']   = !empty($out['manual']['bank'])   ? 'manual' : 'quickbooks';
 		$out['credit_source'] = !empty($out['manual']['credit']) ? 'manual' : 'quickbooks';
 
