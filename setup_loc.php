@@ -15,15 +15,14 @@ if (!in_array($role, ['admin', 'master'], true) && !is_owner()) { http_response_
 $db = db_connect();
 ensure_cash_balances_table($db);
 
-// Two separate lines of credit, each with its own ceiling.
+// One line of credit — the QuickBooks LOC, $85,000 ceiling.
 $CEILINGS = [
 	['name' => 'QuickBooks', 'ceiling' => 85000.0],
-	['name' => 'Shopify',    'ceiling' => 49000.0],
 ];
 // The two loan draws on the QuickBooks LOC.
 $loans = [
-	['label' => 'LOC Loan — $65,000 draw', 'loc' => 'QuickBooks', 'balance' => 39314.00, 'payment' => 5959.09, 'due' => 13, 'note' => '7 payments left · due the 13th monthly · paid from bank (cash out)'],
-	['label' => 'LOC Loan — $25,000 draw', 'loc' => 'QuickBooks', 'balance' => 6679.00,  'payment' => 2293.61, 'due' => 26, 'note' => '3 payments left · due the 26th monthly · paid from bank (cash out)'],
+	['label' => 'LOC Loan — due the 8th',  'loc' => 'QuickBooks', 'balance' => 30000.00, 'payment' => 2752.00, 'due' => 8,  'note' => 'due the 8th monthly · paid from bank (cash out)'],
+	['label' => 'LOC Loan — due the 13th', 'loc' => 'QuickBooks', 'balance' => 33935.00, 'payment' => 5959.00, 'due' => 13, 'note' => 'due the 13th monthly · paid from bank (cash out)'],
 ];
 
 $out = [];
@@ -53,7 +52,7 @@ require_once(__DIR__."/includes/header.php");
 ?>
 <h2 class="fw-bold mb-3">Lines of Credit — set up ✓</h2>
 <div class="card" style="max-width:640px;"><div class="card-body">
-	<p>Removed <?php echo (int)$removed; ?> old LOC row(s) and set up <strong><?php echo count($CEILINGS); ?> separate lines of credit</strong>:
+	<p>Removed <?php echo (int)$removed; ?> old LOC row(s) and set up <strong><?php echo count($CEILINGS) === 1 ? 'one line of credit' : count($CEILINGS) . ' separate lines of credit'; ?></strong>:
 		<?php echo implode(', ', array_map(fn($c) => htmlspecialchars($c['name']) . ' $' . number_format($c['ceiling']), $CEILINGS)); ?>.
 		The two loans below draw on the QuickBooks LOC.</p>
 	<table class="table table-sm align-middle">
