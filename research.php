@@ -950,8 +950,14 @@
 				'</tbody></table>';
 		}
 		html += '<div><strong>Demand</strong> — sold last year in this same season: ' + d + '</div>';
-		html += '<div><strong>On Hand</strong> — physical units in stock entering this season. Units already <em>committed</em> to open orders are <strong>not</strong> deducted: the demand above is the full season, which already includes those sales, so subtracting them here would double-count and over-build. Entering this season: ' + h + '</div>';
-		if (b > 0) {
+		html += '<div><strong>On Hand</strong> — physical units in stock entering this season. Units already <em>committed</em> to open orders are <strong>not</strong> deducted: the season demand already includes those sales, so subtracting them here would double-count and over-build. Entering this season: ' + h + '</div>';
+		if (it.has_amazon && it.amazon && (it.amazon.to_build || 0) > 0) {
+				// Aggregate build is the SUM of regular + Amazon portions, NOT demand − on hand:
+				// the Amazon PO is built fresh with its own packaging, so retail stock can't fill it.
+				var reg = it.regular || { demand: 0, have: 0, to_build: 0 };
+				var leftover = (reg.have || 0) - (reg.demand || 0);
+				html += '<div><strong>Build</strong> = <span class="stat-neg">' + b + '</span> = Regular ' + (reg.to_build || 0) + ' + Amazon PO ' + (it.amazon.to_build || 0) + '. The Amazon order (' + AMZ_CUST + ') is built fresh with its own packaging, so the ' + h + ' retail units on hand don\'t reduce it' + (leftover > 0 ? ' — ' + leftover + ' retail units are left over and carry forward' : '') + '.</div>';
+			} else if (b > 0) {
 			html += '<div><strong>Build</strong> = demand − on hand = ' + d + ' − ' + Math.min(h, d) + ' = <span class="stat-neg">' + b + '</span></div>';
 		} else {
 			html += '<div><strong>Build</strong> = 0 — stock already covers demand' + (h > d ? ' (' + (h - d) + ' left over carries into next season)' : '') + '</div>';
@@ -1353,7 +1359,7 @@
 								var rid = 'ai-' + si + '-' + ai; cards += '<tr class="ai-row" data-target="' + rid + '" style="cursor:pointer;"><td class="small"><i class="ti ti-chevron-right ai-chev"></i> <code>' + esc(it.sku) + '</code>' + (it.has_amazon ? ' <span class="badge bg-light text-muted border" style="font-size:0.5rem;" title="Includes an Amazon portion — expand for the split">+AMZ</span>' : '') + '</td>' +
 									'<td class="text-end small text-muted">' + (it.have||0) + '</td>' +
 									'<td class="text-end small text-muted">' + (it.demand||0) + '</td>' +
-										'<td class="text-end small ' + (it.to_build>0?'stat-neg':'stat-pos') + '">' + it.to_build + '</td>' +
+										'<td class="text-end small ' + (it.to_build>0?'stat-neg':'stat-pos') + '"' + ((it.has_amazon && it.amazon && (it.amazon.to_build||0)>0) ? ' title="' + (it.amazon.to_build||0) + ' built fresh for the Amazon PO (separate packaging) + ' + ((it.regular&&it.regular.to_build)||0) + ' regular — retail stock can\'t fill the Amazon order. Expand for the split."' : '') + '>' + it.to_build + '</td>' +
 									'<td class="text-end small ' + cbCls + '">' + (it.buildable==null?'-':it.buildable) + '</td></tr>' +
 										'<tr id="' + rid + '" class="ai-detail" style="display:none;"><td colspan="5" class="p-0">' + aiExplain(it) + '</td></tr>';
 							});
