@@ -30,7 +30,8 @@
 	$fresh  = !empty($_POST['fresh']);  // force a recompute, ignore cache
 
 	// Bump when the payload shape changes so old caches auto-invalidate.
-	$SEASON_SCHEMA = 19;
+	// 20: current (in-progress) season now windows demand from today→season end, not the whole quarter.
+	$SEASON_SCHEMA = 20;
 
 	$db = db_connect();
 
@@ -393,7 +394,7 @@
 	$report = null; $reportNote = null;
 	if ($wantAI && anthropic_is_configured()) {
 		$system =
-"You are the demand-planning analyst for Blue Bird Waterfowl / THE ANIMATOR. You are given a JSON snapshot plus a pre-computed, time-phased readiness summary for three seasons (Jul–Sep, Oct–Dec, Jan–Mar) compared to prior-year sales with no growth. The deterministic numbers (units to build, units to order, raw-material order quantities already rounded to MOQ) are authoritative — do NOT recompute or contradict them. Your job is the JUDGMENT layer: for each season give a short readiness narrative and concrete Suggested Actions, focusing on LEAD TIME — which raw-material POs must be placed NOW so parts arrive before they're needed, grouped by manufacturer. Then list the finished goods (cases, wings, etc.) to order. Call out the Jul–Aug tradeshow POS spikes. End with an 'Order Now' list (the lead-time-critical POs) and the estimated total. Be concise, concrete, Markdown with small tables.";
+"You are the demand-planning analyst for Blue Bird Waterfowl / THE ANIMATOR. You are given a JSON snapshot plus a pre-computed, time-phased readiness summary for three seasons (Jul–Sep, Oct–Dec, Jan–Mar) compared to prior-year sales with no growth. The season currently underway is windowed from TODAY to its end (not the whole quarter) — its 'prior_window' and 'label' show the shortened span — so its demand is only what remains ahead; plan for that, not the elapsed part. The deterministic numbers (units to build, units to order, raw-material order quantities already rounded to MOQ) are authoritative — do NOT recompute or contradict them. Your job is the JUDGMENT layer: for each season give a short readiness narrative and concrete Suggested Actions, focusing on LEAD TIME — which raw-material POs must be placed NOW so parts arrive before they're needed, grouped by manufacturer. Then list the finished goods (cases, wings, etc.) to order. Call out the Jul–Aug tradeshow POS spikes. End with an 'Order Now' list (the lead-time-critical POs) and the estimated total. Be concise, concrete, Markdown with small tables.";
 
 		$userText = "Readiness summary + raw orders (authoritative):\n" .
 			json_encode(['summary' => array_values($summary), 'raw_orders' => $rawOrders, 'raw_total_cost' => $rawTotalCost,

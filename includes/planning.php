@@ -401,20 +401,44 @@
 		$ttl = $shopReady ? inventory_cache_ttl($db) : 0;
 		$seasonWindows = [];   // season key => [prior_start, prior_end]
 		foreach ($seasons as $s) {
-			if (!$shopReady) { $priorSales[$s['key']] = []; $priorAmazon[$s['key']] = []; $priorChannel[$s['key']] = []; $priorOregon[$s['key']] = []; $priorSource[$s['key']] = []; continue; }
-			$ps = date('Y-m-d', strtotime('-1 year', strtotime($s['start'])));
+			$k = $s['key']; $idx = array_search($s, $seasons, true);
+			if (!$shopReady) { $priorSales[$k] = []; $priorAmazon[$k] = []; $priorChannel[$k] = []; $priorOregon[$k] = []; $priorSource[$k] = []; continue; }
+
+			// Only prepare for time that hasn't already elapsed. For the season we're currently
+			// inside, start the window at TODAY (not its calendar start) so demand reflects what's
+			// still ahead — e.g. on Jul 21 the Jul–Sep season counts Jul 21→Sep 30, not the whole
+			// quarter. Prior-year sales are read over the matching shifted window. (ISO Y-m-d dates
+			// compare correctly as strings.)
+			$effStart  = ($today > $s['start']) ? $today : $s['start'];
+			$isPartial = ($effStart > $s['start'] && $effStart <= $s['end']);   // current, already underway
+			$isPast    = ($effStart > $s['end']);                                // fully behind us
+
+			if ($isPast) {
+				$priorSales[$k] = []; $priorAmazon[$k] = []; $priorChannel[$k] = []; $priorOregon[$k] = []; $priorSource[$k] = [];
+				$seasonWindows[$k] = null;
+				$seasons[$idx]['plan_from']    = $s['end'];
+				$seasons[$idx]['is_past']      = true;
+				$seasons[$idx]['prior_window'] = 'season already over — nothing left to prepare';
+				continue;
+			}
+
+			$ps = date('Y-m-d', strtotime('-1 year', strtotime($effStart)));
 			$pe = date('Y-m-d', strtotime('-1 year', strtotime($s['end'])));
-			$seasonWindows[$s['key']] = [$ps, $pe];
+			$seasonWindows[$k] = [$ps, $pe];
 			$r  = shopify_sales_in_range($ps, $pe);
-			if (!empty($r['error'])) { $shopErr = $r['error']; $priorSales[$s['key']] = []; $priorAmazon[$s['key']] = []; $priorChannel[$s['key']] = []; }
-			else { $priorSales[$s['key']] = $r['by_sku'] ?? []; $priorAmazon[$s['key']] = $r['by_sku_amazon'] ?? []; $priorChannel[$s['key']] = $r['by_channel'] ?? []; }
+			if (!empty($r['error'])) { $shopErr = $r['error']; $priorSales[$k] = []; $priorAmazon[$k] = []; $priorChannel[$k] = []; }
+			else { $priorSales[$k] = $r['by_sku'] ?? []; $priorAmazon[$k] = $r['by_sku_amazon'] ?? []; $priorChannel[$k] = $r['by_channel'] ?? []; }
 			// Oregon vs rest split by fulfillment location (cached — heavy order scan).
 			$loc = shopify_cache_remember($db, 'season_loc_'.$ps.'_'.$pe, $ttl, fn() => shopify_sales_by_location($ps, $pe))['data'];
-			$priorOregon[$s['key']] = (is_array($loc) && empty($loc['error'])) ? ($loc['by_sku_oregon'] ?? []) : [];
+			$priorOregon[$k] = (is_array($loc) && empty($loc['error'])) ? ($loc['by_sku_oregon'] ?? []) : [];
 			// Where each SKU's units came from — online / per tradeshow / other (cached, heavy scan).
 			$src = shopify_cache_remember($db, 'season_src_'.$ps.'_'.$pe, $ttl, fn() => shopify_demand_sources($ps, $pe))['data'];
-			$priorSource[$s['key']] = (is_array($src) && empty($src['error'])) ? ($src['by_sku'] ?? []) : [];
-			$seasons[array_search($s, $seasons, true)]['prior_window'] = "$ps to $pe";
+			$priorSource[$k] = (is_array($src) && empty($src['error'])) ? ($src['by_sku'] ?? []) : [];
+
+			$seasons[$idx]['plan_from']    = $effStart;
+			$seasons[$idx]['is_partial']   = $isPartial;
+			$seasons[$idx]['prior_window'] = "$ps to $pe" . ($isPartial ? ' (from today — season already underway)' : '');
+			if ($isPartial) $seasons[$idx]['label'] .= ' — from ' . date('M j', strtotime($effStart));
 		}
 
 		// ── Drop excluded tradeshows from demand ──────────────────────────────
@@ -427,6 +451,7 @@
 		if ($excludedShows) {
 			$excludedSet = array_flip($excludedShows);
 			foreach ($seasonWindows as $key => $w) {
+				if ($w === null) continue;   // season fully in the past — no window to scan
 				if (empty($priorSource[$key])) {
 					// Source scan unavailable — fall back to the per-show sales call so an
 					// excluded show is still dropped from demand.
