@@ -31,7 +31,8 @@
 
 	// Bump when the payload shape changes so old caches auto-invalidate.
 	// 20: current (in-progress) season now windows demand from today→season end, not the whole quarter.
-	$SEASON_SCHEMA = 20;
+	// 21: order-by dates for the current season anchor to today (plan_from), not the quarter start.
+	$SEASON_SCHEMA = 21;
 
 	$db = db_connect();
 
@@ -258,7 +259,9 @@
 		foreach ($seasons as $s) {
 			$u = (int)($seasonUsage[$s['key']][$part] ?? 0);
 			$cum += $u; $total += $u; $bySeason[$s['key']] = $u;
-			if ($firstNegStart === null && $cum > $startAvail) $firstNegStart = $s['start'];
+			// Anchor the shortage to when the season's demand actually starts landing: today for
+			// the season we're already inside (plan_from), the calendar start for future seasons.
+			if ($firstNegStart === null && $cum > $startAvail) $firstNegStart = $s['plan_from'] ?? $s['start'];
 		}
 		$short = max(0, $total - $startAvail);
 		if ($short <= 0) continue;
@@ -296,7 +299,7 @@
 		foreach ($seasons as $s) {
 			$u = (int)($f['prior_year_sales'][$s['key']] ?? 0);
 			$cum += $u; $total += $u; $bySeason[$s['key']] = $u;
-			if ($firstNegStart === null && $cum > $startAvail) $firstNegStart = $s['start'];
+			if ($firstNegStart === null && $cum > $startAvail) $firstNegStart = $s['plan_from'] ?? $s['start'];
 		}
 		$short = max(0, $total - $startAvail);
 		if ($short <= 0) continue;
