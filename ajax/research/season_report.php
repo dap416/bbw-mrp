@@ -32,7 +32,8 @@
 	// Bump when the payload shape changes so old caches auto-invalidate.
 	// 20: current (in-progress) season now windows demand from today→season end, not the whole quarter.
 	// 21: order-by dates for the current season anchor to today (plan_from), not the quarter start.
-	$SEASON_SCHEMA = 21;
+	// 22: [Amazon] twin's committed units counted as already-built on hand (no phantom fresh build).
+	$SEASON_SCHEMA = 22;
 
 	$db = db_connect();
 

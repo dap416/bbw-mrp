@@ -504,6 +504,13 @@
 		// ── Animator products ─────────────────────────────────────────────────
 		$animators = [];
 		$animatorSkus = [];
+		// SKUs that also have an [Amazon] twin product (base + twin share one Shopify SKU). TJ
+		// Stumpf's annual Amazon order is already BUILT and sits in the shared Shopify on-hand for
+		// the SKU — mixed with retail, not physically separable — so his committed units are counted
+		// as on-hand, never built fresh. Below we split the shared on-hand: committed → the [Amazon]
+		// twin, the remainder → the retail base.
+		$amazonTwinSkus = [];
+		if ($hasSku) foreach ($products as $pp) { if (is_amazon_product($pp['name'])) { $ts = trim((string)($pp['shopify_sku'] ?? '')); if ($ts !== '') $amazonTwinSkus[$ts] = true; } }
 		foreach ($products as $p) {
 			$bom = $bomByProd[$p['id']] ?? [];
 			if (empty($bom)) continue; // only products with raw materials
@@ -518,6 +525,8 @@
 			//     card and no stock held. We use his committed order rather than a last-year
 			//     forecast, and it lands in the current (pre-season) window since it's on the books.
 			$perSeason = []; $perSeasonAmazon = []; $perSeasonOregon = []; $perSeasonSources = [];
+			$skuOnhand = ($sku !== '') ? fp_onhand_qty($fpLoc, $sku, (isset($shopSkus[$sku]) ? (int)$shopSkus[$sku]['qty'] : null)) : 0;
+			$committedInStock = min((($sku !== '' && isset($fpLoc[$sku])) ? ((int)($fpLoc[$sku]['rest_committed'] ?? 0) + (int)($fpLoc[$sku]['oregon_committed'] ?? 0)) : 0), $skuOnhand);   // TJ's already-built PO, counted as on hand
 			if ($isAmz) {
 				$committed = ($sku !== '' && isset($fpLoc[$sku])) ? ((int)($fpLoc[$sku]['rest_committed'] ?? 0) + (int)($fpLoc[$sku]['oregon_committed'] ?? 0)) : 0;
 				foreach ($seasons as $i => $s) {
@@ -552,7 +561,9 @@
 				'product'   => $p['name'],
 				'sku'       => $sku,
 				'is_amazon' => $isAmz,
-				'in_stock'  => $isAmz ? 0 : fp_onhand_qty($fpLoc, $sku, ($sku !== '' && isset($shopSkus[$sku])) ? (int)$shopSkus[$sku]['qty'] : null),   // total physical on hand
+				// Twin holds its already-built committed units; the retail base holds the remainder
+				// (for a SKU with no twin, the base keeps all on hand).
+				'in_stock'  => $isAmz ? $committedInStock : ($skuOnhand - (isset($amazonTwinSkus[$sku]) ? $committedInStock : 0)),
 				// On hand split by WAREHOUSE. 'elsewhere' = still at a tradeshow location: counted in
 				// in_stock (it's still ours) but it can't ship from a warehouse until it's brought back.
 				'in_stock_arkansas'     => $isAmz ? 0 : fp_arkansas_onhand($fpLoc, $sku),
