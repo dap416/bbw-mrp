@@ -49,6 +49,16 @@
 	$('#cfAvailDebt').on('change', function(){ saveSetting({ cf_avail_debt: $(this).val() }).always(() => location.reload()); });
 
 	/* ---- snapshot ---- */
+	$('#cfQbBtn').on('click', function(){
+		const $b = $(this).prop('disabled', true); const $t = $b.find('span'); const old = $t.text();
+		$t.text('Pulling from QuickBooks…');
+		post('/ajax/cash_flow/update_qb.php', {})
+			.done(r => {
+				if (r && r.ok) { location.reload(); }
+				else { alert((r && r.error) || 'Update failed.'); $t.text(old); $b.prop('disabled', false); }
+			})
+			.fail(x => { alert('Update failed: ' + ((x && x.responseText) || (x && x.status) || 'network error')); $t.text(old); $b.prop('disabled', false); });
+	});
 	$('#cfSnapBtn').on('click', function(){
 		const frozen = String($(this).data('frozen')) === '1';
 		const msg = frozen

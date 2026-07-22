@@ -236,6 +236,8 @@ $statsHtml = '';
 			else echo 'Opening balances · live (not frozen yet)';
 		?></span>
 		<button class="t-btn sm" id="cfSnapBtn" data-frozen="<?php echo $snap ? '1' : '0'; ?>"><?php echo titan_icon('upload', 13); ?><span>Take starting snapshot</span></button>
+		<button class="t-btn sm" id="cfQbBtn" title="Pull the latest card &amp; bank balances from QuickBooks. Do this AFTER refreshing your card feeds inside QuickBooks."><?php echo titan_icon('reopen', 13); ?><span>Update from QuickBooks</span></button>
+		<span style="flex-basis:100%;font-size:11px;color:var(--tx-lo);margin:0;">Before pressing <strong>Update from QuickBooks</strong>: open QuickBooks in Chrome, log in, and refresh your card feeds (Transactions &rarr; Bank transactions &rarr; <em>Update</em>) so QuickBooks has today&rsquo;s balances &mdash; then press it to pull those balances into the app.</span>
 		<?php if ($snap): ?>
 		<span class="t-chip warn" title="This month's opening is already locked in and is re-captured automatically at month-end. Re-taking now replaces your <?php echo cf_month_label($hs)['name']; ?> baseline — rarely needed."><?php echo cf_month_label($hs)['name']; ?> already snapshotted · re-take replaces the baseline</span>
 		<?php endif; ?>
