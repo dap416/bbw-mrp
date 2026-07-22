@@ -463,6 +463,20 @@ function cf_compute($accounts, $records, $opts) {
 	$plannedTotal = cf_planned_total($accounts) ?: 1.0;
 	$scale = ($target === null) ? 1.0 : ((float)$target / $plannedTotal);
 
+	// Available credit = card room (netted) + per-LOC-facility room, each floored at 0 — the same
+	// basis the Accounts view uses. A payout term loan (Shopify Capital, repaid from sales) is NOT a
+	// revolving line, so it never counts toward available room. LOC loans are grouped by facility so
+	// two loans on one line count that line's ceiling once, not twice.
+	$cardLimTotal = 0.0; foreach ($accounts['cards'] as $c) $cardLimTotal += (float)($c['limit'] ?? 0);
+	$locGroups = [];
+	foreach ($accounts['locs'] as $l) {
+		if (!empty($l['payout'])) continue;
+		$fk = (($l['facility'] ?? '') !== '') ? strtolower($l['facility']) : ('#' . $l['label']);
+		if (!isset($locGroups[$fk])) $locGroups[$fk] = ['ceiling' => (float)$l['ceiling'], 'labels' => []];
+		$locGroups[$fk]['ceiling'] = max($locGroups[$fk]['ceiling'], (float)$l['ceiling']);
+		$locGroups[$fk]['labels'][] = $l['label'];
+	}
+
 	$rows = [];
 	for ($i = 0; $i < 12; $i++) {
 		$income = cf_income_month($records, $i, $growth, $taxPct, $hs);
@@ -506,7 +520,12 @@ function cf_compute($accounts, $records, $opts) {
 
 		$credit = $other + $shop;
 		foreach ($fac as $f) $credit += $f['bal'];
-		$avail = $lim - $credit;
+		// Floored, per-facility available credit (consistent with the Accounts view).
+		$cardBalM = 0.0; foreach ($accounts['cards'] as $c) $cardBalM += (float)($fac[$c['label']]['bal'] ?? 0);
+		$availC = max(0.0, $cardLimTotal - $cardBalM);
+		$availL = 0.0;
+		foreach ($locGroups as $g) { $gb = 0.0; foreach ($g['labels'] as $lb) $gb += (float)($fac[$lb]['bal'] ?? 0); $availL += max(0.0, $g['ceiling'] - $gb); }
+		$avail = $availC + $availL;
 
 		$rows[] = [
 			'i' => $i, 'ym' => cf_add_months($hs, $i),
