@@ -204,8 +204,6 @@ $statsHtml = '';
 	.cf-pay-menu button{ display:flex; width:100%; align-items:center; justify-content:space-between; gap:8px; background:none; border:none; color:var(--tx-mid); font-family:var(--font-ui); font-size:12.5px; padding:7px 10px; border-radius:7px; cursor:pointer; text-align:left; }
 	.cf-pay-menu button:hover{ background:var(--bg-3); color:var(--tx-hi); }
 	.cf-note-inline{ font-size:11px; color:var(--tx-lo); margin-top:6px; }
-	.cf-toast{ position:fixed; right:20px; bottom:20px; z-index:9999; background:var(--bg-2); color:var(--tx-hi); border:1px solid var(--line); border-left:3px solid var(--good); border-radius:8px; padding:10px 14px; font-size:13px; box-shadow:0 8px 24px rgba(0,0,0,.35); opacity:0; transform:translateY(8px); transition:opacity .25s ease, transform .25s ease; max-width:340px; }
-	.cf-toast.show{ opacity:1; transform:translateY(0); }
 	.cf-fieldrow{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
 	.cf-seg2{ display:inline-flex; background:var(--bg-3); border-radius:8px; padding:3px; gap:2px; border:1px solid var(--line); flex-wrap:wrap; }
 	.cf-seg2 button{ font-family:var(--font-mono); font-size:10.5px; font-weight:600; padding:5px 9px; border-radius:6px; cursor:pointer; border:none; background:transparent; color:var(--tx-mid); }
@@ -238,8 +236,6 @@ $statsHtml = '';
 			else echo 'Opening balances · live (not frozen yet)';
 		?></span>
 		<button class="t-btn sm" id="cfSnapBtn" data-frozen="<?php echo $snap ? '1' : '0'; ?>"><?php echo titan_icon('upload', 13); ?><span>Take starting snapshot</span></button>
-		<button class="t-btn sm" id="cfQbBtn" title="Pull the latest card &amp; bank balances from QuickBooks. Do this AFTER refreshing your card feeds inside QuickBooks."><?php echo titan_icon('reopen', 13); ?><span>Update from QuickBooks</span></button>
-		<span style="flex-basis:100%;font-size:11px;color:var(--tx-lo);margin:0;">Before pressing <strong>Update from QuickBooks</strong>: open QuickBooks in Chrome, log in, and refresh your card feeds (Transactions &rarr; Bank transactions &rarr; <em>Update</em>) so QuickBooks has today&rsquo;s balances &mdash; then press it to pull those balances into the app.</span>
 		<?php if ($snap): ?>
 		<span class="t-chip warn" title="This month's opening is already locked in and is re-captured automatically at month-end. Re-taking now replaces your <?php echo cf_month_label($hs)['name']; ?> baseline — rarely needed."><?php echo cf_month_label($hs)['name']; ?> already snapshotted · re-take replaces the baseline</span>
 		<?php endif; ?>
