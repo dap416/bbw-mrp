@@ -22,6 +22,24 @@
 	function closeModal(){ $('#cfModalRoot').empty(); $('.cf-pay-menu').remove(); }
 
 	function post(url, data){ return $.post(url, data); }
+	function cfToast(msg){
+		const $t = $('<div class="cf-toast"></div>').text(msg);
+		$('body').append($t);
+		requestAnimationFrame(() => $t.addClass('show'));
+		setTimeout(() => { $t.removeClass('show'); setTimeout(() => $t.remove(), 320); }, 3600);
+	}
+	// Surface the result of a "Update from QuickBooks" pull after the page reloads.
+	$(function(){
+		try {
+			const raw = sessionStorage.getItem('cfQbToast');
+			if (!raw) return;
+			sessionStorage.removeItem('cfQbToast');
+			const n = (JSON.parse(raw) || {}).updated || 0;
+			cfToast(n > 0
+				? n + ' account balance' + (n === 1 ? '' : 's') + ' refreshed from QuickBooks'
+				: 'QuickBooks pull complete — no linked accounts to refresh.');
+		} catch (_) {}
+	});
 
 	/* ---- view switching ---- */
 	$('#cfViews button').on('click', function(){
@@ -54,7 +72,7 @@
 		$t.text('Pulling from QuickBooks…');
 		post('/ajax/cash_flow/update_qb.php', {})
 			.done(r => {
-				if (r && r.ok) { location.reload(); }
+				if (r && r.ok) { try { sessionStorage.setItem('cfQbToast', JSON.stringify({ updated: r.updated || 0 })); } catch (_) {} location.reload(); }
 				else { alert((r && r.error) || 'Update failed.'); $t.text(old); $b.prop('disabled', false); }
 			})
 			.fail(x => { alert('Update failed: ' + ((x && x.responseText) || (x && x.status) || 'network error')); $t.text(old); $b.prop('disabled', false); });
