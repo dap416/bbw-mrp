@@ -209,15 +209,31 @@ function cf_live_accounts($db) {
 		}
 	}
 
-	$creditLimit = (float)($m['card_limit_total'] ?? 0) + (float)($m['loc_limit'] ?? 0);
-	$creditUsed  = (float)($m['card_total'] ?? 0) + (float)($m['loc_total'] ?? 0);
+	// Available credit must match the Accounts tables. A LOC ceiling belongs to its FACILITY and is
+	// counted ONCE across the loans on it; only facilities that actually carry a loan count. Deriving
+	// the LOC limit/room from the live loans here — rather than from $m['loc_limit'] (the raw sum of
+	// every loc_ceilings entry) — makes this immune to stale/duplicate facility entries in that setting.
+	$locFacG = [];
+	foreach ($locs as $l) {
+		$fk = ($l['facility'] !== '') ? strtolower($l['facility']) : ('#' . $l['id']);
+		if (!isset($locFacG[$fk])) $locFacG[$fk] = ['ceiling' => (float)$l['ceiling'], 'drawn' => 0.0];
+		$locFacG[$fk]['drawn']  += (float)$l['drawn'];
+		$locFacG[$fk]['ceiling'] = max($locFacG[$fk]['ceiling'], (float)$l['ceiling']);
+	}
+	$locLimit = 0.0; $locRoom = 0.0;
+	foreach ($locFacG as $f) { $locLimit += $f['ceiling']; $locRoom += max(0.0, $f['ceiling'] - $f['drawn']); }
+	$cardLimit = (float)($m['card_limit_total'] ?? 0);
+	$cardTotal = (float)($m['card_total'] ?? 0);
+	$creditLimit = $cardLimit + $locLimit;
+	$creditUsed  = $cardTotal + (float)($m['loc_total'] ?? 0);
+	$creditAvail = max(0.0, $cardLimit - $cardTotal) + $locRoom;   // card room + per-facility LOC room (floored)
 
 	return [
 		'banks' => $banks, 'cards' => $cards, 'locs' => $locs,
 		'start_cash' => (float)($m['bank_total'] ?? 0),
 		'credit_limit' => $creditLimit, 'credit_used' => $creditUsed,
 		'shopify_loan' => $shopLoan,
-		'credit_available' => max(0.0, $creditLimit - $creditUsed),
+		'credit_available' => $creditAvail,
 		'source' => 'live',
 	];
 }
