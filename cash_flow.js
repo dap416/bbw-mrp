@@ -233,7 +233,7 @@
 	const ACCT_FIELDS = {
 		banks: [['label','Account name','text'],['balance','Balance','money'],['as_of','As of','text']],
 		cards: [['label','Card','text'],['balance','Balance','money'],['limit','Credit limit','money'],['apr','APR','pct'],['as_of','As of','text']],
-		locs:  [['label','Facility','text'],['drawn','Drawn','money'],['ceiling','Ceiling','money'],['apr','APR','pct'],['payment','Monthly payment','money'],['due_day','Due day','text'],['as_of','As of','text']],
+		locs:  [['label','Loan / label','text'],['facility','Line of credit (shared across its loans)','text'],['drawn','Drawn','money'],['ceiling','Ceiling of the line (shared)','money'],['apr','APR','pct'],['payment','Monthly payment','money'],['due_day','Due day','text'],['as_of','As of','text']],
 	};
 	function acctRecord(group, id){ const arr = CF.accounts[group] || []; return arr.find(a => a.id === id) || null; }
 	$(document).on('click', '.cf-acct-add', function(){ openAcctModal($(this).data('group'), null); });
@@ -277,6 +277,7 @@
 		const payload = {
 			id: id || 0, group,
 			label: v.label || '',
+			loc_name: v.facility != null ? v.facility : '',
 			balance: (v.balance != null ? v.balance : (v.drawn || '')),
 			credit_limit: (v.limit != null ? v.limit : (v.ceiling || '')),
 			apr: v.apr || '', monthly_payment: v.payment || '', due_day: v.due_day || '', as_of: v.as_of || '',

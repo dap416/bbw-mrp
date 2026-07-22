@@ -33,7 +33,21 @@ $payment = trim((string)($_POST['monthly_payment'] ?? ''));
 $payment = ($payment === '' || $type !== 'loc') ? null : round((float)$payment, 2);
 $dueDay  = trim((string)($_POST['due_day'] ?? ''));
 $dueDay  = ($dueDay === '' || $type !== 'loc') ? null : max(1, min(31, (int)$dueDay));
-$locName = $type === 'loc' ? $label : null;
+// A LOC's facility = the line of credit it draws on (NOT its own label). Several loans can share
+// one facility; the ceiling lives on the facility (loc_ceilings), counted once — never per loan.
+$locName = null;
+if ($type === 'loc') {
+	$locName = trim((string)($_POST['loc_name'] ?? ''));
+	if ($locName === '' && $id > 0) {   // edit without a facility supplied → keep the existing one
+		try { $st = $db->prepare("SELECT loc_name FROM cash_balances WHERE id=?"); $st->execute([$id]); $ex = $st->fetchColumn(); if ($ex !== false && $ex !== null) $locName = trim((string)$ex); } catch (Throwable $e) {}
+	}
+}
+// The ceiling entered for a facility-linked LOC belongs to the shared facility, not the row.
+// Persist it on the facility and clear the per-row limit so cf_match_ceiling can't double it.
+if ($type === 'loc' && $locName !== null && $locName !== '') {
+	if ($limit !== null) cf_set_facility_ceiling($db, $locName, $limit);
+	$limit = null;
+}
 $qbId    = trim((string)($_POST['qb_account_id'] ?? ''));   // link to a QB account = auto-synced nightly
 $uid     = (int)($_SESSION['user_id'] ?? 0) ?: null;
 

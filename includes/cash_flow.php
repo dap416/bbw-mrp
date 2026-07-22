@@ -141,6 +141,26 @@ function cf_avg_sales_tax_pct($db) {
 
 /* ---- accounts ---------------------------------------------------------- */
 
+/**
+ * Set (or add) a facility's ceiling in the SHARED loc_ceilings setting. The ceiling is a
+ * property of the line of credit (facility), not of an individual loan drawing on it — two
+ * loans on one $85k line share the one $85k. Editing it here updates Cash Management too.
+ */
+function cf_set_facility_ceiling($db, $name, $ceiling) {
+	$name = trim((string)$name); if ($name === '') return;
+	$ceiling = max(0.0, (float)$ceiling);
+	$list = [];
+	$raw = setting_get($db, 'loc_ceilings');
+	if ($raw) { $dec = json_decode($raw, true); if (is_array($dec)) $list = $dec; }
+	$found = false;
+	foreach ($list as &$c) {
+		if (isset($c['name']) && strcasecmp(trim((string)$c['name']), $name) === 0) { $c['ceiling'] = $ceiling; $found = true; break; }
+	}
+	unset($c);
+	if (!$found) $list[] = ['name' => $name, 'ceiling' => $ceiling];
+	setting_set($db, 'loc_ceilings', json_encode(array_values($list)));
+}
+
 /** Match a LOC row to its facility ceiling from load_manual_balances()'s loc_facilities. */
 function cf_match_ceiling($facilities, $locRow) {
 	$ln = strtolower(trim((string)($locRow['loc_name'] ?? '')));
@@ -174,7 +194,7 @@ function cf_live_accounts($db) {
 			if ($payout) $shopLoan += (float)$c['balance'];
 			$locs[] = [
 				'id' => (int)$c['id'], 'label' => $c['label'], 'drawn' => (float)$c['balance'],
-				'ceiling' => $ceiling, 'apr' => $c['apr'], 'payment' => (float)($c['payment'] ?? 0),
+				'ceiling' => $ceiling, 'facility' => trim((string)($c['loc_name'] ?? '')), 'apr' => $c['apr'], 'payment' => (float)($c['payment'] ?? 0),
 				'due_day' => $c['due_day'], 'payout' => $payout,
 				'payout_pct' => $payout ? $payoutPct : null,
 				'planned' => (float)($c['payment'] ?? 0), 'as_of' => $c['as_of'], 'qb_id' => $c['qb_id'] ?? '',

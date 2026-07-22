@@ -356,7 +356,20 @@ $statsHtml = '';
 		<?php
 		$bankTot = 0.0; foreach ($live['banks'] as $b) $bankTot += $b['balance'];
 		$cardBal = 0.0; $cardLim = 0.0; foreach ($live['cards'] as $c) { $cardBal += $c['balance']; $cardLim += ($c['limit'] ?? 0); } $cardAvail = $cardLim - $cardBal;
-		$locDrawn = 0.0; $locCeil = 0.0; foreach ($live['locs'] as $l) { $locDrawn += $l['drawn']; $locCeil += $l['ceiling']; } $locAvail = $locCeil - $locDrawn;
+		// LOCs can share ONE facility (two loans drawing on the same line of credit). The ceiling
+		// belongs to the facility and is counted ONCE — summing it per loan would double the room.
+		// Group by facility for ceiling/available; drawn stays per loan. A facility with no ceiling
+		// (a term loan, e.g. Shopify Capital) contributes 0 available.
+		$locFacAgg = [];
+		foreach ($live['locs'] as $l) {
+			$fk = (($l['facility'] ?? '') !== '') ? strtolower($l['facility']) : ('#' . $l['id']);
+			if (!isset($locFacAgg[$fk])) $locFacAgg[$fk] = ['name' => (($l['facility'] ?? '') !== '') ? $l['facility'] : $l['label'], 'ceiling' => (float)$l['ceiling'], 'drawn' => 0.0, 'count' => 0];
+			$locFacAgg[$fk]['drawn']  += (float)$l['drawn'];
+			$locFacAgg[$fk]['ceiling'] = max($locFacAgg[$fk]['ceiling'], (float)$l['ceiling']);
+			$locFacAgg[$fk]['count']++;
+		}
+		$locDrawn = 0.0; $locCeil = 0.0; $locAvail = 0.0;
+		foreach ($locFacAgg as $f) { $locDrawn += $f['drawn']; $locCeil += $f['ceiling']; $locAvail += max(0.0, $f['ceiling'] - $f['drawn']); }
 		?>
 		<div class="cf-acct-grid">
 			<div class="t-panel"><div class="t-panel-body">
@@ -384,12 +397,16 @@ $statsHtml = '';
 
 			<div class="t-panel"><div class="t-panel-body">
 				<div class="t-panel-head"><h6 class="t-panel-title">Lines of credit &amp; loans<?php echo cf_asof_html($live['locs']); ?></h6><button class="t-btn sm cf-acct-add" data-group="locs">+ Add</button></div>
-				<div style="overflow-x:auto"><table class="t-table" style="min-width:600px"><thead><tr><th>Facility</th><th style="text-align:right">Drawn</th><th style="text-align:right">Ceiling</th><th style="text-align:right">Avail</th><th style="text-align:right">APR</th><th style="text-align:right">Repay</th><th></th></tr></thead><tbody>
-				<?php foreach ($live['locs'] as $l) { $avail = ($l['ceiling'] ?? 0) - $l['drawn']; ?>
-					<tr><td><?php echo htmlspecialchars($l['label']); ?><?php if ($l['payout']) echo ' <span class="t-chip ghost">Payout</span>'; ?><?php if (!empty($l['qb_id'])) echo ' <span class="t-chip accent" title="Balance auto-synced from QuickBooks nightly">Auto</span>'; ?></td>
+				<div style="overflow-x:auto"><table class="t-table" style="min-width:600px"><thead><tr><th>Loan / line</th><th style="text-align:right">Drawn</th><th style="text-align:right">Ceiling</th><th style="text-align:right">Avail</th><th style="text-align:right">APR</th><th style="text-align:right">Repay</th><th></th></tr></thead><tbody>
+				<?php foreach ($live['locs'] as $l) {
+					$fk = (($l['facility'] ?? '') !== '') ? strtolower($l['facility']) : ('#' . $l['id']);
+					$fac = $locFacAgg[$fk]; $shared = $fac['count'] > 1;
+					$avail = max(0.0, (float)$fac['ceiling'] - (float)$fac['drawn']);   // facility-level room (not per loan)
+				?>
+					<tr><td><?php echo htmlspecialchars($l['label']); ?><?php if ($shared) echo ' <span class="t-chip ghost" title="Draws on the ' . htmlspecialchars($fac['name']) . ' line of credit (shared ceiling)">' . htmlspecialchars($fac['name']) . '</span>'; ?><?php if ($l['payout']) echo ' <span class="t-chip ghost">Payout</span>'; ?><?php if (!empty($l['qb_id'])) echo ' <span class="t-chip accent" title="Balance auto-synced from QuickBooks nightly">Auto</span>'; ?></td>
 					<td class="num" style="text-align:right"><?php echo cf_money($l['drawn']); ?></td>
-					<td class="num" style="text-align:right"><?php echo cf_money($l['ceiling']); ?></td>
-					<td class="num" style="text-align:right;color:var(--good)"><?php echo cf_money($avail); ?></td>
+					<td class="num" style="text-align:right"><?php if ((float)$l['ceiling'] <= 0) { echo cf_dash(); } else { echo cf_money($l['ceiling']); if ($shared) echo ' <span class="t-chip ghost" title="One line of credit shared across ' . (int)$fac['count'] . ' loans — this ceiling is the whole line, not per loan">shared</span>'; } ?></td>
+					<td class="num" style="text-align:right;color:var(--good)"><?php echo ((float)$l['ceiling'] <= 0) ? cf_dash() : cf_money($avail); ?></td>
 					<td class="num" style="text-align:right"><?php echo (!$l['payout'] && $l['apr'] !== null) ? rtrim(rtrim(number_format((float)$l['apr'], 2), '0'), '.') . '%' : cf_dash(); ?></td>
 					<td class="num" style="text-align:right"><?php echo $l['payout'] ? (rtrim(rtrim(number_format((float)$l['payout_pct'], 1), '0'), '.') . '% sales') : ($l['payment'] ? cf_money($l['payment']) . '/mo' : cf_dash()); ?></td>
 					<td style="text-align:right"><button class="t-btn sm icon cf-acct-edit" data-group="locs" data-id="<?php echo $l['id']; ?>"><?php echo titan_icon('pen', 13); ?></button></td></tr>
