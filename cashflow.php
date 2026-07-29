@@ -762,7 +762,15 @@
 		var balances=[]; $('.rec-bal').each(function(){ balances.push({ id:$(this).data('id'), balance:($(this).val()||'').replace(/[^0-9.\-]/g,'') }); });
 		var received=[]; $('.rec-in:checked').each(function(){ received.push($(this).val()); });
 		var paid=[]; $('.rec-out:checked').each(function(){ paid.push($(this).val()); });
-		$.post('/ajax/cashflow/reconcile.php', { ym:'<?php echo $thisMonth ? $thisMonth['ym'] : date('Y-m'); ?>', balances:JSON.stringify(balances), received:JSON.stringify(received), paid:JSON.stringify(paid) }, function(resp){ if(resp&&resp.ok) location.reload(); else { $('#recMsg').text((resp&&resp.error)||'Save failed'); $b.prop('disabled',false); } }, 'json').fail(function(){ $('#recMsg').text('Save failed'); $b.prop('disabled',false); });
+		$.post('/ajax/cashflow/reconcile.php', { ym:'<?php echo $thisMonth ? $thisMonth['ym'] : date('Y-m'); ?>', balances:JSON.stringify(balances), received:JSON.stringify(received), paid:JSON.stringify(paid) }, function(resp){ if(resp&&resp.ok) location.reload(); else { $('#recMsg').text((resp&&resp.error)||'Save failed.'); $b.prop('disabled',false); } }, 'json')
+			// Never swallow the reason: show whatever the server actually said, so a
+			// broken save is diagnosable instead of a bare "Save failed".
+			.fail(function(xhr){
+				var msg = (xhr.responseJSON && xhr.responseJSON.error) || '';
+				if (!msg && xhr.responseText) { var t = $('<div>').html(xhr.responseText).text().replace(/\s+/g,' ').trim(); if (t) msg = t.slice(0,300); }
+				$('#recMsg').text('Save failed (HTTP ' + xhr.status + ')' + (msg ? ': ' + msg : '. No response from the server.'));
+				$b.prop('disabled',false);
+			});
 	});
 
 	// ── Hide / show prior month(s) ──

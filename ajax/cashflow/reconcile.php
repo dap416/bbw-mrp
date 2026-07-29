@@ -13,11 +13,15 @@
  */
 require_once(__DIR__."/../../includes/fns.php");
 require_once(__DIR__."/../../includes/cashflow.php");
-require_login();
 header('Content-Type: application/json');
 
+// Session check by hand: require_login() 302s to /login.php, which hands the
+// browser an HTML login page the $.post('json') parser chokes on — the page
+// then reports a meaningless "Save failed" instead of "you were logged out".
+if (!isset($_SESSION['user_id'])) { echo json_encode(['error' => 'Your session expired — reload the page and log in again.']); exit; }
+
 $role = $_SESSION['user_role'] ?? '';
-if (!in_array($role, ['admin', 'master'], true) && !is_owner()) { http_response_code(403); echo json_encode(['error' => 'Admins only.']); exit; }
+if (!in_array($role, ['admin', 'master'], true) && !is_owner()) { echo json_encode(['error' => 'Admins only.']); exit; }
 
 $ym = trim($_POST['ym'] ?? '');
 if (!preg_match('/^\d{4}-\d{2}$/', $ym)) $ym = date('Y-m');
@@ -30,19 +34,28 @@ if (!is_array($received)) $received = [];
 if (!is_array($paid))     $paid     = [];
 
 $db = db_connect();
-ensure_cash_balances_table($db);
-ensure_cashin_received_table($db);
-ensure_cashout_paid_table($db);
+if (!$db) { echo json_encode(['error' => 'Could not reach the database.']); exit; }
 
 try {
+	// These create/patch the tables the save writes to. They used to sit outside
+	// this try — anything they threw (missing CREATE privilege, a locked table)
+	// escaped as an uncaught fatal, so the browser got an HTML 500 and showed a
+	// bare "Save failed" with no clue why.
+	ensure_cash_balances_table($db);
+	ensure_cashin_received_table($db);
+	ensure_cashout_paid_table($db);
+
 	$db->beginTransaction();
 
 	// 1) Set actual balances as of today.
+	$nBal = 0;
 	$upd = $db->prepare("UPDATE cash_balances SET balance = ?, as_of = CURDATE() WHERE id = ?");
 	foreach ($balances as $b) {
 		$id = (int)($b['id'] ?? 0);
-		if ($id <= 0 || !isset($b['balance']) || $b['balance'] === '') continue;
-		$upd->execute([(float)$b['balance'], $id]);
+		$val = isset($b['balance']) ? trim((string)$b['balance']) : '';
+		if ($id <= 0 || $val === '' || !is_numeric($val)) continue;
+		$upd->execute([(float)$val, $id]);
+		$nBal++;   // rows written (MySQL's rowCount is 0 when the value is unchanged, so count attempts)
 	}
 
 	// 2) Replace this month's reconciled cash-IN set.
@@ -60,9 +73,12 @@ try {
 	}
 
 	$db->commit();
-	echo json_encode(['ok' => true]);
+	echo json_encode(['ok' => true, 'balances' => $nBal, 'received' => count($received), 'paid' => count($paid)]);
 } catch (Throwable $e) {
 	if ($db->inTransaction()) $db->rollBack();
-	http_response_code(500);
+	error_log('cashflow reconcile failed: ' . $e->getMessage());
+	// Deliberately a 200: a 500 sends jQuery down .fail(), where the page can
+	// only print a generic message. Returning the reason in the JSON body is
+	// what puts the actual cause in front of the user.
 	echo json_encode(['error' => 'Reconcile failed: ' . $e->getMessage()]);
 }
