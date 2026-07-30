@@ -36,11 +36,15 @@ $suggest = cf_suggest_map($live, $availDebt);
 $snap    = cf_current_snapshot($db);
 $qbAccounts = cf_qb_account_options($db);   // for the "auto-sync this account" picker
 
-// "Now" readouts
-$cashNow  = $live['start_cash'];
-$availNow = $live['credit_available'];
-$debtNow  = $live['credit_used'];
-$liquidNow= $cashNow + $availNow;
+// "Now" readouts. LOC room and card room stay separate everywhere they're shown —
+// a line of credit can be drawn as cash, a credit card can only buy things — and
+// are only ever added back together in the combined "Liquid available" figure.
+$cashNow     = $live['start_cash'];
+$locAvailNow = $live['loc_available'];
+$cardAvailNow= $live['card_available'];
+$availNow    = $live['credit_available'];   // LOC + card room, combined
+$debtNow     = $live['credit_used'];
+$liquidNow   = $cashNow + $availNow;
 
 // pay-method options for the record modal
 $payOptions = [['v' => 'cash', 'label' => 'Cash']];
@@ -164,7 +168,7 @@ $statsHtml = '';
 	.cf-mini{ display:flex; align-items:center; gap:6px; background:var(--bg-inset); border:1px solid var(--line-2); border-radius:8px; padding:5px 10px; }
 	.cf-mini label{ font-family:var(--font-mono); font-size:9.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--tx-lo); }
 	.cf-mini input{ width:64px; background:transparent; border:none; outline:none; color:var(--tx-hi); font-family:var(--font-num); font-size:13px; text-align:right; }
-	.cf-readouts{ display:flex; gap:22px; margin-left:auto; }
+	.cf-readouts{ display:flex; gap:18px; margin-left:auto; flex-wrap:wrap; justify-content:flex-end; }
 	.cf-ro{ text-align:right; }
 	.cf-ro-lbl{ font-family:var(--font-mono); font-size:8.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--tx-lo); }
 	.cf-ro-val{ font-family:var(--font-num); font-variant-numeric:tabular-nums; font-size:16px; font-weight:700; color:var(--tx-hi); }
@@ -224,8 +228,9 @@ $statsHtml = '';
 		<div class="cf-mini"><label>Avg sales tax</label><input id="cfTax" value="<?php echo rtrim(rtrim(number_format($taxPct, 2), '0'), '.'); ?>"><span style="color:var(--tx-lo)">%</span></div>
 		<div class="cf-readouts">
 			<div class="cf-ro"><div class="cf-ro-lbl">Cash on hand</div><div class="cf-ro-val"><?php echo cf_money($cashNow); ?></div></div>
-			<div class="cf-ro"><div class="cf-ro-lbl">Avail credit</div><div class="cf-ro-val"><?php echo cf_money($availNow); ?></div></div>
-			<div class="cf-ro accent"><div class="cf-ro-lbl">Liquid available</div><div class="cf-ro-val"><?php echo cf_money($liquidNow); ?></div></div>
+			<div class="cf-ro" title="Undrawn room on your lines of credit — this can be drawn as cash into the bank."><div class="cf-ro-lbl">LOC available</div><div class="cf-ro-val"><?php echo cf_money($locAvailNow); ?></div></div>
+			<div class="cf-ro" title="Unused credit-card limit. Purchasing power only — it cannot be drawn as cash."><div class="cf-ro-lbl">Card available</div><div class="cf-ro-val"><?php echo cf_money($cardAvailNow); ?></div></div>
+			<div class="cf-ro accent" title="Cash on hand + LOC available + card available."><div class="cf-ro-lbl">Liquid available</div><div class="cf-ro-val"><?php echo cf_money($liquidNow); ?></div></div>
 			<div class="cf-ro"><div class="cf-ro-lbl">Total debt</div><div class="cf-ro-val"><?php echo cf_money($debtNow); ?></div></div>
 		</div>
 	</div>
@@ -289,8 +294,11 @@ $statsHtml = '';
 						cf_row($cols, $rows, ['label' => 'Ending cash', 'sub' => 'RUNNING BANK', 'get' => fn($r) => $r['endCash'], 'weight' => 700, 'color' => fn($r, $v) => $r['cashRisk'] ? 'var(--crit)' : 'var(--tx-hi)']);
 						cf_row($cols, $rows, ['label' => 'Credit used', 'sub' => 'CARDS + LOCS', 'get' => fn($r) => $r['endCredit'], 'color' => fn($r, $v) => 'var(--tx-mid)']);
 						cf_row($cols, $rows, ['label' => 'Interest accrued', 'sub' => 'ADDED TO CARD / LOC BALANCES', 'get' => fn($r) => $r['interest'], 'color' => fn($r, $v) => 'var(--warn)']);
-						cf_row($cols, $rows, ['label' => 'Available credit', 'sub' => 'HEADROOM', 'get' => fn($r) => $r['avail'], 'color' => fn($r, $v) => $v < 0 ? 'var(--crit)' : ($r['creditTight'] ? 'var(--warn)' : 'var(--tx-mid)')]);
-						cf_row($cols, $rows, ['label' => 'Ending liquid', 'sub' => 'CASH + CREDIT', 'get' => fn($r) => $r['liquid'], 'weight' => 700, 'rowbg' => true, 'color' => fn($r, $v) => 'var(--accent)']);
+						cf_row($cols, $rows, ['label' => 'Available credit', 'sub' => 'HEADROOM · LOC + CARD', 'get' => fn($r) => $r['avail'], 'color' => fn($r, $v) => $v < 0 ? 'var(--crit)' : ($r['creditTight'] ? 'var(--warn)' : 'var(--tx-mid)')]);
+						// Split out, always visible: only the LOC half of that headroom can become cash.
+						cf_row($cols, $rows, ['label' => 'LOC available', 'sub' => 'DRAWABLE AS CASH', 'indent' => 16, 'get' => fn($r) => $r['availLoc'], 'color' => fn($r, $v) => 'var(--tx-mid)']);
+						cf_row($cols, $rows, ['label' => 'Card available', 'sub' => 'PURCHASING POWER ONLY', 'indent' => 16, 'get' => fn($r) => $r['availCard'], 'color' => fn($r, $v) => 'var(--tx-mid)']);
+						cf_row($cols, $rows, ['label' => 'Ending liquid', 'sub' => 'CASH + LOC + CARD', 'get' => fn($r) => $r['liquid'], 'weight' => 700, 'rowbg' => true, 'color' => fn($r, $v) => 'var(--accent)']);
 						?>
 						</tbody>
 					</table>
@@ -383,7 +391,7 @@ $statsHtml = '';
 			</div></div>
 
 			<div class="t-panel"><div class="t-panel-body">
-				<div class="t-panel-head"><h6 class="t-panel-title">Credit cards<?php echo cf_asof_html($live['cards']); ?></h6><button class="t-btn sm cf-acct-add" data-group="cards">+ Add</button></div>
+				<div class="t-panel-head"><h6 class="t-panel-title">Credit cards <span class="t-chip ghost" title="Unused card limit is purchasing power — it cannot be drawn as cash into the bank.">purchasing power</span><?php echo cf_asof_html($live['cards']); ?></h6><button class="t-btn sm cf-acct-add" data-group="cards">+ Add</button></div>
 				<div style="overflow-x:auto"><table class="t-table" style="min-width:560px"><thead><tr><th>Card</th><th style="text-align:right">Balance</th><th style="text-align:right">Limit</th><th style="text-align:right">Avail</th><th style="text-align:right">APR</th><th></th></tr></thead><tbody>
 				<?php foreach ($live['cards'] as $c) { $avail = ($c['limit'] ?? 0) - $c['balance']; ?>
 					<tr><td><?php echo htmlspecialchars($c['label']); ?><?php if (!empty($c['qb_id'])) echo ' <span class="t-chip accent" title="Balance auto-synced from QuickBooks nightly">Auto</span>'; ?></td><td class="num" style="text-align:right"><?php echo cf_money($c['balance']); ?></td>
@@ -396,7 +404,7 @@ $statsHtml = '';
 			</div></div>
 
 			<div class="t-panel"><div class="t-panel-body">
-				<div class="t-panel-head"><h6 class="t-panel-title">Lines of credit &amp; loans<?php echo cf_asof_html($live['locs']); ?></h6><button class="t-btn sm cf-acct-add" data-group="locs">+ Add</button></div>
+				<div class="t-panel-head"><h6 class="t-panel-title">Lines of credit &amp; loans <span class="t-chip ghost" title="Undrawn room on a line of credit can be drawn as cash into the bank. Term loans (no ceiling) contribute no room.">drawable as cash</span><?php echo cf_asof_html($live['locs']); ?></h6><button class="t-btn sm cf-acct-add" data-group="locs">+ Add</button></div>
 				<div style="overflow-x:auto"><table class="t-table" style="min-width:600px"><thead><tr><th>Loan / line</th><th style="text-align:right">Drawn</th><th style="text-align:right">Ceiling</th><th style="text-align:right">Avail</th><th style="text-align:right">APR</th><th style="text-align:right">Repay</th><th></th></tr></thead><tbody>
 				<?php foreach ($live['locs'] as $l) {
 					$fk = (($l['facility'] ?? '') !== '') ? strtolower($l['facility']) : ('#' . $l['id']);

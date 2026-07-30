@@ -86,7 +86,11 @@
 	<div class="col-6 col-lg-3"><div class="card h-100" style="border-left:4px solid #f5a623;"><div class="card-body py-2">
 		<div class="text-muted text-uppercase fw-semibold" style="font-size:0.64rem;letter-spacing:.04em;">Credit / LOC Owed</div>
 		<div class="h5 fw-bold mb-0" style="color:#d9822b;"><?php echo money($data['eff_credit']); ?></div>
-		<div class="text-muted" style="font-size:0.68rem;"><?php echo $data['manual']['credit_limit_total'] > 0 ? money($data['manual']['credit_available']).' available' : 'outstanding debt'; ?></div>
+		<?php // Same distinction as the Cash Flow page: LOC room is drawable cash, card room is not — never one merged "available".
+		$locAv = (float)($data['manual']['loc_available'] ?? 0); $cardAv = max(0.0, (float)($data['manual']['card_available'] ?? 0)); ?>
+		<div class="text-muted" style="font-size:0.68rem;"><?php echo $data['manual']['credit_limit_total'] > 0
+			? money($locAv).' LOC to draw · '.money($cardAv).' card room'
+			: 'outstanding debt'; ?></div>
 	</div></div></div>
 	<div class="col-6 col-lg-3"><div class="card h-100" style="border-left:4px solid <?php echo $data['net_quick'] >= 0 ? '#2ca01c' : '#e64545'; ?>;"><div class="card-body py-2">
 		<div class="text-muted text-uppercase fw-semibold" style="font-size:0.64rem;letter-spacing:.04em;">Net Position</div>

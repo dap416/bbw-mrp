@@ -175,6 +175,36 @@ function cf_match_ceiling($facilities, $locRow) {
  * LIVE account set from cash_balances (what the Accounts view edits).
  * Returns banks[], cards[], locs[] plus start_cash / credit_limit / credit_used / shopify_loan.
  */
+/**
+ * Split credit headroom into the two kinds that must never be added together
+ * behind one label: LOC room — drawable as cash into the bank — and card room,
+ * which is purchasing power only. Both floored at 0 per facility so an overdrawn
+ * line reads as no room rather than as negative room quietly funding another.
+ *
+ * A LOC ceiling belongs to its FACILITY and is counted ONCE across every loan
+ * drawing on it. Deriving it from the live loans (rather than from the raw
+ * loc_ceilings setting) keeps it immune to stale or duplicated facility entries.
+ */
+function cf_room_split($cards, $locs) {
+	$cardLimit = 0.0; $cardUsed = 0.0;
+	foreach ($cards as $c) { $cardLimit += (float)($c['limit'] ?? 0); $cardUsed += (float)$c['balance']; }
+
+	$facs = [];
+	foreach ($locs as $l) {
+		$fk = (trim((string)($l['facility'] ?? '')) !== '') ? strtolower(trim($l['facility'])) : ('#' . $l['id']);
+		if (!isset($facs[$fk])) $facs[$fk] = ['ceiling' => 0.0, 'drawn' => 0.0];
+		$facs[$fk]['ceiling'] = max($facs[$fk]['ceiling'], (float)$l['ceiling']);
+		$facs[$fk]['drawn']  += (float)$l['drawn'];
+	}
+	$locLimit = 0.0; $locDrawn = 0.0; $locRoom = 0.0;
+	foreach ($facs as $f) { $locLimit += $f['ceiling']; $locDrawn += $f['drawn']; $locRoom += max(0.0, $f['ceiling'] - $f['drawn']); }
+
+	return [
+		'card' => max(0.0, $cardLimit - $cardUsed), 'card_limit' => $cardLimit, 'card_used' => $cardUsed,
+		'loc'  => $locRoom,                         'loc_limit'  => $locLimit,  'loc_drawn' => $locDrawn,
+	];
+}
+
 function cf_live_accounts($db) {
 	$m       = load_manual_balances($db);
 	$minPct  = card_min_pct($db);
@@ -209,31 +239,23 @@ function cf_live_accounts($db) {
 		}
 	}
 
-	// Available credit must match the Accounts tables. A LOC ceiling belongs to its FACILITY and is
-	// counted ONCE across the loans on it; only facilities that actually carry a loan count. Deriving
-	// the LOC limit/room from the live loans here — rather than from $m['loc_limit'] (the raw sum of
-	// every loc_ceilings entry) — makes this immune to stale/duplicate facility entries in that setting.
-	$locFacG = [];
-	foreach ($locs as $l) {
-		$fk = ($l['facility'] !== '') ? strtolower($l['facility']) : ('#' . $l['id']);
-		if (!isset($locFacG[$fk])) $locFacG[$fk] = ['ceiling' => (float)$l['ceiling'], 'drawn' => 0.0];
-		$locFacG[$fk]['drawn']  += (float)$l['drawn'];
-		$locFacG[$fk]['ceiling'] = max($locFacG[$fk]['ceiling'], (float)$l['ceiling']);
-	}
-	$locLimit = 0.0; $locRoom = 0.0;
-	foreach ($locFacG as $f) { $locLimit += $f['ceiling']; $locRoom += max(0.0, $f['ceiling'] - $f['drawn']); }
-	$cardLimit = (float)($m['card_limit_total'] ?? 0);
-	$cardTotal = (float)($m['card_total'] ?? 0);
-	$creditLimit = $cardLimit + $locLimit;
-	$creditUsed  = $cardTotal + (float)($m['loc_total'] ?? 0);
-	$creditAvail = max(0.0, $cardLimit - $cardTotal) + $locRoom;   // card room + per-facility LOC room (floored)
+	$room        = cf_room_split($cards, $locs);
+	$cardRoom    = $room['card'];
+	$locRoom     = $room['loc'];
+	$creditLimit = $room['card_limit'] + $room['loc_limit'];
+	$creditUsed  = (float)($m['card_total'] ?? 0) + (float)($m['loc_total'] ?? 0);
 
 	return [
 		'banks' => $banks, 'cards' => $cards, 'locs' => $locs,
 		'start_cash' => (float)($m['bank_total'] ?? 0),
 		'credit_limit' => $creditLimit, 'credit_used' => $creditUsed,
 		'shopify_loan' => $shopLoan,
-		'credit_available' => $creditAvail,
+		// Two different kinds of headroom, kept apart everywhere they're shown: a LOC
+		// can be drawn as cash into the bank, a credit card can only buy things. Only
+		// 'credit_available' (their sum) belongs in a combined total.
+		'loc_available'  => $locRoom,
+		'card_available' => $cardRoom,
+		'credit_available' => $cardRoom + $locRoom,
 		'source' => 'live',
 	];
 }
@@ -282,7 +304,13 @@ function cf_opening_accounts($db, $ym = null) {
 		$acc['start_cash']       = $sc;
 		$acc['credit_used']      = $used;
 		$acc['shopify_loan']     = $shop;
-		$acc['credit_available'] = max(0.0, $acc['credit_limit'] - $used);
+		// Re-split on the frozen balances. This used to be limit − used across everything,
+		// which let an overdrawn term loan eat into card room (and vice versa); it now
+		// matches the live path and the Accounts tables.
+		$snapRoom = cf_room_split($acc['cards'], $acc['locs']);
+		$acc['loc_available']    = $snapRoom['loc'];
+		$acc['card_available']   = $snapRoom['card'];
+		$acc['credit_available'] = $snapRoom['card'] + $snapRoom['loc'];
 		$acc['source']  = 'snapshot';
 		$acc['snap_ym'] = $ym;
 	}
@@ -533,7 +561,8 @@ function cf_compute($accounts, $records, $opts) {
 			'online' => $income['online'], 'shows' => $income['shows'], 'wholesale' => $income['wholesale'],
 			'op' => $op, 'pur' => $pur, 'tax' => $tax, 'shopPay' => $shopPay, 'dp' => $dpApplied,
 			'interest' => $interest, 'cashOut' => $cashOut, 'net' => $net,
-			'endCash' => $cash, 'endCredit' => $credit, 'avail' => $avail, 'liquid' => $cash + $avail,
+			'endCash' => $cash, 'endCredit' => $credit,
+			'availLoc' => $availL, 'availCard' => $availC, 'avail' => $avail, 'liquid' => $cash + $avail,
 			'cashRisk' => $cash < $buffer, 'creditTight' => $avail < 18000,
 		];
 	}
