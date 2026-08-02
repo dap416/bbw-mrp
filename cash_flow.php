@@ -28,11 +28,17 @@ $acc     = cf_opening_accounts($db, $hs);   // projection opening (live balances
 $live    = cf_live_accounts($db);           // editable set for the Accounts view + readouts
 $records = cf_load_records($db);
 $opts    = ['horizon_start' => $hs, 'growth' => $growth, 'buffer' => $buffer, 'tax_pct' => $taxPct, 'shop_pct' => $shopPct];
+$debts   = cf_debts($live);
+$suggest = cf_suggest_map($live, $availDebt);
+// Drive the projection from the snowball BUDGET, not from a one-off allocation.
+// cf_compute re-derives minimums and re-picks the target every month, so a
+// facility that clears frees its minimum and the surplus rolls to the next one.
+// The Debt view's cf_suggest_map() still shows this month's split; the forecast
+// now cascades the same rule forward instead of freezing month-0's answer.
+$opts['debt_budget'] = $availDebt;
 $rows    = cf_compute($acc, $records, $opts);
 $cols    = cf_month_cols($hs, 12);
-$debts   = cf_debts($live);
 $afford  = cf_afford_calc($live, $records, $opts);
-$suggest = cf_suggest_map($live, $availDebt);
 $qbAccounts = cf_qb_account_options($db);   // for the "auto-sync this account" picker
 
 // "Now" readouts. LOC room and card room stay separate everywhere they're shown —
@@ -286,6 +292,10 @@ $statsHtml = '';
 						cf_group_row('Cash out', $cols);
 						cf_row($cols, $rows, ['label' => 'Operating', 'managed' => 'operating', 'get' => fn($r) => $r['op']]);
 						cf_row($cols, $rows, ['label' => 'Purchases', 'managed' => 'purchase', 'get' => fn($r) => $r['pur']]);
+						// Operating and Purchases above are the FULL plan. This backs out the part
+						// that goes on a card or LOC — real spend, but not cash leaving the bank
+						// this month — so the block foots to Total cash out.
+						cf_row($cols, $rows, ['label' => 'Charged to credit', 'get' => fn($r) => -$r['onCredit'], 'dashzero' => true, 'color' => fn($r, $v) => 'var(--tx-lo)']);
 						cf_row($cols, $rows, ['label' => 'Shopify payback', 'get' => fn($r) => $r['shopPay'], 'dashzero' => true, 'color' => fn($r, $v) => 'var(--tx-mid)']);
 						cf_row($cols, $rows, ['label' => 'Debt paydown', 'get' => fn($r) => $r['dp'], 'dashzero' => true, 'color' => fn($r, $v) => 'var(--tx-mid)']);
 						cf_row($cols, $rows, ['label' => 'Total cash out', 'get' => fn($r) => $r['cashOut'], 'weight' => 600, 'labelColor' => 'var(--tx-hi)', 'rowbg' => true, 'color' => fn($r, $v) => 'var(--tx-hi)']);

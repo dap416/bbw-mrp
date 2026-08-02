@@ -456,6 +456,12 @@ function cf_compute($accounts, $records, $opts) {
 	$taxPct  = (float)($opts['tax_pct'] ?? 0);
 	$shopPct = (float)($opts['shop_pct'] ?? 25) / 100.0;
 	$target  = $opts['debt_target'] ?? null;   // null => use planned total (scale 1)
+	// Monthly debt budget for the snowball. When set, every facility pays its
+	// minimum and ONE target facility absorbs the rest; when the target clears, the
+	// target re-acquires and the same budget rolls onto the next one. Recomputed
+	// every month from that month's balances — the whole point is that it cascades.
+	// Null => fall back to each facility's own 'planned' figure.
+	$debtBudget = isset($opts['debt_budget']) ? (float)$opts['debt_budget'] : null;
 
 	$cash = (float)$accounts['start_cash'];
 	$shop = (float)$accounts['shopify_loan'];
@@ -465,11 +471,21 @@ function cf_compute($accounts, $records, $opts) {
 	$fac = [];
 	// 'chg' collects this month's charges separately from 'bal' so interest can be
 	// taken on the average balance rather than on a balance that already absorbed them.
-	foreach ($accounts['cards'] as $c) $fac[$c['label']] = ['bal' => (float)$c['balance'], 'apr' => ($c['apr'] !== null ? (float)$c['apr'] : 0) / 100.0, 'planned' => (float)($c['planned'] ?? 0), 'chg' => 0.0];
-	foreach ($accounts['locs'] as $l) if (empty($l['payout'])) $fac[$l['label']] = ['bal' => (float)$l['drawn'], 'apr' => ($l['apr'] !== null ? (float)$l['apr'] : 0) / 100.0, 'planned' => (float)($l['planned'] ?? 0), 'chg' => 0.0];
+	// 'min_pct'/'min_floor' are carried so the snowball can recompute a card's minimum
+	// from its CURRENT balance each month rather than freezing month-0's figure.
+	foreach ($accounts['cards'] as $c) $fac[$c['label']] = [
+		'bal' => (float)$c['balance'], 'apr' => ($c['apr'] !== null ? (float)$c['apr'] : 0) / 100.0,
+		'planned' => (float)($c['planned'] ?? 0), 'chg' => 0.0, 'is_card' => true,
+		'min_pct' => (float)($c['min_pct'] ?? 0), 'min_floor' => (float)($c['min_floor'] ?? 0)];
+	foreach ($accounts['locs'] as $l) if (empty($l['payout'])) $fac[$l['label']] = [
+		'bal' => (float)$l['drawn'], 'apr' => ($l['apr'] !== null ? (float)$l['apr'] : 0) / 100.0,
+		'planned' => (float)($l['planned'] ?? 0), 'chg' => 0.0, 'is_card' => false,
+		'min_pct' => 0.0, 'min_floor' => 0.0];
 	$other = 0.0;   // charges routed to the payout facility (no APR interest)
 
-	$plannedTotal = cf_planned_total($accounts) ?: 1.0;
+	// Scale denominator must match the base actually being paid, or a debt_target
+	// would scale against a total the forecast never uses.
+	$plannedTotal = ($debtBudget !== null) ? ($debtBudget ?: 1.0) : (cf_planned_total($accounts) ?: 1.0);
 	$scale = ($target === null) ? 1.0 : ((float)$target / $plannedTotal);
 
 	// Available credit = card room (netted) + per-LOC-facility room, each floored at 0 — the same
@@ -491,15 +507,21 @@ function cf_compute($accounts, $records, $opts) {
 		$income = cf_income_month($records, $i, $growth, $taxPct, $hs);
 		$incGross = $income['gross'];        // what actually hits the bank — customers pay tax to us
 		$reserve  = $income['collected'];    // the tax portion of it: held, not ours, owed to the state
-		// Operating and Purchases report the CASH half only, so the Cash out block
-		// foots: Operating + Purchases + Shopify payback + Debt paydown == Total
-		// cash out. Card- and LOC-funded spend is not cash out this month — it
-		// raises the facility balance instead, and shows up under Position as a
-		// higher Credit used, more interest, and less available credit. Summing
-		// every record here (as cf_sum_row does) made the block overstate cash out
-		// by whatever went on credit — $12,970 in Aug 2026 — with no row to
-		// explain the difference.
-		$op = 0.0; $pur = 0.0;
+		// Operating and Purchases report the FULL planned spend — every record that
+		// posts this month, however it is paid — because that is the plan you
+		// entered and it must stay visible. Reporting only the cash half made
+		// card-funded spend vanish from the row entirely: Sep/Oct/Nov 2026 showed
+		// Purchases 0 against $7,000 / $10,300 / $12,800 of planned digital
+		// marketing.
+		//
+		// The block still foots, via $onCredit: the credit-funded portion is
+		// subtracted on its own line, because it is spend but not CASH out this
+		// month. It raises the facility balance instead, and surfaces under
+		// Position as higher Credit used, more interest, and less available credit.
+		//
+		//     Operating + Purchases − Charged to credit
+		//       + Shopify payback + Debt paydown  ==  Total cash out
+		$op = 0.0; $pur = 0.0; $onCredit = 0.0;
 
 		// route each expense: cash hits the bank; card/LOC raises that facility's balance
 		$expCash = 0.0;
@@ -518,9 +540,9 @@ function cf_compute($accounts, $records, $opts) {
 				// shows up on the ending-cash line instead of disappearing.
 				$isCash = ($pay === 'cash');
 				if ($isCash) $expCash += $a;
-				elseif (isset($fac[$pay])) $fac[$pay]['chg'] += $a;
+				elseif (isset($fac[$pay])) { $fac[$pay]['chg'] += $a; $onCredit += $a; }
 				else { $expCash += $a; $isCash = true; cf_log_unroutable($r, $pay); }
-				if ($isCash) { if ($k === 'operating') $op += $a; else $pur += $a; }
+				if ($k === 'operating') $op += $a; else $pur += $a;
 			}
 		}
 
@@ -542,11 +564,49 @@ function cf_compute($accounts, $records, $opts) {
 		// standard average-daily-balance approximation without modelling posting
 		// dates we do not have. No grace-period carve-out: every facility here
 		// carries a balance, so new purchases accrue from the posting date anyway.
+		// ---- snowball allocation for THIS month -------------------------------
+		// Every facility pays its minimum; one target absorbs whatever the budget
+		// leaves over. Minimums are recomputed from this month's balances, and the
+		// target is re-picked each month, so when a facility clears, its minimum
+		// stops consuming budget and the surplus rolls onto the next target
+		// automatically. That cascade is the entire point: allocating once from
+		// month-0 balances and reusing it froze the plan and the card line only ever
+		// went up.
+		$planFor = [];
+		if ($debtBudget !== null) {
+			$mins = []; $minSum = 0.0;
+			foreach ($fac as $key => $f) {
+				$owed = max(0.0, (float)$f['bal'] + (float)$f['chg']);
+				if ($owed <= 0) { $mins[$key] = 0.0; continue; }
+				$m = $f['is_card']
+					? max(round($owed * (float)$f['min_pct'] / 100.0), (float)$f['min_floor'])
+					: (float)$f['planned'];
+				$mins[$key] = min($owed, max(0.0, $m));   // never pay more than is owed
+				$minSum += $mins[$key];
+			}
+			// Target = the costliest facility still carrying a balance.
+			$tKey = null; $tApr = -1.0;
+			foreach ($fac as $key => $f) {
+				if (($mins[$key] ?? 0.0) <= 0 && max(0.0, (float)$f['bal'] + (float)$f['chg']) <= 0) continue;
+				if ((float)$f['apr'] > $tApr) { $tApr = (float)$f['apr']; $tKey = $key; }
+			}
+			foreach ($fac as $key => $f) {
+				$owed = max(0.0, (float)$f['bal'] + (float)$f['chg']);
+				$pay  = $mins[$key] ?? 0.0;
+				if ($key === $tKey) {
+					// surplus = budget less everyone else's minimums
+					$pay = max($pay, $debtBudget - ($minSum - $pay));
+				}
+				$planFor[$key] = min($owed, max(0.0, $pay));
+			}
+		}
+
 		$interest = 0.0; $dpApplied = 0.0;
 		foreach ($fac as $key => $f) {
 			$open = (float)$f['bal'];
 			$chg  = (float)$f['chg'];
-			$pay  = max(0.0, min($open + $chg, round($f['planned'] * $scale)));
+			$base = ($debtBudget !== null) ? ($planFor[$key] ?? 0.0) : (float)$f['planned'];
+			$pay  = max(0.0, min($open + $chg, round($base * $scale)));
 			$avg  = max(0.0, $open + ($chg - $pay) / 2.0);
 			$intr = round($avg * $f['apr'] / 12.0);
 			$interest += $intr;
@@ -587,7 +647,7 @@ function cf_compute($accounts, $records, $opts) {
 			'inc' => $incGross, 'inc_gross' => $incGross, 'inc_net' => $incGross - $reserve,
 			'tax_collected' => $reserve,
 			'online' => $income['online'], 'shows' => $income['shows'], 'wholesale' => $income['wholesale'],
-			'op' => $op, 'pur' => $pur, 'shopPay' => $shopPay, 'dp' => $dpApplied,
+			'op' => $op, 'pur' => $pur, 'onCredit' => $onCredit, 'shopPay' => $shopPay, 'dp' => $dpApplied,
 			'interest' => $interest, 'cashOut' => $cashOut, 'net' => $net,
 			'endCash' => $cash, 'endCredit' => $credit, 'endLoc' => $locBal, 'endCard' => $cardBalM,
 			'availLoc' => $availL, 'availCard' => $availC, 'avail' => $avail, 'liquid' => $cash + $avail,
