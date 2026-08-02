@@ -401,15 +401,19 @@ $statsHtml = '';
 
 			<div class="t-panel"><div class="t-panel-body">
 				<div class="t-panel-head"><h6 class="t-panel-title">Credit cards <span class="t-chip ghost" title="Unused card limit is purchasing power — it cannot be drawn as cash into the bank.">purchasing power</span><?php echo cf_asof_html($live['cards']); ?></h6><button class="t-btn sm cf-acct-add" data-group="cards">+ Add</button></div>
-				<div style="overflow-x:auto"><table class="t-table" style="min-width:560px"><thead><tr><th>Card</th><th style="text-align:right">Balance</th><th style="text-align:right">Limit</th><th style="text-align:right">Avail</th><th style="text-align:right">APR</th><th></th></tr></thead><tbody>
+				<div style="overflow-x:auto"><table class="t-table" style="min-width:560px"><thead><tr><th>Card</th><th style="text-align:right">Balance</th><th style="text-align:right">Limit</th><th style="text-align:right">Avail</th><th style="text-align:right">APR</th><th style="text-align:right" title="Minimum payment as a % of the balance. Blank on a card means it inherits the global default.">Min %</th><th></th></tr></thead><tbody>
 				<?php foreach ($live['cards'] as $c) { $avail = ($c['limit'] ?? 0) - $c['balance']; ?>
 					<tr><td><?php echo htmlspecialchars($c['label']); ?><?php if (!empty($c['qb_id'])) echo ' <span class="t-chip accent" title="Balance auto-synced from QuickBooks nightly">Auto</span>'; ?></td><td class="num" style="text-align:right"><?php echo cf_money($c['balance']); ?></td>
 					<td class="num" style="text-align:right"><?php echo $c['limit'] !== null ? cf_money($c['limit']) : cf_dash(); ?></td>
 					<td class="num" style="text-align:right;color:var(--good)"><?php echo cf_money($avail); ?></td>
 					<td class="num" style="text-align:right"><?php echo $c['apr'] !== null ? rtrim(rtrim(number_format((float)$c['apr'], 2), '0'), '.') . '%' : cf_dash(); ?></td>
+					<?php // Own value shown plainly; an inherited one is dimmed so the two are distinguishable at a glance. ?>
+					<td class="num" style="text-align:right<?php echo $c['min_pct_own'] === null ? ';color:var(--tx-lo)' : ''; ?>"
+						title="<?php echo $c['min_pct_own'] === null ? 'Inherited from the global default' : 'Set on this card'; ?>"><?php
+						echo rtrim(rtrim(number_format((float)$c['min_pct'], 2), '0'), '.') . '%'; ?></td>
 					<td style="text-align:right"><button class="t-btn sm icon cf-acct-edit" data-group="cards" data-id="<?php echo $c['id']; ?>"><?php echo titan_icon('pen', 13); ?></button></td></tr>
 				<?php } ?>
-				</tbody><tfoot><tr><td class="lbl">Total</td><td class="num" style="text-align:right"><?php echo cf_money($cardBal); ?></td><td class="num" style="text-align:right"><?php echo cf_money($cardLim); ?></td><td class="num" style="text-align:right;color:var(--good)"><?php echo cf_money($cardAvail); ?></td><td></td><td></td></tr></tfoot></table></div>
+				</tbody><tfoot><tr><td class="lbl">Total</td><td class="num" style="text-align:right"><?php echo cf_money($cardBal); ?></td><td class="num" style="text-align:right"><?php echo cf_money($cardLim); ?></td><td class="num" style="text-align:right;color:var(--good)"><?php echo cf_money($cardAvail); ?></td><td></td><td></td><td></td></tr></tfoot></table></div>
 			</div></div>
 
 			<div class="t-panel"><div class="t-panel-body">
