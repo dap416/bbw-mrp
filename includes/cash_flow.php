@@ -427,7 +427,7 @@ function cf_suggest_map($accounts, $availDebt) {
 /**
  * The 12-month per-facility snapshot projection. Faithful port of the
  * prototype's computeWith(), with Model-B tax and Shopify payback on GROSS.
- * $opts: horizon_start, growth, buffer, tax_pct, shop_pct, tax_setaside[12], debt_target.
+ * $opts: horizon_start, growth, buffer, tax_pct, shop_pct, debt_target.
  * Returns 12 row arrays.
  */
 function cf_compute($accounts, $records, $opts) {
@@ -436,7 +436,6 @@ function cf_compute($accounts, $records, $opts) {
 	$buffer  = (float)($opts['buffer'] ?? 0);
 	$taxPct  = (float)($opts['tax_pct'] ?? 0);
 	$shopPct = (float)($opts['shop_pct'] ?? 25) / 100.0;
-	$setAside= $opts['tax_setaside'] ?? array_fill(0, 12, 0.0);
 	$target  = $opts['debt_target'] ?? null;   // null => use planned total (scale 1)
 
 	$cash = (float)$accounts['start_cash'];
@@ -469,11 +468,10 @@ function cf_compute($accounts, $records, $opts) {
 	$rows = [];
 	for ($i = 0; $i < 12; $i++) {
 		$income = cf_income_month($records, $i, $growth, $taxPct, $hs);
-		$incNet   = $income['net'];
-		$incGross = $income['gross'];
+		$incGross = $income['gross'];        // what actually hits the bank — customers pay tax to us
+		$reserve  = $income['collected'];    // the tax portion of it: held, not ours, owed to the state
 		$op  = cf_sum_row($records, 'operating', $i, $hs);
 		$pur = cf_sum_row($records, 'purchase', $i, $hs);
-		$tax = (float)($setAside[$i] ?? 0);
 
 		// route each expense: cash hits the bank; card/LOC raises that facility's balance
 		$expCash = 0.0;
@@ -501,10 +499,16 @@ function cf_compute($accounts, $records, $opts) {
 			$dpApplied += $pay;
 		}
 
+		// Sales tax is money we hold, not money we earn. Income comes in GROSS (the
+		// customer really does hand us the tax), so the reserve is taken back out
+		// explicitly on its way to ending cash rather than being quietly netted off
+		// the income line. Ending cash is unchanged by this — gross minus the
+		// reserve is the old net — but the mechanism is now visible instead of
+		// buried in cf_income_month().
 		$startCashM = $cash;
-		$cashOut = $expCash + $tax + $shopPay + $dpApplied;
-		$net = $incNet - $cashOut;
-		$cash = $startCashM + $net;
+		$cashOut = $expCash + $shopPay + $dpApplied;
+		$net  = $incGross - $cashOut;          // cash moving through the bank this month
+		$cash = $startCashM + $net - $reserve; // what's actually ours at month end
 		$shop = max(0.0, $shop - $shopPay);
 
 		$credit = $other + $shop;
@@ -524,9 +528,10 @@ function cf_compute($accounts, $records, $opts) {
 
 		$rows[] = [
 			'i' => $i, 'ym' => cf_add_months($hs, $i),
-			'inc' => $incNet, 'inc_gross' => $incGross, 'tax_collected' => $income['collected'],
+			'inc' => $incGross, 'inc_gross' => $incGross, 'inc_net' => $incGross - $reserve,
+			'tax_collected' => $reserve,
 			'online' => $income['online'], 'shows' => $income['shows'], 'wholesale' => $income['wholesale'],
-			'op' => $op, 'pur' => $pur, 'tax' => $tax, 'shopPay' => $shopPay, 'dp' => $dpApplied,
+			'op' => $op, 'pur' => $pur, 'shopPay' => $shopPay, 'dp' => $dpApplied,
 			'interest' => $interest, 'cashOut' => $cashOut, 'net' => $net,
 			'endCash' => $cash, 'endCredit' => $credit, 'endLoc' => $locBal, 'endCard' => $cardBalM,
 			'availLoc' => $availL, 'availCard' => $availC, 'avail' => $avail, 'liquid' => $cash + $avail,
