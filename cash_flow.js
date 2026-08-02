@@ -228,7 +228,7 @@
 	/* ============ ACCOUNTS MODAL ============ */
 	const ACCT_FIELDS = {
 		banks: [['label','Account name','text'],['balance','Balance','money'],['as_of','As of','text']],
-		cards: [['label','Card','text'],['balance','Balance','money'],['limit','Credit limit','money'],['apr','APR','pct'],['as_of','As of','text']],
+		cards: [['label','Card','text'],['balance','Balance','money'],['limit','Credit limit','money'],['apr','APR','pct'],['min_pct_own','Min payment %','pct'],['as_of','As of','text']],
 		locs:  [['label','Loan / label','text'],['facility','Line of credit (shared across its loans)','text'],['drawn','Drawn','money'],['ceiling','Ceiling of the line (shared)','money'],['apr','APR','pct'],['payment','Monthly payment','money'],['due_day','Due day','text'],['as_of','As of','text']],
 	};
 	function acctRecord(group, id){ const arr = CF.accounts[group] || []; return arr.find(a => a.id === id) || null; }
@@ -276,7 +276,8 @@
 			loc_name: v.facility != null ? v.facility : '',
 			balance: (v.balance != null ? v.balance : (v.drawn || '')),
 			credit_limit: (v.limit != null ? v.limit : (v.ceiling || '')),
-			apr: v.apr || '', monthly_payment: v.payment || '', due_day: v.due_day || '', as_of: v.as_of || '',
+			apr: v.apr || '', min_pct: v.min_pct_own != null ? v.min_pct_own : '',
+			monthly_payment: v.payment || '', due_day: v.due_day || '', as_of: v.as_of || '',
 			qb_account_id: v.qb_account_id || '',
 		};
 		const $b = $(this).prop('disabled', true);
