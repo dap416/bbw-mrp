@@ -256,6 +256,11 @@ function cf_live_accounts($db) {
 		'loc_available'  => $locRoom,
 		'card_available' => $cardRoom,
 		'credit_available' => $cardRoom + $locRoom,
+		// The same split applied to what's OWED. Revolving card balances and
+		// amortizing LOC/loan draws get paid down differently, so the two are worth
+		// reading apart; together they are exactly 'credit_used'.
+		'card_debt' => $room['card_used'],
+		'loan_debt' => $room['loc_drawn'],
 		'source' => 'live',
 	];
 }
