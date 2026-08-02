@@ -72,12 +72,123 @@ function ensure_qb_expenses_tables($db) {
 		description  TEXT NULL,
 		account_id   VARCHAR(32) NULL,   -- the expense CATEGORY
 		account_name VARCHAR(160) NULL,
+		account_type VARCHAR(60) NULL,   -- QBO AccountType of the category account
+		account_subtype VARCHAR(60) NULL,
+		is_expense   TINYINT NOT NULL DEFAULT 0,  -- 1 = real P&L spend; see qb_line_is_expense()
 		item_id      VARCHAR(32) NULL,
 		item_name    VARCHAR(160) NULL,
 		CONSTRAINT fk_qbexp FOREIGN KEY (expense_id) REFERENCES qb_expenses(id) ON DELETE CASCADE,
 		KEY idx_expense (expense_id),
-		KEY idx_account (account_name)
+		KEY idx_account (account_name),
+		KEY idx_is_expense (is_expense)
 	) ENGINE=InnoDB");
+
+	// Added after the first release — bring existing tables up to date.
+	foreach ([
+		"ALTER TABLE qb_expense_lines ADD COLUMN account_type VARCHAR(60) NULL AFTER account_name",
+		"ALTER TABLE qb_expense_lines ADD COLUMN account_subtype VARCHAR(60) NULL AFTER account_type",
+		"ALTER TABLE qb_expense_lines ADD COLUMN is_expense TINYINT NOT NULL DEFAULT 0 AFTER account_subtype",
+		"ALTER TABLE qb_expense_lines ADD KEY idx_is_expense (is_expense)",
+	] as $sql) {
+		try { $db->exec($sql); } catch (Throwable $e) { /* already there */ }
+	}
+
+	ensure_qb_accounts_ref_table($db);
+}
+
+/* ---- chart of accounts (local mirror) ---------------------------------- */
+
+/**
+ * Local copy of the QBO chart of accounts. We need each account's TYPE to tell
+ * real spend apart from money movement, and the line rows only carry the name.
+ *
+ * Deliberately our own table rather than the `data_cache` 'qb_accounts' blob:
+ * that one is written by a query with no MAXRESULTS, so QBO's default page size
+ * silently truncates it at 100 of the 192 accounts.
+ */
+function ensure_qb_accounts_ref_table($db) {
+	$db->exec("CREATE TABLE IF NOT EXISTS qb_accounts_ref (
+		realm_id     VARCHAR(32)  NOT NULL,
+		qb_id        VARCHAR(32)  NOT NULL,
+		name         VARCHAR(200) NULL,
+		fq_name      VARCHAR(300) NULL,   -- FullyQualifiedName, e.g. 'Interest paid:Loan interest'
+		acct_type    VARCHAR(60)  NULL,   -- Expense | Credit Card | Other Current Liability | ...
+		acct_subtype VARCHAR(60)  NULL,
+		active       TINYINT NOT NULL DEFAULT 1,
+		synced_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (realm_id, qb_id),
+		KEY idx_type (acct_type)
+	) ENGINE=InnoDB");
+}
+
+/**
+ * The only account types that are real profit-and-loss spend.
+ *
+ * Everything else a Purchase can point at is money movement, not cost:
+ *   Credit Card / Other Current Liability / Long Term Liability -> paying down a
+ *     balance. The original charges are already in this table as their own rows,
+ *     so counting these too would double-count the same spend.
+ *   Bank -> a transfer between our own accounts.
+ *   Accounts Payable -> settling a bill that was already recorded.
+ *   Equity -> an owner draw. Fixed/Other Asset -> buying an asset.
+ *
+ * Loan and card INTEREST is unaffected: QuickBooks books it to its own
+ * 'Interest paid:*' account (type Expense) on a separate line of the same
+ * payment, so it is flagged is_expense = 1 while the principal line beside it
+ * is flagged 0. That is why this flag lives on the line and not the header.
+ */
+function qb_expense_account_types() {
+	return ['Expense', 'Cost of Goods Sold', 'Other Expense'];
+}
+
+function qb_line_is_expense($acctType) {
+	return in_array((string)$acctType, qb_expense_account_types(), true) ? 1 : 0;
+}
+
+/**
+ * Re-pull the full chart of accounts (paged — the list exceeds one page).
+ *
+ * Runs TWICE: a bare Account query returns only active accounts, but historical
+ * lines still reference deactivated ones ('Inventory (deleted)', 'Shopify Loan
+ * (deleted)', …). Those are all liability/asset accounts, so missing them would
+ * leave real non-expenses unclassified and counted as spend.
+ */
+function qb_refresh_accounts_ref($db, $realmId) {
+	ensure_qb_accounts_ref_table($db);
+	$all = [];
+	foreach (['', "WHERE Active = false"] as $filter) {
+		$pos = 1;
+		do {
+			$r = qb_query(trim("SELECT * FROM Account $filter") . " STARTPOSITION $pos MAXRESULTS " . QB_EXPENSES_PAGE);
+			if (!empty($r['error'])) return ['error' => $r['error'], 'count' => 0];
+			$batch = $r['Account'] ?? [];
+			$all   = array_merge($all, $batch);
+			$pos  += QB_EXPENSES_PAGE;
+		} while (count($batch) === QB_EXPENSES_PAGE);
+	}
+
+	$ins = $db->prepare("INSERT INTO qb_accounts_ref
+			(realm_id, qb_id, name, fq_name, acct_type, acct_subtype, active, synced_at)
+		VALUES (?,?,?,?,?,?,?,NOW())
+		ON DUPLICATE KEY UPDATE name=VALUES(name), fq_name=VALUES(fq_name), acct_type=VALUES(acct_type),
+			acct_subtype=VALUES(acct_subtype), active=VALUES(active), synced_at=NOW()");
+	foreach ($all as $a) {
+		$id = (string)($a['Id'] ?? '');
+		if ($id === '') continue;
+		$ins->execute([$realmId, $id, $a['Name'] ?? null, $a['FullyQualifiedName'] ?? null,
+		               $a['AccountType'] ?? null, $a['AccountSubType'] ?? null, !empty($a['Active']) ? 1 : 0]);
+	}
+	return ['error' => null, 'count' => count($all)];
+}
+
+/** account id => ['type'=>..., 'subtype'=>...] for the connected realm. */
+function qb_accounts_ref_map($db, $realmId) {
+	ensure_qb_accounts_ref_table($db);
+	$m = [];
+	$s = $db->prepare("SELECT qb_id, acct_type, acct_subtype FROM qb_accounts_ref WHERE realm_id = ?");
+	$s->execute([$realmId]);
+	foreach ($s as $r) $m[$r['qb_id']] = ['type' => $r['acct_type'], 'subtype' => $r['acct_subtype']];
+	return $m;
 }
 
 /* ---- helpers ----------------------------------------------------------- */
@@ -111,7 +222,7 @@ function qb_expense_date($v) {
  * Lines are deleted and re-inserted rather than matched, because QBO renumbers
  * them on edit. Returns 'insert' or 'update'.
  */
-function qb_expense_upsert($db, array $row, $realmId) {
+function qb_expense_upsert($db, array $row, $realmId, array $acctMap = []) {
 	$qbId = (string)($row['Id'] ?? '');
 	if ($qbId === '') return null;
 
@@ -176,21 +287,32 @@ function qb_expense_upsert($db, array $row, $realmId) {
 
 		$db->prepare("DELETE FROM qb_expense_lines WHERE expense_id = ?")->execute([$expenseId]);
 		$insL = $db->prepare("INSERT INTO qb_expense_lines
-			(expense_id, line_num, detail_type, amount, description, account_id, account_name, item_id, item_name)
-			VALUES (?,?,?,?,?,?,?,?,?)");
+			(expense_id, line_num, detail_type, amount, description, account_id, account_name,
+			 account_type, account_subtype, is_expense, item_id, item_name)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?)");
 
 		foreach (($row['Line'] ?? []) as $i => $line) {
 			$type = (string)($line['DetailType'] ?? '');
 			$acct = $line[$type]['AccountRef'] ?? null;          // AccountBasedExpenseLineDetail -> the CATEGORY
 			$item = $line[$type]['ItemRef']    ?? null;          // ItemBasedExpenseLineDetail
+
+			// Classify the category account: real spend vs money movement.
+			$acctId  = $acct['value'] ?? null;
+			$ref     = ($acctId !== null && isset($acctMap[$acctId])) ? $acctMap[$acctId] : null;
+			$acctTy  = $ref['type']    ?? null;
+			$acctSub = $ref['subtype'] ?? null;
+
 			$insL->execute([
 				$expenseId,
 				isset($line['LineNum']) ? (int)$line['LineNum'] : $i + 1,
 				$type !== '' ? $type : null,
 				round((float)($line['Amount'] ?? 0), 2),
 				($line['Description'] ?? '') !== '' ? (string)$line['Description'] : null,
-				$acct['value'] ?? null,
+				$acctId,
 				$acct['name']  ?? null,
+				$acctTy,
+				$acctSub,
+				qb_line_is_expense($acctTy),
 				$item['value'] ?? null,
 				$item['name']  ?? null,
 			]);
@@ -216,7 +338,7 @@ function qb_expense_upsert($db, array $row, $realmId) {
 function qb_expenses_sync($db, $windowDays = QB_EXPENSES_WINDOW_DAYS) {
 	$t0  = microtime(true);
 	$out = ['error' => null, 'window' => 'all history', 'fetched' => 0, 'inserted' => 0,
-	        'updated' => 0, 'deleted' => 0, 'lines' => 0, 'secs' => 0.0];
+	        'updated' => 0, 'deleted' => 0, 'lines' => 0, 'accounts' => 0, 'secs' => 0.0];
 
 	if (!qb_is_connected()) {
 		$out['error'] = 'QuickBooks is not connected.';
@@ -231,6 +353,18 @@ function qb_expenses_sync($db, $windowDays = QB_EXPENSES_WINDOW_DAYS) {
 		$out['secs']  = round(microtime(true) - $t0, 1);
 		return $out;
 	}
+
+	// Refresh the chart of accounts first — the line classifier needs account
+	// types, and a category added in QuickBooks since the last run would
+	// otherwise import unclassified (is_expense = 0) and understate spend.
+	$acc = qb_refresh_accounts_ref($db, $realmId);
+	if (!empty($acc['error'])) {
+		$out['error'] = 'Account list fetch failed: ' . $acc['error'];
+		$out['secs']  = round(microtime(true) - $t0, 1);
+		return $out;                                     // no map = no classification; don't import blind
+	}
+	$out['accounts'] = $acc['count'];
+	$acctMap = qb_accounts_ref_map($db, $realmId);
 
 	// Pick the window. No flag, no stored state — the table's emptiness is the flag.
 	$isEmpty = (int)$db->query("SELECT COUNT(*) FROM qb_expenses")->fetchColumn() === 0;
@@ -254,7 +388,7 @@ function qb_expenses_sync($db, $windowDays = QB_EXPENSES_WINDOW_DAYS) {
 		$rows = $r['Purchase'] ?? [];
 		foreach ($rows as $row) {
 			try {
-				$action = qb_expense_upsert($db, $row, $realmId);
+				$action = qb_expense_upsert($db, $row, $realmId, $acctMap);
 				if ($action === 'insert') $out['inserted']++;
 				elseif ($action === 'update') $out['updated']++;
 				$out['lines'] += count($row['Line'] ?? []);
