@@ -463,8 +463,10 @@ function cf_compute($accounts, $records, $opts) {
 
 	// per-facility state: cards + non-payout LOCs each track bal/apr/planned
 	$fac = [];
-	foreach ($accounts['cards'] as $c) $fac[$c['label']] = ['bal' => (float)$c['balance'], 'apr' => ($c['apr'] !== null ? (float)$c['apr'] : 0) / 100.0, 'planned' => (float)($c['planned'] ?? 0)];
-	foreach ($accounts['locs'] as $l) if (empty($l['payout'])) $fac[$l['label']] = ['bal' => (float)$l['drawn'], 'apr' => ($l['apr'] !== null ? (float)$l['apr'] : 0) / 100.0, 'planned' => (float)($l['planned'] ?? 0)];
+	// 'chg' collects this month's charges separately from 'bal' so interest can be
+	// taken on the average balance rather than on a balance that already absorbed them.
+	foreach ($accounts['cards'] as $c) $fac[$c['label']] = ['bal' => (float)$c['balance'], 'apr' => ($c['apr'] !== null ? (float)$c['apr'] : 0) / 100.0, 'planned' => (float)($c['planned'] ?? 0), 'chg' => 0.0];
+	foreach ($accounts['locs'] as $l) if (empty($l['payout'])) $fac[$l['label']] = ['bal' => (float)$l['drawn'], 'apr' => ($l['apr'] !== null ? (float)$l['apr'] : 0) / 100.0, 'planned' => (float)($l['planned'] ?? 0), 'chg' => 0.0];
 	$other = 0.0;   // charges routed to the payout facility (no APR interest)
 
 	$plannedTotal = cf_planned_total($accounts) ?: 1.0;
@@ -516,7 +518,7 @@ function cf_compute($accounts, $records, $opts) {
 				// shows up on the ending-cash line instead of disappearing.
 				$isCash = ($pay === 'cash');
 				if ($isCash) $expCash += $a;
-				elseif (isset($fac[$pay])) $fac[$pay]['bal'] += $a;
+				elseif (isset($fac[$pay])) $fac[$pay]['chg'] += $a;
 				else { $expCash += $a; $isCash = true; cf_log_unroutable($r, $pay); }
 				if ($isCash) { if ($k === 'operating') $op += $a; else $pur += $a; }
 			}
@@ -524,14 +526,32 @@ function cf_compute($accounts, $records, $opts) {
 
 		$shopPay = min(round($incGross * $shopPct), $shop);
 
-		// interest accrues per facility onto its balance (NOT a cash-out); planned pays it down
+		// Interest accrues per facility onto its balance (NOT a cash-out); the planned
+		// payment pays it down. Order matters and used to be wrong:
+		//
+		//   was:  charges -> interest on (opening + ALL charges) -> payment
+		//   now:  charges -> payment -> interest on the AVERAGE balance
+		//
+		// The old order charged a full month of interest on money that had already
+		// been repaid, and gave every charge a full month regardless of when in the
+		// month it landed. Both push the same way, and the model ran ~76% above the
+		// business's actual interest.
+		//
+		// Charges and the payment are treated as landing mid-month, so the balance
+		// carried for the month averages opening + (charges - payment)/2. That is the
+		// standard average-daily-balance approximation without modelling posting
+		// dates we do not have. No grace-period carve-out: every facility here
+		// carries a balance, so new purchases accrue from the posting date anyway.
 		$interest = 0.0; $dpApplied = 0.0;
 		foreach ($fac as $key => $f) {
-			$intr = round($f['bal'] * $f['apr'] / 12.0);
+			$open = (float)$f['bal'];
+			$chg  = (float)$f['chg'];
+			$pay  = max(0.0, min($open + $chg, round($f['planned'] * $scale)));
+			$avg  = max(0.0, $open + ($chg - $pay) / 2.0);
+			$intr = round($avg * $f['apr'] / 12.0);
 			$interest += $intr;
-			$fac[$key]['bal'] += $intr;
-			$pay = max(0.0, min($fac[$key]['bal'], round($f['planned'] * $scale)));
-			$fac[$key]['bal'] -= $pay;
+			$fac[$key]['bal'] = $open + $chg - $pay + $intr;
+			$fac[$key]['chg'] = 0.0;
 			$dpApplied += $pay;
 		}
 
