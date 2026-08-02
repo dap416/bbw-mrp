@@ -40,6 +40,36 @@ const SHOP_ORDERS_PAGE = 50;
 /** Runaway guard only — a real backfill is a few hundred pages. */
 const SHOP_ORDERS_MAX_PAGES = 2000;
 
+/** Net above which a draft order is wholesale rather than a phone order. */
+const SHOP_WHOLESALE_MIN = 1000;
+
+/* ---- classification ---------------------------------------------------- */
+
+/**
+ * Which kind of order this is, from its channel and its CURRENT net.
+ *
+ *   not a draft order -> retail      (web, pos, and app-ID channels alike)
+ *   net <= 0          -> warranty    (a no-charge replacement; refunds can take it negative)
+ *   net <= 1000       -> phone       ($1,000.00 exactly is a phone order)
+ *   net >  1000       -> wholesale
+ *
+ * Value-banding, not a true wholesale flag — there is no tag or B2B lookup here.
+ *
+ * Pure and side-effect free so a backfill can call it without running the
+ * importer. Every input returns a value; there is no null or empty case.
+ */
+function shop_order_type($channel, $net) {
+	if ((string)$channel !== 'shopify_draft_order') return 'retail';
+
+	// Compare in whole cents. net is DECIMAL(14,2), and binary floating point is
+	// exactly how $1,000.00 ends up a hair over the threshold and misfiles itself
+	// as wholesale when the rule says phone.
+	$cents = (int)round((float)$net * 100);
+	if ($cents <= 0)                        return 'warranty';
+	if ($cents <= SHOP_WHOLESALE_MIN * 100) return 'phone';
+	return 'wholesale';
+}
+
 /* ---- schema ------------------------------------------------------------ */
 
 function ensure_shop_orders_tables($db) {
@@ -54,6 +84,7 @@ function ensure_shop_orders_tables($db) {
 		customer_name     VARCHAR(200) NULL,
 		email             VARCHAR(200) NULL,
 		channel           VARCHAR(80)  NULL,       -- raw sourceName, unmapped
+		order_type        VARCHAR(20) NOT NULL DEFAULT '',  -- retail | warranty | phone | wholesale
 		location_id       VARCHAR(40)  NULL,
 		location_name     VARCHAR(160) NULL,
 		financial_status  VARCHAR(30)  NULL,       -- paid | pending | refunded | partially_refunded
@@ -74,8 +105,17 @@ function ensure_shop_orders_tables($db) {
 		UNIQUE KEY uq_order (shop_order_id),
 		KEY idx_created (created_at),
 		KEY idx_customer (customer_name),
-		KEY idx_channel (channel)
+		KEY idx_channel (channel),
+		KEY idx_order_type (order_type)
 	) ENGINE=InnoDB");
+
+	// Added after the first release — bring existing tables up to date.
+	foreach ([
+		"ALTER TABLE shop_orders ADD COLUMN order_type VARCHAR(20) NOT NULL DEFAULT '' AFTER channel",
+		"ALTER TABLE shop_orders ADD KEY idx_order_type (order_type)",
+	] as $sql) {
+		try { $db->exec($sql); } catch (Throwable $e) { /* already there */ }
+	}
 
 	$db->exec("CREATE TABLE IF NOT EXISTS shop_order_lines (
 		id             BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -192,6 +232,7 @@ function shop_order_upsert($db, array $n) {
 
 	$total    = shop_money($n['currentTotalPriceSet'] ?? []);
 	$refunded = shop_money($n['totalRefundedSet'] ?? []);
+	$net      = round($total - $refunded, 2);
 
 	$vals = [
 		'name'            => $n['name'] ?? null,
@@ -202,6 +243,10 @@ function shop_order_upsert($db, array $n) {
 		'customer_name'   => $n['customer']['displayName'] ?? null,
 		'email'           => ($n['email'] ?? '') !== '' ? (string)$n['email'] : null,
 		'channel'         => ($n['sourceName'] ?? '') !== '' ? (string)$n['sourceName'] : null,
+		// Recomputed here on EVERY upsert, never carried forward: net moves when a
+		// refund lands, and the band moves with it. A $600 phone order refunded in
+		// full becomes warranty; a $1,200 wholesale order refunded to $900 becomes phone.
+		'order_type'      => shop_order_type($n['sourceName'] ?? '', $net),
 		'location_id'     => shop_gid_num($n['retailLocation']['id'] ?? ''),
 		'location_name'   => $n['retailLocation']['name'] ?? null,
 		'financial_status'   => $n['displayFinancialStatus'] ?? null,
@@ -213,7 +258,7 @@ function shop_order_upsert($db, array $n) {
 		'tax'             => shop_money($n['totalTaxSet'] ?? []),
 		'total'           => $total,
 		'refunded'        => $refunded,
-		'net'             => round($total - $refunded, 2),
+		'net'             => $net,
 		'test'            => !empty($n['test']) ? 1 : 0,
 		'cancelled_at'    => shop_dt($n['cancelledAt'] ?? ''),
 		'raw_json'        => json_encode($n),
@@ -239,7 +284,7 @@ function shop_order_upsert($db, array $n) {
 			$rowId = (int)$existingId;
 			$db->prepare("UPDATE shop_orders SET
 					name=?, created_at=?, processed_at=?, updated_at_shop=?, customer_id=?, customer_name=?,
-					email=?, channel=?, location_id=?, location_name=?, financial_status=?, fulfillment_status=?,
+					email=?, channel=?, order_type=?, location_id=?, location_name=?, financial_status=?, fulfillment_status=?,
 					currency=?, subtotal=?, discounts=?, shipping=?, tax=?, total=?, refunded=?, net=?,
 					test=?, cancelled_at=?, raw_json=?, deleted_at=NULL, synced_at=NOW()
 				WHERE id = ?")
@@ -248,14 +293,15 @@ function shop_order_upsert($db, array $n) {
 		} else {
 			$db->prepare("INSERT INTO shop_orders
 					(shop_order_id, name, created_at, processed_at, updated_at_shop, customer_id, customer_name,
-					 email, channel, location_id, location_name, financial_status, fulfillment_status,
+					 email, channel, order_type, location_id, location_name, financial_status, fulfillment_status,
 					 currency, subtotal, discounts, shipping, tax, total, refunded, net,
 					 test, cancelled_at, raw_json, deleted_at, synced_at)
-				VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NOW())
+				VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NOW())
 				ON DUPLICATE KEY UPDATE
 					name=VALUES(name), created_at=VALUES(created_at), processed_at=VALUES(processed_at),
 					updated_at_shop=VALUES(updated_at_shop), customer_id=VALUES(customer_id),
 					customer_name=VALUES(customer_name), email=VALUES(email), channel=VALUES(channel),
+					order_type=VALUES(order_type),
 					location_id=VALUES(location_id), location_name=VALUES(location_name),
 					financial_status=VALUES(financial_status), fulfillment_status=VALUES(fulfillment_status),
 					currency=VALUES(currency), subtotal=VALUES(subtotal), discounts=VALUES(discounts),
