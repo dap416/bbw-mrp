@@ -50,7 +50,13 @@ $liquidNow   = $cashNow + $availNow;
 // pay-method options for the record modal
 $payOptions = [['v' => 'cash', 'label' => 'Cash']];
 foreach ($live['cards'] as $c) $payOptions[] = ['v' => $c['label'], 'label' => $c['label']];
-foreach ($live['locs']  as $l) $payOptions[] = ['v' => $l['label'], 'label' => $l['label'] . ' (LOC)'];
+// Payout facilities (Shopify Capital) are deliberately NOT offered: they are term
+// loans repaid from sales, not revolving lines you can charge against, so the
+// forecast has no facility to route such a charge onto.
+foreach ($live['locs']  as $l) {
+	if (!empty($l['payout'])) continue;
+	$payOptions[] = ['v' => $l['label'], 'label' => $l['label'] . ' (LOC)'];
+}
 
 $horizonLabel = cf_month_label($hs)['name'] . " " . cf_month_label($hs)['year'] . " \xE2\x80\x93 "
 	. cf_month_label(cf_add_months($hs, 11))['name'] . " " . cf_month_label(cf_add_months($hs, 11))['year'];
