@@ -43,6 +43,7 @@ $r = qb_expenses_sync($db);
 
 echo "[" . date('Y-m-d H:i:s') . "] QuickBooks expense sync ({$r['secs']}s)\n";
 echo "  window: {$r['window']}\n";
+echo "  accounts {$r['accounts']}\n";
 echo "  fetched {$r['fetched']}; inserted {$r['inserted']}; updated {$r['updated']}; "
    . "soft-deleted {$r['deleted']}; lines {$r['lines']}\n";
 if ($r['error']) {
