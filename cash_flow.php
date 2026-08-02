@@ -43,7 +43,9 @@ $cashNow     = $live['start_cash'];
 $locAvailNow = $live['loc_available'];
 $cardAvailNow= $live['card_available'];
 $availNow    = $live['credit_available'];   // LOC + card room, combined
-$debtNow     = $live['credit_used'];
+$cardDebtNow = $live['card_debt'];
+$loanDebtNow = $live['loan_debt'];
+$debtNow     = $live['credit_used'];        // card debt + loan debt, combined
 $liquidNow   = $cashNow + $availNow;
 
 // pay-method options for the record modal
@@ -231,7 +233,9 @@ $statsHtml = '';
 			<div class="cf-ro" title="Undrawn room on your lines of credit — this can be drawn as cash into the bank."><div class="cf-ro-lbl">LOC available</div><div class="cf-ro-val"><?php echo cf_money($locAvailNow); ?></div></div>
 			<div class="cf-ro" title="Unused credit-card limit. Purchasing power only — it cannot be drawn as cash."><div class="cf-ro-lbl">Card available</div><div class="cf-ro-val"><?php echo cf_money($cardAvailNow); ?></div></div>
 			<div class="cf-ro accent" title="Cash on hand + LOC available + card available."><div class="cf-ro-lbl">Liquid available</div><div class="cf-ro-val"><?php echo cf_money($liquidNow); ?></div></div>
-			<div class="cf-ro"><div class="cf-ro-lbl">Total debt</div><div class="cf-ro-val"><?php echo cf_money($debtNow); ?></div></div>
+			<div class="cf-ro" title="Balances owed on credit cards."><div class="cf-ro-lbl">Card debt</div><div class="cf-ro-val"><?php echo cf_money($cardDebtNow); ?></div></div>
+			<div class="cf-ro" title="Drawn balances on lines of credit and loans."><div class="cf-ro-lbl">LOC / loan debt</div><div class="cf-ro-val"><?php echo cf_money($loanDebtNow); ?></div></div>
+			<div class="cf-ro" title="Card debt + LOC / loan debt."><div class="cf-ro-lbl">Total debt</div><div class="cf-ro-val"><?php echo cf_money($debtNow); ?></div></div>
 		</div>
 	</div>
 
