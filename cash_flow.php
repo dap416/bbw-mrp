@@ -280,13 +280,15 @@ $statsHtml = '';
 						cf_group_row('Cash out', $cols);
 						cf_row($cols, $rows, ['label' => 'Operating', 'managed' => 'operating', 'get' => fn($r) => $r['op']]);
 						cf_row($cols, $rows, ['label' => 'Purchases', 'managed' => 'purchase', 'get' => fn($r) => $r['pur']]);
-						cf_row($cols, $rows, ['label' => 'Sales tax', 'get' => fn($r) => $r['tax_collected'], 'dashzero' => true, 'color' => fn($r, $v) => 'var(--tx-mid)']);
 						cf_row($cols, $rows, ['label' => 'Shopify payback', 'get' => fn($r) => $r['shopPay'], 'dashzero' => true, 'color' => fn($r, $v) => 'var(--tx-mid)']);
 						cf_row($cols, $rows, ['label' => 'Debt paydown', 'get' => fn($r) => $r['dp'], 'dashzero' => true, 'color' => fn($r, $v) => 'var(--tx-mid)']);
 						cf_row($cols, $rows, ['label' => 'Total cash out', 'get' => fn($r) => $r['cashOut'], 'weight' => 600, 'labelColor' => 'var(--tx-hi)', 'rowbg' => true, 'color' => fn($r, $v) => 'var(--tx-hi)']);
 						// Position
 						cf_group_row('Position', $cols);
 						cf_row($cols, $rows, ['label' => 'Net cash flow', 'get' => fn($r) => $r['net'], 'weight' => 600, 'color' => fn($r, $v) => $v < 0 ? 'var(--crit)' : 'var(--good)']);
+						// Held for the state, never ours to spend — taken out before ending cash
+						// so that figure is money we can actually use.
+						cf_row($cols, $rows, ['label' => 'Sales tax reserve', 'get' => fn($r) => $r['tax_collected'], 'dashzero' => true, 'color' => fn($r, $v) => 'var(--warn)']);
 						cf_row($cols, $rows, ['label' => 'Ending cash', 'get' => fn($r) => $r['endCash'], 'weight' => 700, 'color' => fn($r, $v) => $r['cashRisk'] ? 'var(--crit)' : 'var(--tx-hi)']);
 						// Debt and headroom are grouped by facility KIND rather than listed flat:
 						// card room is purchasing power, LOC room can be drawn as cash, and the
