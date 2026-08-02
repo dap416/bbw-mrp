@@ -24,7 +24,7 @@ $shopPct = shopify_loan_pct($db);
 $growth  = 0.0;   // no growth control in the design; kept at 0 (prior-year baseline)
 $availDebt = (float)(setting_get($db, 'cf_avail_debt') ?: 12000);
 
-$acc     = cf_opening_accounts($db, $hs);   // projection opening (snapshot if present, else live)
+$acc     = cf_opening_accounts($db, $hs);   // projection opening (live balances)
 $live    = cf_live_accounts($db);           // editable set for the Accounts view + readouts
 $records = cf_load_records($db);
 $opts    = ['horizon_start' => $hs, 'growth' => $growth, 'buffer' => $buffer, 'tax_pct' => $taxPct, 'shop_pct' => $shopPct];
@@ -33,7 +33,6 @@ $cols    = cf_month_cols($hs, 12);
 $debts   = cf_debts($live);
 $afford  = cf_afford_calc($live, $records, $opts);
 $suggest = cf_suggest_map($live, $availDebt);
-$snap    = cf_current_snapshot($db);
 $qbAccounts = cf_qb_account_options($db);   // for the "auto-sync this account" picker
 
 // "Now" readouts. LOC room and card room stay separate everywhere they're shown —
@@ -206,7 +205,7 @@ $statsHtml = '';
 	.cf-x:hover{ color:var(--tx-hi); }
 	.cf-planned-inp{ width:88px; background:var(--bg-inset); border:1px solid var(--line-2); border-radius:6px; color:var(--tx-hi); font-family:var(--font-num); font-size:12px; text-align:right; padding:3px 7px; }
 	.cf-actuals{ border:1px solid var(--warn-line); border-radius:12px; background:var(--warn-soft); margin-top:14px; }
-	.cf-pay-menu{ position:absolute; z-index:70; background:var(--bg-2); border:1px solid var(--line-2); border-radius:10px; box-shadow:var(--shadow-pop); padding:5px; min-width:180px; max-height:260px; overflow:auto; }
+	.cf-pay-menu{ position:fixed; z-index:70; background:var(--bg-2); border:1px solid var(--line-2); border-radius:10px; box-shadow:var(--shadow-pop); padding:5px; min-width:180px; max-height:260px; overflow:auto; }
 	.cf-pay-menu button{ display:flex; width:100%; align-items:center; justify-content:space-between; gap:8px; background:none; border:none; color:var(--tx-mid); font-family:var(--font-ui); font-size:12.5px; padding:7px 10px; border-radius:7px; cursor:pointer; text-align:left; }
 	.cf-pay-menu button:hover{ background:var(--bg-3); color:var(--tx-hi); }
 	.cf-note-inline{ font-size:11px; color:var(--tx-lo); margin-top:6px; }
@@ -240,14 +239,7 @@ $statsHtml = '';
 	</div>
 
 	<div class="cf-strip">
-		<span class="t-eyebrow"><?php
-			if ($snap) { $srcLbl = ($snap['source'] === 'cron') ? 'auto · month-end' : 'manual'; echo 'Opening balances · frozen ' . strtoupper(date('M j', strtotime($snap['captured_at']))) . ' · ' . $srcLbl; }
-			else echo 'Opening balances · live (not frozen yet)';
-		?></span>
-		<button class="t-btn sm" id="cfSnapBtn" data-frozen="<?php echo $snap ? '1' : '0'; ?>"><?php echo titan_icon('upload', 13); ?><span>Take starting snapshot</span></button>
-		<?php if ($snap): ?>
-		<span class="t-chip warn" title="This month's opening is already locked in and is re-captured automatically at month-end. Re-taking now replaces your <?php echo cf_month_label($hs)['name']; ?> baseline — rarely needed."><?php echo cf_month_label($hs)['name']; ?> already snapshotted · re-take replaces the baseline</span>
-		<?php endif; ?>
+		<span class="t-eyebrow">Opening balances · live</span>
 	</div>
 
 	<!-- ============ VIEW: CASH FLOW ============ -->
@@ -280,29 +272,31 @@ $statsHtml = '';
 						<tbody>
 						<?php
 						// 1 — Sales income (managed, expandable)
-						cf_row($cols, $rows, ['label' => 'Sales income', 'sub' => 'QBO CASH-BASIS · NET OF TAX', 'managed' => 'income', 'get' => fn($r) => $r['inc'], 'weight' => 700, 'labelColor' => 'var(--tx-hi)', 'caret' => "\xE2\x96\xB8"]);
+						cf_row($cols, $rows, ['label' => 'Sales income', 'managed' => 'income', 'get' => fn($r) => $r['inc'], 'weight' => 700, 'labelColor' => 'var(--tx-hi)', 'caret' => "\xE2\x96\xB8"]);
 						cf_row($cols, $rows, ['label' => 'Online', 'child' => true, 'indent' => 16, 'managed' => 'income', 'chan' => 'Online', 'get' => fn($r) => $r['online'], 'dashzero' => true]);
 						cf_row($cols, $rows, ['label' => 'Shows', 'child' => true, 'indent' => 16, 'managed' => 'income', 'chan' => 'Shows', 'get' => fn($r) => $r['shows'], 'dashzero' => true]);
 						cf_row($cols, $rows, ['label' => 'Wholesale', 'child' => true, 'indent' => 16, 'managed' => 'income', 'chan' => 'Wholesale', 'get' => fn($r) => $r['wholesale'], 'dashzero' => true]);
 						// Cash out
 						cf_group_row('Cash out', $cols);
-						cf_row($cols, $rows, ['label' => 'Operating', 'sub' => 'MONTHLIES + MISC', 'managed' => 'operating', 'get' => fn($r) => $r['op']]);
-						cf_row($cols, $rows, ['label' => 'Purchases', 'sub' => 'PO + FP · BY CARD / CASH', 'managed' => 'purchase', 'get' => fn($r) => $r['pur']]);
-						cf_row($cols, $rows, ['label' => 'Sales tax', 'sub' => 'MANUAL SET-ASIDE', 'get' => fn($r) => $r['tax'], 'dashzero' => true, 'color' => fn($r, $v) => 'var(--tx-mid)']);
-						cf_row($cols, $rows, ['label' => 'Shopify payback', 'sub' => rtrim(rtrim(number_format($shopPct, 1), '0'), '.') . '% OF SALES', 'get' => fn($r) => $r['shopPay'], 'dashzero' => true, 'color' => fn($r, $v) => 'var(--tx-mid)']);
-						cf_row($cols, $rows, ['label' => 'Debt paydown', 'sub' => 'FROM PLANNED PAYMENTS', 'get' => fn($r) => $r['dp'], 'dashzero' => true, 'color' => fn($r, $v) => 'var(--tx-mid)']);
-						cf_row($cols, $rows, ['label' => 'Total cash out', 'sub' => 'FROM BANK', 'get' => fn($r) => $r['cashOut'], 'weight' => 600, 'labelColor' => 'var(--tx-hi)', 'rowbg' => true, 'color' => fn($r, $v) => 'var(--tx-hi)']);
+						cf_row($cols, $rows, ['label' => 'Operating', 'managed' => 'operating', 'get' => fn($r) => $r['op']]);
+						cf_row($cols, $rows, ['label' => 'Purchases', 'managed' => 'purchase', 'get' => fn($r) => $r['pur']]);
+						cf_row($cols, $rows, ['label' => 'Sales tax', 'get' => fn($r) => $r['tax_collected'], 'dashzero' => true, 'color' => fn($r, $v) => 'var(--tx-mid)']);
+						cf_row($cols, $rows, ['label' => 'Shopify payback', 'get' => fn($r) => $r['shopPay'], 'dashzero' => true, 'color' => fn($r, $v) => 'var(--tx-mid)']);
+						cf_row($cols, $rows, ['label' => 'Debt paydown', 'get' => fn($r) => $r['dp'], 'dashzero' => true, 'color' => fn($r, $v) => 'var(--tx-mid)']);
+						cf_row($cols, $rows, ['label' => 'Total cash out', 'get' => fn($r) => $r['cashOut'], 'weight' => 600, 'labelColor' => 'var(--tx-hi)', 'rowbg' => true, 'color' => fn($r, $v) => 'var(--tx-hi)']);
 						// Position
 						cf_group_row('Position', $cols);
-						cf_row($cols, $rows, ['label' => 'Net cash flow', 'sub' => "IN \xE2\x88\x92 OUT", 'get' => fn($r) => $r['net'], 'weight' => 600, 'color' => fn($r, $v) => $v < 0 ? 'var(--crit)' : 'var(--good)']);
-						cf_row($cols, $rows, ['label' => 'Ending cash', 'sub' => 'RUNNING BANK', 'get' => fn($r) => $r['endCash'], 'weight' => 700, 'color' => fn($r, $v) => $r['cashRisk'] ? 'var(--crit)' : 'var(--tx-hi)']);
-						cf_row($cols, $rows, ['label' => 'Credit used', 'sub' => 'CARDS + LOCS', 'get' => fn($r) => $r['endCredit'], 'color' => fn($r, $v) => 'var(--tx-mid)']);
-						cf_row($cols, $rows, ['label' => 'Interest accrued', 'sub' => 'ADDED TO CARD / LOC BALANCES', 'get' => fn($r) => $r['interest'], 'color' => fn($r, $v) => 'var(--warn)']);
-						cf_row($cols, $rows, ['label' => 'Available credit', 'sub' => 'HEADROOM · LOC + CARD', 'get' => fn($r) => $r['avail'], 'color' => fn($r, $v) => $v < 0 ? 'var(--crit)' : ($r['creditTight'] ? 'var(--warn)' : 'var(--tx-mid)')]);
+						cf_row($cols, $rows, ['label' => 'Net cash flow', 'get' => fn($r) => $r['net'], 'weight' => 600, 'color' => fn($r, $v) => $v < 0 ? 'var(--crit)' : 'var(--good)']);
+						cf_row($cols, $rows, ['label' => 'Ending cash', 'get' => fn($r) => $r['endCash'], 'weight' => 700, 'color' => fn($r, $v) => $r['cashRisk'] ? 'var(--crit)' : 'var(--tx-hi)']);
+						cf_row($cols, $rows, ['label' => 'Credit used', 'get' => fn($r) => $r['endCredit'], 'color' => fn($r, $v) => 'var(--tx-mid)']);
+						// The LOC/loan slice of that balance — what the lines of credit are projected to owe.
+						cf_row($cols, $rows, ['label' => 'Loan balance', 'indent' => 16, 'get' => fn($r) => $r['endLoc'], 'color' => fn($r, $v) => 'var(--tx-mid)']);
+						cf_row($cols, $rows, ['label' => 'Interest accrued', 'get' => fn($r) => $r['interest'], 'color' => fn($r, $v) => 'var(--warn)']);
+						cf_row($cols, $rows, ['label' => 'Available credit', 'get' => fn($r) => $r['avail'], 'color' => fn($r, $v) => $v < 0 ? 'var(--crit)' : ($r['creditTight'] ? 'var(--warn)' : 'var(--tx-mid)')]);
 						// Split out, always visible: only the LOC half of that headroom can become cash.
-						cf_row($cols, $rows, ['label' => 'LOC available', 'sub' => 'DRAWABLE AS CASH', 'indent' => 16, 'get' => fn($r) => $r['availLoc'], 'color' => fn($r, $v) => 'var(--tx-mid)']);
-						cf_row($cols, $rows, ['label' => 'Card available', 'sub' => 'PURCHASING POWER ONLY', 'indent' => 16, 'get' => fn($r) => $r['availCard'], 'color' => fn($r, $v) => 'var(--tx-mid)']);
-						cf_row($cols, $rows, ['label' => 'Ending liquid', 'sub' => 'CASH + LOC + CARD', 'get' => fn($r) => $r['liquid'], 'weight' => 700, 'rowbg' => true, 'color' => fn($r, $v) => 'var(--accent)']);
+						cf_row($cols, $rows, ['label' => 'LOC available', 'indent' => 16, 'get' => fn($r) => $r['availLoc'], 'color' => fn($r, $v) => 'var(--tx-mid)']);
+						cf_row($cols, $rows, ['label' => 'Card available', 'indent' => 16, 'get' => fn($r) => $r['availCard'], 'color' => fn($r, $v) => 'var(--tx-mid)']);
+						cf_row($cols, $rows, ['label' => 'Ending liquid', 'get' => fn($r) => $r['liquid'], 'weight' => 700, 'rowbg' => true, 'color' => fn($r, $v) => 'var(--accent)']);
 						?>
 						</tbody>
 					</table>
