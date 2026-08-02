@@ -39,10 +39,10 @@
 		return '';
 	}
 
-	/** All QB settings in one cached read. */
-	function qb_settings() {
+	/** All QB settings in one cached read. Pass true to force a re-read. */
+	function qb_settings($reload = false) {
 		static $s = null;
-		if ($s !== null) return $s;
+		if ($s !== null && !$reload) return $s;
 		$s = [];
 		try {
 			$db = db_connect();
@@ -59,8 +59,13 @@
 		return $s;
 	}
 
-	/** Forget the per-request cache (after writing tokens). */
-	function qb_reset_cache() { /* qb_settings uses a static; re-read by new request */ }
+	/**
+	 * Re-read the settings cache (after writing tokens). A web request would pick
+	 * up new tokens on its own, but a long-lived CLI/cron process holds the static
+	 * for its whole run — without this every later qb_query() sees the stale expiry
+	 * and triggers another redundant refresh.
+	 */
+	function qb_reset_cache() { qb_settings(true); }
 
 	function qb_is_configured() {
 		$s = qb_settings();
@@ -157,6 +162,7 @@
 			setting_set($db, 'qb_refresh_token',   $j['refresh_token']);
 			setting_set($db, 'qb_refresh_expires', (string)(time() + (int)($j['x_refresh_token_expires_in'] ?? 8640000)));
 		}
+		qb_reset_cache();   // drop the stale token/expiry the static is still holding
 	}
 
 	/** Exchange the auth code from the callback for tokens; store realm id. */
