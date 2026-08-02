@@ -288,14 +288,17 @@ $statsHtml = '';
 						cf_group_row('Position', $cols);
 						cf_row($cols, $rows, ['label' => 'Net cash flow', 'get' => fn($r) => $r['net'], 'weight' => 600, 'color' => fn($r, $v) => $v < 0 ? 'var(--crit)' : 'var(--good)']);
 						cf_row($cols, $rows, ['label' => 'Ending cash', 'get' => fn($r) => $r['endCash'], 'weight' => 700, 'color' => fn($r, $v) => $r['cashRisk'] ? 'var(--crit)' : 'var(--tx-hi)']);
-						cf_row($cols, $rows, ['label' => 'Credit used', 'get' => fn($r) => $r['endCredit'], 'color' => fn($r, $v) => 'var(--tx-mid)']);
-						// The LOC/loan slice of that balance — what the lines of credit are projected to owe.
-						cf_row($cols, $rows, ['label' => 'Loan balance', 'indent' => 16, 'get' => fn($r) => $r['endLoc'], 'color' => fn($r, $v) => 'var(--tx-mid)']);
+						// Debt and headroom are grouped by facility KIND rather than listed flat:
+						// card room is purchasing power, LOC room can be drawn as cash, and the
+						// two are never interchangeable. Balance then liquid, for each.
+						cf_group_row('Credit cards', $cols);
+						cf_row($cols, $rows, ['label' => 'Card balance', 'indent' => 16, 'get' => fn($r) => $r['endCard'], 'color' => fn($r, $v) => 'var(--tx-mid)']);
+						cf_row($cols, $rows, ['label' => 'Card liquid', 'indent' => 16, 'get' => fn($r) => $r['availCard'], 'color' => fn($r, $v) => 'var(--tx-mid)']);
+						// Unindented: this is interest across BOTH kinds, so it belongs to neither.
 						cf_row($cols, $rows, ['label' => 'Interest accrued', 'get' => fn($r) => $r['interest'], 'color' => fn($r, $v) => 'var(--warn)']);
-						cf_row($cols, $rows, ['label' => 'Available credit', 'get' => fn($r) => $r['avail'], 'color' => fn($r, $v) => $v < 0 ? 'var(--crit)' : ($r['creditTight'] ? 'var(--warn)' : 'var(--tx-mid)')]);
-						// Split out, always visible: only the LOC half of that headroom can become cash.
-						cf_row($cols, $rows, ['label' => 'LOC available', 'indent' => 16, 'get' => fn($r) => $r['availLoc'], 'color' => fn($r, $v) => 'var(--tx-mid)']);
-						cf_row($cols, $rows, ['label' => 'Card available', 'indent' => 16, 'get' => fn($r) => $r['availCard'], 'color' => fn($r, $v) => 'var(--tx-mid)']);
+						cf_group_row('Line of credit', $cols);
+						cf_row($cols, $rows, ['label' => 'LOC balance', 'indent' => 16, 'get' => fn($r) => $r['endLoc'], 'color' => fn($r, $v) => 'var(--tx-mid)']);
+						cf_row($cols, $rows, ['label' => 'LOC liquid', 'indent' => 16, 'get' => fn($r) => $r['availLoc'], 'color' => fn($r, $v) => 'var(--tx-mid)']);
 						cf_row($cols, $rows, ['label' => 'Ending liquid', 'get' => fn($r) => $r['liquid'], 'weight' => 700, 'rowbg' => true, 'color' => fn($r, $v) => 'var(--accent)']);
 						?>
 						</tbody>

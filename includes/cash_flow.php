@@ -528,7 +528,7 @@ function cf_compute($accounts, $records, $opts) {
 			'online' => $income['online'], 'shows' => $income['shows'], 'wholesale' => $income['wholesale'],
 			'op' => $op, 'pur' => $pur, 'tax' => $tax, 'shopPay' => $shopPay, 'dp' => $dpApplied,
 			'interest' => $interest, 'cashOut' => $cashOut, 'net' => $net,
-			'endCash' => $cash, 'endCredit' => $credit, 'endLoc' => $locBal,
+			'endCash' => $cash, 'endCredit' => $credit, 'endLoc' => $locBal, 'endCard' => $cardBalM,
 			'availLoc' => $availL, 'availCard' => $availC, 'avail' => $avail, 'liquid' => $cash + $avail,
 			'cashRisk' => $cash < $buffer, 'creditTight' => $avail < 18000,
 		];
