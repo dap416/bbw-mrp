@@ -122,6 +122,55 @@ function ensure_qb_accounts_ref_table($db) {
 }
 
 /**
+ * Nightly balance history, one row per account per run. APPEND-ONLY: no unique
+ * key, no upsert, no soft delete, no one-row-per-day constraint. The newest
+ * captured_at for a qb_id is the current balance; everything older is the trend.
+ * Running the job twice in a day is expected and harmless.
+ */
+function ensure_qb_account_balances_table($db) {
+	$db->exec("CREATE TABLE IF NOT EXISTS qb_account_balances (
+		id          BIGINT AUTO_INCREMENT PRIMARY KEY,
+		realm_id    VARCHAR(32)  NOT NULL,
+		qb_id       VARCHAR(32)  NOT NULL,
+		fq_name     VARCHAR(300) NULL,
+		acct_type   VARCHAR(60)  NULL,
+		balance     DECIMAL(14,2) NOT NULL DEFAULT 0,
+		captured_at DATETIME     NOT NULL,
+		KEY idx_latest (realm_id, qb_id, captured_at),
+		KEY idx_captured (captured_at)
+	) ENGINE=InnoDB");
+}
+
+/**
+ * Snapshot every account's balance from an Account payload we already have.
+ *
+ * No extra API call: qb_refresh_accounts_ref() pulls the whole chart of accounts
+ * nightly and CurrentBalance rides along in that same response — it was simply
+ * being discarded.
+ *
+ * Every account, no acct_type filter — which types matter is a query concern,
+ * and a filter here would silently decide it for every future reader. The value
+ * is stored exactly as QuickBooks reports it: no sign normalization, no abs().
+ * The "amount owed" convention cash_balances uses (includes/cash_flow.php) is a
+ * presentation choice for that table and does not apply to raw capture.
+ */
+function qb_capture_account_balances($db, $realmId, array $accounts) {
+	ensure_qb_account_balances_table($db);
+	$ins = $db->prepare("INSERT INTO qb_account_balances
+			(realm_id, qb_id, fq_name, acct_type, balance, captured_at)
+		VALUES (?,?,?,?,?,NOW())");
+	$n = 0;
+	foreach ($accounts as $a) {
+		$id = (string)($a['Id'] ?? '');
+		if ($id === '') continue;
+		$ins->execute([$realmId, $id, $a['FullyQualifiedName'] ?? null,
+		               $a['AccountType'] ?? null, round((float)($a['CurrentBalance'] ?? 0), 2)]);
+		$n++;
+	}
+	return $n;
+}
+
+/**
  * The only account types that are real profit-and-loss spend.
  *
  * Everything else a Purchase can point at is money movement, not cost:
@@ -178,7 +227,11 @@ function qb_refresh_accounts_ref($db, $realmId) {
 		$ins->execute([$realmId, $id, $a['Name'] ?? null, $a['FullyQualifiedName'] ?? null,
 		               $a['AccountType'] ?? null, $a['AccountSubType'] ?? null, !empty($a['Active']) ? 1 : 0]);
 	}
-	return ['error' => null, 'count' => count($all)];
+
+	// Same payload, second use: snapshot tonight's balances before $all is dropped.
+	$balances = qb_capture_account_balances($db, $realmId, $all);
+
+	return ['error' => null, 'count' => count($all), 'balances' => $balances];
 }
 
 /** account id => ['type'=>..., 'subtype'=>...] for the connected realm. */
@@ -338,7 +391,7 @@ function qb_expense_upsert($db, array $row, $realmId, array $acctMap = []) {
 function qb_expenses_sync($db, $windowDays = QB_EXPENSES_WINDOW_DAYS) {
 	$t0  = microtime(true);
 	$out = ['error' => null, 'window' => 'all history', 'fetched' => 0, 'inserted' => 0,
-	        'updated' => 0, 'deleted' => 0, 'lines' => 0, 'accounts' => 0, 'secs' => 0.0];
+	        'updated' => 0, 'deleted' => 0, 'lines' => 0, 'accounts' => 0, 'balances' => 0, 'secs' => 0.0];
 
 	if (!qb_is_connected()) {
 		$out['error'] = 'QuickBooks is not connected.';
@@ -364,6 +417,7 @@ function qb_expenses_sync($db, $windowDays = QB_EXPENSES_WINDOW_DAYS) {
 		return $out;                                     // no map = no classification; don't import blind
 	}
 	$out['accounts'] = $acc['count'];
+	$out['balances'] = $acc['balances'] ?? 0;            // captured from that same fetch
 	$acctMap = qb_accounts_ref_map($db, $realmId);
 
 	// Pick the window. No flag, no stored state — the table's emptiness is the flag.
