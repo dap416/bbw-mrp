@@ -196,6 +196,8 @@
 		catch (Throwable $e) { /* already there */ }
 		try { $db->exec("ALTER TABLE cash_balances ADD COLUMN due_day TINYINT NULL"); }        // day-of-month a LOC loan payment auto-draws
 		catch (Throwable $e) { /* already there */ }
+		try { $db->exec("ALTER TABLE cash_balances ADD COLUMN min_pct DECIMAL(5,2) NULL"); }   // per-card minimum %, NULL = use the global card_min_pct setting
+		catch (Throwable $e) { /* already there */ }
 	}
 
 	/**
@@ -231,6 +233,7 @@
 					'limit'   => $r['credit_limit'] !== null ? (float)$r['credit_limit'] : null,
 					'payment' => isset($r['monthly_payment']) && $r['monthly_payment'] !== null ? (float)$r['monthly_payment'] : 0.0,
 					'apr'     => isset($r['apr']) && $r['apr'] !== null ? (float)$r['apr'] : null,
+					'min_pct' => isset($r['min_pct']) && $r['min_pct'] !== null ? (float)$r['min_pct'] : null,
 					'qb_id'   => $r['qb_account_id'] ?? '',
 					'as_of'   => $r['as_of'],
 					'days_old'=> $daysOld,

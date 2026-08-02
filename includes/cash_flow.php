@@ -216,7 +216,13 @@ function cf_live_accounts($db) {
 			$cards[] = [
 				'id' => (int)$c['id'], 'label' => $c['label'], 'balance' => (float)$c['balance'],
 				'limit' => $c['limit'] !== null ? (float)$c['limit'] : null, 'apr' => $c['apr'],
-				'min_pct' => $minPct, 'min_floor' => $minFloor,
+				// Per-card override when set, otherwise the global card_min_pct setting.
+				// Issuers do not all use the same formula, and at a high APR the real
+				// minimum can exceed a flat 4% of balance.
+				'min_pct' => $c['min_pct'] !== null ? (float)$c['min_pct'] : $minPct,
+				'min_pct_own' => $c['min_pct'] !== null ? (float)$c['min_pct'] : null,
+				'min_pct_default' => $minPct,
+				'min_floor' => $minFloor,
 				'planned' => (float)($c['payment'] ?? 0), 'as_of' => $c['as_of'], 'qb_id' => $c['qb_id'] ?? '',
 			];
 		}

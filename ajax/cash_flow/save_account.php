@@ -29,6 +29,10 @@ $limit   = trim((string)($_POST['credit_limit'] ?? ''));
 $limit   = ($limit === '' || $type === 'bank') ? null : round((float)$limit, 2);   // cards: limit ; locs: ceiling
 $apr     = trim((string)($_POST['apr'] ?? ''));
 $apr     = ($apr === '' || $type === 'bank') ? null : round((float)$apr, 2);
+// Per-card minimum-payment %. Blank => NULL => fall back to the global card_min_pct
+// setting, so a card only diverges from the default once someone sets it deliberately.
+$minPct  = trim((string)($_POST['min_pct'] ?? ''));
+$minPct  = ($minPct === '' || $type !== 'credit') ? null : max(0.0, min(100.0, round((float)$minPct, 2)));
 $payment = trim((string)($_POST['monthly_payment'] ?? ''));
 $payment = ($payment === '' || $type !== 'loc') ? null : round((float)$payment, 2);
 $dueDay  = trim((string)($_POST['due_day'] ?? ''));
@@ -55,8 +59,8 @@ try {
 	if ($id > 0) {
 		if ($type === 'credit') {
 			// Preserve monthly_payment (the planned debt payment set in the Debt view).
-			$db->prepare("UPDATE cash_balances SET label=?, acct_type=?, balance=?, credit_limit=?, apr=?, qb_account_id=?, as_of=?, updated_at=NOW() WHERE id=?")
-			   ->execute([$label, $type, $balance, $limit, $apr, $qbId, $asOf, $id]);
+			$db->prepare("UPDATE cash_balances SET label=?, acct_type=?, balance=?, credit_limit=?, apr=?, min_pct=?, qb_account_id=?, as_of=?, updated_at=NOW() WHERE id=?")
+			   ->execute([$label, $type, $balance, $limit, $apr, $minPct, $qbId, $asOf, $id]);
 		} elseif ($type === 'loc') {
 			$db->prepare("UPDATE cash_balances SET label=?, acct_type=?, balance=?, credit_limit=?, apr=?, monthly_payment=?, due_day=?, loc_name=?, qb_account_id=?, as_of=?, updated_at=NOW() WHERE id=?")
 			   ->execute([$label, $type, $balance, $limit, $apr, $payment, $dueDay, $locName, $qbId, $asOf, $id]);
@@ -65,8 +69,8 @@ try {
 			   ->execute([$label, $type, $balance, $qbId, $asOf, $id]);
 		}
 	} else {
-		$db->prepare("INSERT INTO cash_balances (label, acct_type, balance, credit_limit, monthly_payment, apr, qb_account_id, as_of, loc_name, due_day, user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
-		   ->execute([$label, $type, $balance, $limit, $payment, $apr, $qbId, $asOf, $locName, $dueDay, $uid]);
+		$db->prepare("INSERT INTO cash_balances (label, acct_type, balance, credit_limit, monthly_payment, apr, min_pct, qb_account_id, as_of, loc_name, due_day, user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
+		   ->execute([$label, $type, $balance, $limit, $payment, $apr, $minPct, $qbId, $asOf, $locName, $dueDay, $uid]);
 		$id = (int)$db->lastInsertId();
 	}
 	echo json_encode(['ok' => true, 'id' => $id]);
