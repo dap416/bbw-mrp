@@ -483,8 +483,15 @@ function cf_compute($accounts, $records, $opts) {
 		$income = cf_income_month($records, $i, $growth, $taxPct, $hs);
 		$incGross = $income['gross'];        // what actually hits the bank — customers pay tax to us
 		$reserve  = $income['collected'];    // the tax portion of it: held, not ours, owed to the state
-		$op  = cf_sum_row($records, 'operating', $i, $hs);
-		$pur = cf_sum_row($records, 'purchase', $i, $hs);
+		// Operating and Purchases report the CASH half only, so the Cash out block
+		// foots: Operating + Purchases + Shopify payback + Debt paydown == Total
+		// cash out. Card- and LOC-funded spend is not cash out this month — it
+		// raises the facility balance instead, and shows up under Position as a
+		// higher Credit used, more interest, and less available credit. Summing
+		// every record here (as cf_sum_row does) made the block overstate cash out
+		// by whatever went on credit — $12,970 in Aug 2026 — with no row to
+		// explain the difference.
+		$op = 0.0; $pur = 0.0;
 
 		// route each expense: cash hits the bank; card/LOC raises that facility's balance
 		$expCash = 0.0;
@@ -501,9 +508,11 @@ function cf_compute($accounts, $records, $opts) {
 				// charge would sit there forever, unpayable and invisible. Treating it
 				// as cash is the conservative reading (the money did leave) and it
 				// shows up on the ending-cash line instead of disappearing.
-				if ($pay === 'cash') $expCash += $a;
+				$isCash = ($pay === 'cash');
+				if ($isCash) $expCash += $a;
 				elseif (isset($fac[$pay])) $fac[$pay]['bal'] += $a;
-				else { $expCash += $a; cf_log_unroutable($r, $pay); }
+				else { $expCash += $a; $isCash = true; cf_log_unroutable($r, $pay); }
+				if ($isCash) { if ($k === 'operating') $op += $a; else $pur += $a; }
 			}
 		}
 
