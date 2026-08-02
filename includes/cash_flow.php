@@ -514,13 +514,14 @@ function cf_compute($accounts, $records, $opts) {
 		// Purchases 0 against $7,000 / $10,300 / $12,800 of planned digital
 		// marketing.
 		//
-		// The block still foots, via $onCredit: the credit-funded portion is
-		// subtracted on its own line, because it is spend but not CASH out this
-		// month. It raises the facility balance instead, and surfaces under
-		// Position as higher Credit used, more interest, and less available credit.
+		// $onCredit / $onCash split that spend by how it is funded. They are MEMO
+		// lines under the two rows, not terms in the sum: only the cash half reaches
+		// Total cash out, while the credit half raises a facility balance and
+		// surfaces under Position as higher Credit used, more interest, and less
+		// available credit.
 		//
-		//     Operating + Purchases − Charged to credit
-		//       + Shopify payback + Debt paydown  ==  Total cash out
+		//     Charged to cash + Charged to credit  ==  Operating + Purchases
+		//     Charged to cash + Shopify payback + Debt paydown  ==  Total cash out
 		$op = 0.0; $pur = 0.0; $onCredit = 0.0;
 
 		// route each expense: cash hits the bank; card/LOC raises that facility's balance
@@ -647,7 +648,8 @@ function cf_compute($accounts, $records, $opts) {
 			'inc' => $incGross, 'inc_gross' => $incGross, 'inc_net' => $incGross - $reserve,
 			'tax_collected' => $reserve,
 			'online' => $income['online'], 'shows' => $income['shows'], 'wholesale' => $income['wholesale'],
-			'op' => $op, 'pur' => $pur, 'onCredit' => $onCredit, 'shopPay' => $shopPay, 'dp' => $dpApplied,
+			'op' => $op, 'pur' => $pur, 'onCredit' => $onCredit, 'onCash' => max(0.0, $op + $pur - $onCredit),
+			'shopPay' => $shopPay, 'dp' => $dpApplied,
 			'interest' => $interest, 'cashOut' => $cashOut, 'net' => $net,
 			'endCash' => $cash, 'endCredit' => $credit, 'endLoc' => $locBal, 'endCard' => $cardBalM,
 			'availLoc' => $availL, 'availCard' => $availC, 'avail' => $avail, 'liquid' => $cash + $avail,

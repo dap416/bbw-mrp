@@ -292,10 +292,11 @@ $statsHtml = '';
 						cf_group_row('Cash out', $cols);
 						cf_row($cols, $rows, ['label' => 'Operating', 'managed' => 'operating', 'get' => fn($r) => $r['op']]);
 						cf_row($cols, $rows, ['label' => 'Purchases', 'managed' => 'purchase', 'get' => fn($r) => $r['pur']]);
-						// Operating and Purchases above are the FULL plan. This backs out the part
-						// that goes on a card or LOC — real spend, but not cash leaving the bank
-						// this month — so the block foots to Total cash out.
-						cf_row($cols, $rows, ['label' => 'Charged to credit', 'get' => fn($r) => -$r['onCredit'], 'dashzero' => true, 'color' => fn($r, $v) => 'var(--tx-lo)']);
+						// Memo only — how the Operating + Purchases spend above is funded. Neither
+						// line is a term in the Cash out sum: the cash half is what reaches Total
+						// cash out, the credit half raises a facility balance instead.
+						cf_row($cols, $rows, ['label' => 'Charged to cash', 'indent' => 16, 'get' => fn($r) => $r['onCash'], 'dashzero' => true, 'color' => fn($r, $v) => 'var(--tx-lo)']);
+						cf_row($cols, $rows, ['label' => 'Charged to credit', 'indent' => 16, 'get' => fn($r) => $r['onCredit'], 'dashzero' => true, 'color' => fn($r, $v) => 'var(--tx-lo)']);
 						cf_row($cols, $rows, ['label' => 'Shopify payback', 'get' => fn($r) => $r['shopPay'], 'dashzero' => true, 'color' => fn($r, $v) => 'var(--tx-mid)']);
 						cf_row($cols, $rows, ['label' => 'Debt paydown', 'get' => fn($r) => $r['dp'], 'dashzero' => true, 'color' => fn($r, $v) => 'var(--tx-mid)']);
 						cf_row($cols, $rows, ['label' => 'Total cash out', 'get' => fn($r) => $r['cashOut'], 'weight' => 600, 'labelColor' => 'var(--tx-hi)', 'rowbg' => true, 'color' => fn($r, $v) => 'var(--tx-hi)']);
