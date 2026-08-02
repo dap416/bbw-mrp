@@ -307,6 +307,19 @@ function cf_load_records($db) {
 }
 
 /** Does a record post in horizon month index $i? (once/monthly/quarterly/annual) */
+/**
+ * A record points at a pay method that is not a routable facility. Log it once
+ * per run so a mis-tagged record is discoverable instead of silently absorbed.
+ */
+function cf_log_unroutable($rec, $pay) {
+	static $seen = [];
+	$key = ($rec['id'] ?? '?') . '|' . $pay;
+	if (isset($seen[$key])) return;
+	$seen[$key] = true;
+	error_log('[cash_flow] record #' . ($rec['id'] ?? '?') . ' "' . ($rec['description'] ?? '') . '"'
+		. ' has unroutable pay method "' . $pay . '" — treated as cash.');
+}
+
 function cf_posts($rec, $i, $horizonStart) {
 	$cellYm = cf_add_months($horizonStart, $i);
 	if ($cellYm < $rec['start_ym']) return false;
@@ -480,9 +493,17 @@ function cf_compute($accounts, $records, $opts) {
 				if (!cf_posts($r, $i, $hs)) continue;
 				$a = (float)$r['amount'];
 				$pay = $r['pay'] ?? 'cash';
+				// Unroutable pay methods fall back to CASH, never to a silent bucket.
+				// $fac holds cards + non-payout LOCs only, so a record charged to a
+				// payout facility (Shopify Capital) — or to a card that was since
+				// renamed or deleted — used to land in $other, which counts toward
+				// credit used but never accrues interest and is never paid down: the
+				// charge would sit there forever, unpayable and invisible. Treating it
+				// as cash is the conservative reading (the money did leave) and it
+				// shows up on the ending-cash line instead of disappearing.
 				if ($pay === 'cash') $expCash += $a;
 				elseif (isset($fac[$pay])) $fac[$pay]['bal'] += $a;
-				else $other += $a;
+				else { $expCash += $a; cf_log_unroutable($r, $pay); }
 			}
 		}
 
