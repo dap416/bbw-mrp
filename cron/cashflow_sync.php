@@ -36,14 +36,12 @@ $start = microtime(true);
 $log   = cashflow_sync($db);
 
 // After the QB/Shopify cache is fresh, capture balances into the normalized
-// history: upsert cash_balances from QB, write today's daily snapshot, and
-// freeze the month opening on the 1st (or whenever this month has none yet).
-$ym         = cf_horizon_start();
-$freeze     = (date('j') === '1') || !cf_month_has_opening($db, $ym);
-$cap        = cf_capture_balances($db, $freeze, 'cron');
-$secs       = round(microtime(true) - $start, 1);
+// history: upsert cash_balances from QB and write today's daily row per account.
+// The month-opening freeze that used to run here has been removed — the forecast
+// no longer baselines itself on QuickBooks balances.
+$cap  = cf_capture_balances($db, 'cron');
+$secs = round(microtime(true) - $start, 1);
 
 echo "[" . date('Y-m-d H:i:s') . "] Cash Flow sync ({$secs}s)\n";
 foreach ($log as $line) echo "  " . $line . "\n";
-echo "  balances: {$cap['qb_updated']} account(s) refreshed from QB; daily snapshot written"
-	. ($cap['froze'] ? "; froze opening for {$cap['froze']}" : "") . "\n";
+echo "  balances: {$cap['qb_updated']} account(s) refreshed from QB; daily history written\n";

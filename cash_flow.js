@@ -24,11 +24,25 @@
 	function post(url, data){ return $.post(url, data); }
 
 	/* ---- view switching ---- */
-	$('#cfViews button').on('click', function(){
-		$('#cfViews button').removeClass('on'); $(this).addClass('on');
-		const v = $(this).data('view');
+	// Nearly every save in here ends in location.reload(), which would otherwise
+	// drop you back on the Cash Flow tab. Remember the open view for the tab's
+	// lifetime so editing a balance leaves you where you were working.
+	const VIEW_KEY = 'cfView';
+	function showView(v){
+		if (!v || !$('#view-' + v).length) return false;
+		$('#cfViews button').removeClass('on').filter('[data-view="' + v + '"]').addClass('on');
 		$('.cf-view').removeClass('on'); $('#view-' + v).addClass('on');
+		return true;
+	}
+	$('#cfViews button').on('click', function(){
+		const v = $(this).data('view');
+		try { sessionStorage.setItem(VIEW_KEY, v); } catch (e) {}
+		showView(v);
 	});
+	try {
+		const saved = sessionStorage.getItem(VIEW_KEY);
+		if (saved && !showView(saved)) sessionStorage.removeItem(VIEW_KEY);
+	} catch (e) {}
 
 	/* ---- chart toggle ---- */
 	$('#cfChartToggle').on('click', function(){
@@ -47,28 +61,6 @@
 	$('#cfBuffer').on('change', function(){ saveSetting({ cash_buffer: $(this).val() }).always(() => location.reload()); });
 	$('#cfTax').on('change', function(){ saveSetting({ avg_sales_tax_pct: $(this).val() }).always(() => location.reload()); });
 	$('#cfAvailDebt').on('change', function(){ saveSetting({ cf_avail_debt: $(this).val() }).always(() => location.reload()); });
-
-	/* ---- snapshot ---- */
-	$('#cfSnapBtn').on('click', function(){
-		const frozen = String($(this).data('frozen')) === '1';
-		const msg = frozen
-			? mLabel(0) + ' already has a snapshot. Re-taking REPLACES your locked-in opening and re-forecasts from the current balances. This is rarely needed — the month-end snapshot handles it going forward. Continue?'
-			: 'Pull the latest QuickBooks balances and freeze them as the opening snapshot for ' + mLabel(0) + '? This starts the month-grained projection.';
-		if (!confirm(msg)) return;
-		const $b = $(this).prop('disabled', true);
-		post('/ajax/cash_flow/snapshot.php', { ym: CF.hs, source: 'seed', force: 1 })
-			.done(r => {
-				if (r && r.ok) {
-					const n = r.qb_updated || 0;
-					const line = n > 0
-						? n + ' account balance(s) refreshed from QuickBooks.'
-						: 'No accounts pulled from QuickBooks — none are linked yet (or QuickBooks isn\'t synced). Link accounts via the pencil → "QuickBooks account · auto-sync".';
-					alert('Snapshot saved.\n\n• ' + line + '\n• Today\'s daily snapshot stored.\n• ' + (r.snap_ym || mLabel(0)) + ' opening frozen.');
-					location.reload();
-				} else { alert((r && r.error) || 'Snapshot failed'); $b.prop('disabled', false); }
-			})
-			.fail(() => { alert('Snapshot failed'); $b.prop('disabled', false); });
-	});
 
 	/* ============ RECORDS MODAL (managed cells) ============ */
 	let modalCtx = null;   // {row, month, chan}
@@ -180,8 +172,12 @@
 		const cur = $(this).data('pay');
 		const $m = $('<div class="cf-pay-menu"></div>');
 		CF.payOptions.forEach(o => { $m.append('<button data-v="' + esc(o.v) + '">' + esc(o.label) + (o.v === cur ? ' ✓' : '') + '</button>'); });
-		$m.css({ top: (rect.bottom + window.scrollY + 4) + 'px', left: (rect.left + window.scrollX) + 'px' });
-		$('body').append($m);
+		// Must live INSIDE .titan-app: the design tokens (--bg-2, --tx-mid, …) are
+		// scoped to that element, so a menu parented to <body> resolved them to
+		// nothing and rendered transparent with unstyled text. Positioned fixed, so
+		// the viewport rect is the right coordinate space either way.
+		$m.css({ top: (rect.bottom + 4) + 'px', left: rect.left + 'px' });
+		$(document.querySelector('.titan-app') || document.body).append($m);
 		$m.on('click', 'button', function(){ formState.pay = $(this).data('v'); $('#cfFpay').data('pay', formState.pay).text(payLabel(formState.pay)); $m.remove(); });
 	});
 	$(document).on('click', function(){ $('.cf-pay-menu').remove(); });

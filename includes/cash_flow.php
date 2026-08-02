@@ -4,9 +4,11 @@
    Distinct from includes/cashflow.php (the old "Cash Management"
    engine), but REUSES its loaders for balances/QBO/Shopify.
 
-   Month-grained snapshot model: month-0 opening balances come
-   from the current month's cf_snapshots row when present, else
-   fall back to the live cash_balances (so it works pre-snapshot).
+   Month-0 opening balances are the LIVE cash_balances. The old
+   month-grained freeze (cf_snapshots / cf_balance_monthly) is
+   gone: it locked the baseline to QuickBooks balances, which are
+   not reliable enough to build a month on. Daily balance history
+   (cf_balance_daily) is still captured.
 
    Ported from the design prototype (Cash Flow.dc.html), with the
    real business rules layered in (docs win over the prototype):
@@ -88,20 +90,14 @@ function cf_ensure_tables($db) {
 		user_id     INT          NULL
 	) ENGINE=InnoDB");
 
-	// Frozen month-opening balance snapshots (the month-grained model).
-	$db->exec("CREATE TABLE IF NOT EXISTS cf_snapshots (
-		snap_ym      VARCHAR(7)   PRIMARY KEY,                  -- the month this snapshot OPENS
-		captured_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		source       VARCHAR(12)  NOT NULL DEFAULT 'manual',    -- cron | seed | manual
-		cash_total   DECIMAL(14,2) NOT NULL DEFAULT 0,
-		credit_total DECIMAL(14,2) NOT NULL DEFAULT 0,
-		data         LONGTEXT     NULL,                         -- legacy JSON blob (unused; detail now normalized below)
-		note         VARCHAR(255) NULL
-	) ENGINE=InnoDB");
-
-	// Normalized per-account balance history. One row per account per day
-	// (cf_balance_daily) and per opening month (cf_balance_monthly). These are
-	// the durable, queryable record; cash_balances holds only current state.
+	// Per-account balance history, one row per account per day. The durable,
+	// queryable record; cash_balances holds only current state.
+	//
+	// The month-opening freeze this used to sit beside (cf_snapshots,
+	// cf_balance_monthly) has been removed — it baselined the forecast on
+	// QuickBooks balances that aren't reliable enough to lock a month to. Those
+	// two tables are no longer created or read; existing ones are left in place
+	// rather than dropped, so nothing already captured is destroyed.
 	$db->exec("CREATE TABLE IF NOT EXISTS cf_balance_daily (
 		snap_date    DATE         NOT NULL,
 		account_id   INT          NOT NULL,                     -- cash_balances.id (stable key)
@@ -114,19 +110,6 @@ function cf_ensure_tables($db) {
 		source       VARCHAR(12)  NOT NULL DEFAULT 'manual',    -- qb | manual | seed | cron
 		captured_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		PRIMARY KEY (snap_date, account_id)
-	) ENGINE=InnoDB");
-	$db->exec("CREATE TABLE IF NOT EXISTS cf_balance_monthly (
-		snap_ym      VARCHAR(7)   NOT NULL,                     -- the month this opening belongs to
-		account_id   INT          NOT NULL,
-		label        VARCHAR(120) NULL,
-		acct_type    VARCHAR(12)  NOT NULL DEFAULT 'bank',
-		balance      DECIMAL(14,2) NOT NULL DEFAULT 0,
-		credit_limit DECIMAL(14,2) NULL,
-		apr          DECIMAL(6,2) NULL,
-		payout       TINYINT      NOT NULL DEFAULT 0,
-		source       VARCHAR(12)  NOT NULL DEFAULT 'manual',
-		captured_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		PRIMARY KEY (snap_ym, account_id)
 	) ENGINE=InnoDB");
 }
 
@@ -288,38 +271,11 @@ function cf_qb_account_options($db) {
  * month's frozen snapshot; fall back to live balances when none exists.
  */
 function cf_opening_accounts($db, $ym = null) {
-	$ym  = $ym ?: cf_horizon_start();
-	$acc = cf_live_accounts($db);   // current metadata (APR, limits, PLANNED payments) + current balances
-
-	// Overlay the frozen opening BALANCES for this month (if captured). The plan
-	// (planned payments) stays current; only the opening balances freeze.
-	$frozen = [];
-	try {
-		cf_ensure_tables($db);
-		$s = $db->prepare("SELECT account_id, balance FROM cf_balance_monthly WHERE snap_ym = ?");
-		$s->execute([$ym]);
-		foreach ($s as $r) $frozen[(int)$r['account_id']] = (float)$r['balance'];
-	} catch (Throwable $e) {}
-
-	if ($frozen) {
-		$sc = 0.0; $used = 0.0; $shop = 0.0;
-		foreach ($acc['banks'] as &$b) { if (isset($frozen[$b['id']])) $b['balance'] = $frozen[$b['id']]; $sc += $b['balance']; } unset($b);
-		foreach ($acc['cards'] as &$c) { if (isset($frozen[$c['id']])) $c['balance'] = $frozen[$c['id']]; $used += $c['balance']; } unset($c);
-		foreach ($acc['locs']  as &$l) { if (isset($frozen[$l['id']])) $l['drawn'] = $frozen[$l['id']]; $used += $l['drawn']; if (!empty($l['payout'])) $shop += $l['drawn']; } unset($l);
-		$acc['start_cash']       = $sc;
-		$acc['credit_used']      = $used;
-		$acc['shopify_loan']     = $shop;
-		// Re-split on the frozen balances. This used to be limit − used across everything,
-		// which let an overdrawn term loan eat into card room (and vice versa); it now
-		// matches the live path and the Accounts tables.
-		$snapRoom = cf_room_split($acc['cards'], $acc['locs']);
-		$acc['loc_available']    = $snapRoom['loc'];
-		$acc['card_available']   = $snapRoom['card'];
-		$acc['credit_available'] = $snapRoom['card'] + $snapRoom['loc'];
-		$acc['source']  = 'snapshot';
-		$acc['snap_ym'] = $ym;
-	}
-	return $acc;
+	// The month-opening freeze is gone: it baselined the forecast on QuickBooks
+	// balances, and those are not trustworthy enough to lock a month to. The
+	// projection now always opens from the current live balances, which are the
+	// ones the Accounts view shows and a human maintains.
+	return cf_live_accounts($db);
 }
 
 /** Flatten an accounts struct to per-account rows for the snapshot tables. */
@@ -553,6 +509,12 @@ function cf_compute($accounts, $records, $opts) {
 
 		$credit = $other + $shop;
 		foreach ($fac as $f) $credit += $f['bal'];
+
+		// The LOC/loan slice of that credit, cards excluded: every non-payout line,
+		// plus the payout term loan and anything charged against it. endCredit minus
+		// this is exactly the card balance.
+		$locBal = $other + $shop;
+		foreach ($accounts['locs'] as $l) if (empty($l['payout'])) $locBal += (float)($fac[$l['label']]['bal'] ?? 0);
 		// Floored, per-facility available credit (consistent with the Accounts view).
 		$cardBalM = 0.0; foreach ($accounts['cards'] as $c) $cardBalM += (float)($fac[$c['label']]['bal'] ?? 0);
 		$availC = max(0.0, $cardLimTotal - $cardBalM);
@@ -566,7 +528,7 @@ function cf_compute($accounts, $records, $opts) {
 			'online' => $income['online'], 'shows' => $income['shows'], 'wholesale' => $income['wholesale'],
 			'op' => $op, 'pur' => $pur, 'tax' => $tax, 'shopPay' => $shopPay, 'dp' => $dpApplied,
 			'interest' => $interest, 'cashOut' => $cashOut, 'net' => $net,
-			'endCash' => $cash, 'endCredit' => $credit,
+			'endCash' => $cash, 'endCredit' => $credit, 'endLoc' => $locBal,
 			'availLoc' => $availL, 'availCard' => $availC, 'avail' => $avail, 'liquid' => $cash + $avail,
 			'cashRisk' => $cash < $buffer, 'creditTight' => $avail < 18000,
 		];
@@ -635,22 +597,20 @@ function cf_upsert_qb_balances($db) {
 }
 
 /**
- * Capture balances: pull QB into cash_balances, write today's DAILY snapshot,
- * and (when $freezeMonth) freeze this month's OPENING snapshot + header.
+ * Capture balances: pull QB into cash_balances and write today's DAILY history
+ * row per account. Called nightly by cron/cashflow_sync.php.
  *
- * The monthly opening is WRITE-ONCE: once a month is frozen it is NOT
- * overwritten (the whole point of the month-grained model — the baseline you
- * forecast from must not drift). Pass $force = true only for a deliberate
- * "re-freeze" correction. The daily snapshot always refreshes for the day.
- * Called nightly by cron/cashflow_sync.php and manually by the snapshot button.
+ * The month-opening freeze that used to live here is gone — it locked the
+ * forecast's baseline to QuickBooks balances, which aren't reliable enough to
+ * build a month on. Daily history stays: it's a running record, not a baseline
+ * anything depends on.
  */
-function cf_capture_balances($db, $freezeMonth = false, $source = 'cron', $force = false) {
+function cf_capture_balances($db, $source = 'cron') {
 	cf_ensure_tables($db);
 	$updated = cf_upsert_qb_balances($db);      // QB -> cash_balances (auto-synced accounts)
 	$acc  = cf_live_accounts($db);              // now current
 	$rows = cf_flatten_accounts($acc);
 	$today = date('Y-m-d');
-	$ym    = cf_horizon_start();
 
 	$insD = $db->prepare("INSERT INTO cf_balance_daily
 		(snap_date, account_id, label, acct_type, balance, credit_limit, apr, payout, source, captured_at)
@@ -659,43 +619,7 @@ function cf_capture_balances($db, $freezeMonth = false, $source = 'cron', $force
 			credit_limit=VALUES(credit_limit), apr=VALUES(apr), payout=VALUES(payout), source=VALUES(source), captured_at=NOW()");
 	foreach ($rows as $x) $insD->execute([$today, $x['account_id'], $x['label'], $x['acct_type'], $x['balance'], $x['credit_limit'], $x['apr'], $x['payout'], $source]);
 
-	$froze = null; $alreadyFrozen = false;
-	if ($freezeMonth && !$force && cf_month_has_opening($db, $ym)) {
-		$alreadyFrozen = true;   // opening already set this month — leave it intact
-	} elseif ($freezeMonth) {
-		$insM = $db->prepare("INSERT INTO cf_balance_monthly
-			(snap_ym, account_id, label, acct_type, balance, credit_limit, apr, payout, source, captured_at)
-			VALUES (?,?,?,?,?,?,?,?,?,NOW())
-			ON DUPLICATE KEY UPDATE label=VALUES(label), acct_type=VALUES(acct_type), balance=VALUES(balance),
-				credit_limit=VALUES(credit_limit), apr=VALUES(apr), payout=VALUES(payout), source=VALUES(source), captured_at=NOW()");
-		foreach ($rows as $x) $insM->execute([$ym, $x['account_id'], $x['label'], $x['acct_type'], $x['balance'], $x['credit_limit'], $x['apr'], $x['payout'], $source]);
-		$db->prepare("INSERT INTO cf_snapshots (snap_ym, captured_at, source, cash_total, credit_total)
-			VALUES (?, NOW(), ?, ?, ?)
-			ON DUPLICATE KEY UPDATE captured_at=NOW(), source=VALUES(source), cash_total=VALUES(cash_total), credit_total=VALUES(credit_total)")
-			->execute([$ym, $source, $acc['start_cash'], $acc['credit_used']]);
-		$froze = $ym;
-	}
-	return ['accounts' => $acc, 'qb_updated' => $updated, 'froze' => $froze, 'already_frozen' => $alreadyFrozen];
-}
-
-/** Does this month already have a frozen opening? */
-function cf_month_has_opening($db, $ym) {
-	try {
-		cf_ensure_tables($db);
-		$s = $db->prepare("SELECT COUNT(*) AS c FROM cf_balance_monthly WHERE snap_ym = ?"); $s->execute([$ym]);
-		return (int)$s->fetch()['c'] > 0;
-	} catch (Throwable $e) { return false; }
-}
-
-/** Header row for the current month's snapshot (for the UI "opening as of" label). */
-function cf_current_snapshot($db) {
-	try {
-		cf_ensure_tables($db);
-		$s = $db->prepare("SELECT snap_ym, captured_at, source, cash_total, credit_total FROM cf_snapshots WHERE snap_ym = ?");
-		$s->execute([cf_horizon_start()]);
-		$r = $s->fetch();
-		return $r ?: null;
-	} catch (Throwable $e) { return null; }
+	return ['accounts' => $acc, 'qb_updated' => $updated];
 }
 
 /* ---- seed -------------------------------------------------------------- */
