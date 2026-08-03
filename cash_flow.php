@@ -311,7 +311,10 @@ $statsHtml = '';
 						// two are never interchangeable. Balance then liquid, for each.
 						cf_group_row('Credit cards', $cols);
 						cf_row($cols, $rows, ['label' => 'Card balance', 'indent' => 16, 'get' => fn($r) => $r['endCard'], 'color' => fn($r, $v) => 'var(--tx-mid)']);
-						cf_row($cols, $rows, ['label' => 'Card liquid', 'indent' => 16, 'get' => fn($r) => $r['availCard'], 'color' => fn($r, $v) => 'var(--tx-mid)']);
+						// Negative = past the ceiling. Shown in red rather than clamped to zero, so
+						// "no room left" and "$40k over the limit" stop looking identical.
+						cf_row($cols, $rows, ['label' => 'Card liquid', 'indent' => 16, 'get' => fn($r) => $r['availCard'], 'color' => fn($r, $v) => $v < 0 ? 'var(--crit)' : 'var(--tx-mid)']);
+						cf_row($cols, $rows, ['label' => 'Over limit', 'sub' => 'PLAN EXCEEDS THE CEILING', 'indent' => 16, 'get' => fn($r) => $r['overCard'] + $r['overLoc'], 'dashzero' => true, 'color' => fn($r, $v) => $v > 0 ? 'var(--crit)' : 'var(--tx-lo)']);
 						// Unindented: this is interest across BOTH kinds, so it belongs to neither.
 						cf_row($cols, $rows, ['label' => 'Interest accrued', 'get' => fn($r) => $r['interest'], 'color' => fn($r, $v) => 'var(--warn)']);
 						cf_group_row('Line of credit', $cols);

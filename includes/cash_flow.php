@@ -637,9 +637,23 @@ function cf_compute($accounts, $records, $opts) {
 		foreach ($accounts['locs'] as $l) if (empty($l['payout'])) $locBal += (float)($fac[$l['label']]['bal'] ?? 0);
 		// Floored, per-facility available credit (consistent with the Accounts view).
 		$cardBalM = 0.0; foreach ($accounts['cards'] as $c) $cardBalM += (float)($fac[$c['label']]['bal'] ?? 0);
-		$availC = max(0.0, $cardLimTotal - $cardBalM);
-		$availL = 0.0;
-		foreach ($locGroups as $g) { $gb = 0.0; foreach ($g['labels'] as $lb) $gb += (float)($fac[$lb]['bal'] ?? 0); $availL += max(0.0, $g['ceiling'] - $gb); }
+		// Card headroom is NOT floored at zero. Flooring reported 0 whether you had
+		// exactly no room left or were $40,835 past the ceiling — two very different
+		// situations that the screen could not tell apart, and the second one is the
+		// forecast telling you the plan is not executable.
+		$availC = $cardLimTotal - $cardBalM;
+		$overCard = max(0.0, -$availC);          // how far past the ceiling, 0 when inside it
+
+		// LOC room stays floored PER FACILITY: an overdrawn line cannot lend its
+		// negative room to a different line, so summing unfloored would let one
+		// facility mask another. The per-facility breach is surfaced separately.
+		$availL = 0.0; $overLoc = 0.0;
+		foreach ($locGroups as $g) {
+			$gb = 0.0; foreach ($g['labels'] as $lb) $gb += (float)($fac[$lb]['bal'] ?? 0);
+			$room = $g['ceiling'] - $gb;
+			$availL += max(0.0, $room);
+			$overLoc += max(0.0, -$room);
+		}
 		$avail = $availC + $availL;
 
 		$rows[] = [
@@ -651,7 +665,8 @@ function cf_compute($accounts, $records, $opts) {
 			'interest' => $interest, 'cashOut' => $cashOut, 'net' => $net,
 			'endCash' => $cash, 'endCredit' => $credit, 'endLoc' => $locBal, 'endCard' => $cardBalM,
 			'availLoc' => $availL, 'availCard' => $availC, 'avail' => $avail, 'liquid' => $cash + $avail,
-			'cashRisk' => $cash < $buffer, 'creditTight' => $avail < 18000,
+			'overCard' => $overCard, 'overLoc' => $overLoc, 'overLimit' => ($overCard + $overLoc) > 0.5,
+			'cashRisk' => $cash < $buffer, 'creditTight' => $avail > 0 && $avail < 18000,
 		];
 	}
 	return $rows;
