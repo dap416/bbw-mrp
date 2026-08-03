@@ -462,6 +462,7 @@ function cf_compute($accounts, $records, $opts) {
 	// every month from that month's balances — the whole point is that it cascades.
 	// Null => fall back to each facility's own 'planned' figure.
 	$debtBudget = isset($opts['debt_budget']) ? (float)$opts['debt_budget'] : null;
+	$cashCap    = (float)($opts['cash_cap'] ?? 0);   // 0 = no cap, keep all cash
 
 	$cash = (float)$accounts['start_cash'];
 	$shop = (float)$accounts['shopify_loan'];
@@ -565,39 +566,59 @@ function cf_compute($accounts, $records, $opts) {
 		// dates we do not have. No grace-period carve-out: every facility here
 		// carries a balance, so new purchases accrue from the posting date anyway.
 		// ---- snowball allocation for THIS month -------------------------------
-		// Every facility pays its minimum; one target absorbs whatever the budget
-		// leaves over. Minimums are recomputed from this month's balances, and the
-		// target is re-picked each month, so when a facility clears, its minimum
-		// stops consuming budget and the surplus rolls onto the next target
-		// automatically. That cascade is the entire point: allocating once from
-		// month-0 balances and reusing it froze the plan and the card line only ever
-		// went up.
+		// Every facility pays its minimum; whatever the budget leaves over goes to
+		// the costliest facility still carrying a balance, then cascades to the next
+		// one if that clears mid-month. Minimums are recomputed from this month's
+		// balances and the order is re-derived every month, so a facility that
+		// clears stops consuming budget and frees its share automatically.
+		//
+		// CASH CAP: cash above the cap is added to this month's budget and snowballed
+		// with it. Holding cash at 0% while balances accrue at 12-29% is a pure loss.
+		// The sweep is sized BEFORE the interest step and paid alongside the planned
+		// budget, so it lands in the average-balance calculation and genuinely cuts
+		// this month's interest — paying it after interest would leave the accrual
+		// untouched and understate the benefit.
+		$startCashM = $cash;
+		$sweep = 0.0;
+		$effBudget = $debtBudget;
+		if ($debtBudget !== null && $cashCap > 0) {
+			// Cash on hand before any debt payment goes out this month.
+			$preDebt = $startCashM + $incGross - $expCash - $shopPay - $reserve;
+			// Never sweep below the cash buffer, even if the cap is set under it —
+			// the buffer is the floor the whole forecast is risk-flagged against.
+			$floor   = max($cashCap, $buffer);
+			$spare   = $preDebt - $floor;
+			if ($spare > $effBudget) $effBudget = $spare;   // spend down to the cap
+		}
+
 		$planFor = [];
 		if ($debtBudget !== null) {
-			$mins = []; $minSum = 0.0;
+			$owedOf = [];
+			foreach ($fac as $key => $f) $owedOf[$key] = max(0.0, (float)$f['bal'] + (float)$f['chg']);
+
+			// 1. minimums first — these are due whether or not the budget covers them
+			$remaining = (float)$effBudget;
 			foreach ($fac as $key => $f) {
-				$owed = max(0.0, (float)$f['bal'] + (float)$f['chg']);
-				if ($owed <= 0) { $mins[$key] = 0.0; continue; }
+				if ($owedOf[$key] <= 0) { $planFor[$key] = 0.0; continue; }
 				$m = $f['is_card']
-					? max(round($owed * (float)$f['min_pct'] / 100.0), (float)$f['min_floor'])
+					? max(round($owedOf[$key] * (float)$f['min_pct'] / 100.0), (float)$f['min_floor'])
 					: (float)$f['planned'];
-				$mins[$key] = min($owed, max(0.0, $m));   // never pay more than is owed
-				$minSum += $mins[$key];
+				$planFor[$key] = min($owedOf[$key], max(0.0, $m));
+				$remaining -= $planFor[$key];
 			}
-			// Target = the costliest facility still carrying a balance.
-			$tKey = null; $tApr = -1.0;
-			foreach ($fac as $key => $f) {
-				if (($mins[$key] ?? 0.0) <= 0 && max(0.0, (float)$f['bal'] + (float)$f['chg']) <= 0) continue;
-				if ((float)$f['apr'] > $tApr) { $tApr = (float)$f['apr']; $tKey = $key; }
-			}
-			foreach ($fac as $key => $f) {
-				$owed = max(0.0, (float)$f['bal'] + (float)$f['chg']);
-				$pay  = $mins[$key] ?? 0.0;
-				if ($key === $tKey) {
-					// surplus = budget less everyone else's minimums
-					$pay = max($pay, $debtBudget - ($minSum - $pay));
+
+			// 2. surplus down the list by APR, highest first, cascading as each clears
+			if ($remaining > 0) {
+				$order = array_keys($fac);
+				usort($order, fn($a, $b) => ($fac[$b]['apr'] <=> $fac[$a]['apr']));
+				foreach ($order as $key) {
+					if ($remaining <= 0) break;
+					$headroom = $owedOf[$key] - $planFor[$key];
+					if ($headroom <= 0) continue;
+					$extra = min($remaining, $headroom);
+					$planFor[$key] += $extra;
+					$remaining     -= $extra;
 				}
-				$planFor[$key] = min($owed, max(0.0, $pay));
 			}
 		}
 
@@ -621,11 +642,12 @@ function cf_compute($accounts, $records, $opts) {
 		// the income line. Ending cash is unchanged by this — gross minus the
 		// reserve is the old net — but the mechanism is now visible instead of
 		// buried in cf_income_month().
-		$startCashM = $cash;
 		$cashOut = $expCash + $shopPay + $dpApplied;
 		$net  = $incGross - $cashOut;          // cash moving through the bank this month
 		$cash = $startCashM + $net - $reserve; // what's actually ours at month end
 		$shop = max(0.0, $shop - $shopPay);
+		// Anything paid above the planned budget came from the cap sweep.
+		if ($debtBudget !== null) $sweep = max(0.0, $dpApplied - (float)$debtBudget);
 
 		$credit = $other + $shop;
 		foreach ($fac as $f) $credit += $f['bal'];
@@ -661,7 +683,7 @@ function cf_compute($accounts, $records, $opts) {
 			'inc' => $incGross, 'inc_gross' => $incGross, 'inc_net' => $incGross - $reserve,
 			'tax_collected' => $reserve,
 			'online' => $income['online'], 'shows' => $income['shows'], 'wholesale' => $income['wholesale'],
-			'op' => $op, 'pur' => $pur, 'onCredit' => $onCredit, 'shopPay' => $shopPay, 'dp' => $dpApplied,
+			'op' => $op, 'pur' => $pur, 'onCredit' => $onCredit, 'shopPay' => $shopPay, 'dp' => $dpApplied, 'sweep' => $sweep,
 			'interest' => $interest, 'cashOut' => $cashOut, 'net' => $net,
 			'endCash' => $cash, 'endCredit' => $credit, 'endLoc' => $locBal, 'endCard' => $cardBalM,
 			'availLoc' => $availL, 'availCard' => $availC, 'avail' => $avail, 'liquid' => $cash + $avail,

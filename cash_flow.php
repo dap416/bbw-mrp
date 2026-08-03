@@ -19,6 +19,7 @@ cf_seed_records_if_empty($db);
 
 $hs      = cf_horizon_start();
 $buffer  = cash_buffer($db);
+$cashCap = cash_cap($db);
 $taxPct  = cf_avg_sales_tax_pct($db);
 $shopPct = shopify_loan_pct($db);
 $growth  = 0.0;   // no growth control in the design; kept at 0 (prior-year baseline)
@@ -27,7 +28,7 @@ $availDebt = (float)(setting_get($db, 'cf_avail_debt') ?: 12000);
 $acc     = cf_opening_accounts($db, $hs);   // projection opening (live balances)
 $live    = cf_live_accounts($db);           // editable set for the Accounts view + readouts
 $records = cf_load_records($db);
-$opts    = ['horizon_start' => $hs, 'growth' => $growth, 'buffer' => $buffer, 'tax_pct' => $taxPct, 'shop_pct' => $shopPct];
+$opts    = ['horizon_start' => $hs, 'growth' => $growth, 'buffer' => $buffer, 'tax_pct' => $taxPct, 'shop_pct' => $shopPct, 'cash_cap' => $cashCap];
 $debts   = cf_debts($live);
 $suggest = cf_suggest_map($live, $availDebt);
 // Drive the projection from the snowball BUDGET, not from a one-off allocation.
@@ -291,6 +292,7 @@ $statsHtml = '';
 			<button data-view="accounts">Accounts</button>
 		</div>
 		<div class="cf-mini"><label>Cash buffer</label><span style="color:var(--tx-lo)">$</span><input id="cfBuffer" value="<?php echo (int)$buffer; ?>"></div>
+		<div class="cf-mini" title="Most cash to hold while carrying debt. Anything above it is snowballed onto the costliest balance. 0 = no cap."><label>Cash cap</label><span style="color:var(--tx-lo)">$</span><input id="cfCashCap" value="<?php echo (int)$cashCap; ?>"></div>
 		<div class="cf-mini"><label>Avg sales tax</label><input id="cfTax" value="<?php echo rtrim(rtrim(number_format($taxPct, 2), '0'), '.'); ?>"><span style="color:var(--tx-lo)">%</span></div>
 		<div class="cf-readouts">
 			<div class="cf-ro"><div class="cf-ro-lbl">Cash on hand</div><div class="cf-ro-val"><?php echo cf_money($cashNow); ?></div></div>
@@ -352,6 +354,7 @@ $statsHtml = '';
 						cf_row($cols, $rows, ['label' => 'Charged to credit', 'get' => fn($r) => -$r['onCredit'], 'dashzero' => true, 'color' => fn($r, $v) => 'var(--tx-lo)']);
 						cf_row($cols, $rows, ['label' => 'Shopify payback', 'get' => fn($r) => $r['shopPay'], 'dashzero' => true, 'color' => fn($r, $v) => 'var(--tx-mid)']);
 						cf_row($cols, $rows, ['label' => 'Debt paydown', 'get' => fn($r) => $r['dp'], 'dashzero' => true, 'color' => fn($r, $v) => 'var(--tx-mid)']);
+						cf_row($cols, $rows, ['label' => 'Swept to debt', 'sub' => 'CASH ABOVE THE CAP', 'indent' => 16, 'get' => fn($r) => $r['sweep'], 'dashzero' => true, 'color' => fn($r, $v) => $v > 0 ? 'var(--good)' : 'var(--tx-lo)']);
 						cf_row($cols, $rows, ['label' => 'Total cash out', 'get' => fn($r) => $r['cashOut'], 'weight' => 600, 'labelColor' => 'var(--tx-hi)', 'rowbg' => true, 'color' => fn($r, $v) => 'var(--tx-hi)']);
 						// Position
 						cf_group_row('Position', $cols);

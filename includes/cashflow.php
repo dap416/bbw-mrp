@@ -619,6 +619,17 @@
 	}
 
 	/** Minimum cash to keep in the bank all year (extra above this goes to debt). Default $30k. */
+	/**
+	 * Ceiling on cash held while debt is outstanding. Anything above it is swept
+	 * into the highest-APR facility rather than idling in the bank at 0% while
+	 * balances accrue at 12-29%. 0 (the default) = no cap, keep all cash.
+	 */
+	function cash_cap($db) {
+		try { $v = setting_get($db, 'cash_cap'); if ($v !== null && $v !== '') return max(0.0, (float)$v); }
+		catch (Throwable $e) {}
+		return 0.0;
+	}
+
 	function cash_buffer($db) {
 		try { $v = setting_get($db, 'cash_buffer'); if ($v !== null && $v !== '') return max(0.0, (float)$v); }
 		catch (Throwable $e) {}
