@@ -59,6 +59,7 @@
 	/* ---- control-bar knobs (save + reload) ---- */
 	function saveSetting(payload){ return post('/ajax/cashflow/save_settings.php', payload); }
 	$('#cfBuffer').on('change', function(){ saveSetting({ cash_buffer: $(this).val() }).always(() => location.reload()); });
+	$('#cfCashCap').on('change', function(){ saveSetting({ cash_cap: $(this).val() }).always(() => location.reload()); });
 	$('#cfTax').on('change', function(){ saveSetting({ avg_sales_tax_pct: $(this).val() }).always(() => location.reload()); });
 	$('#cfAvailDebt').on('change', function(){ saveSetting({ cf_avail_debt: $(this).val() }).always(() => location.reload()); });
 

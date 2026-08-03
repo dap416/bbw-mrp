@@ -19,6 +19,9 @@ try {
 	if (isset($_POST['cash_buffer'])) {
 		setting_set($db, 'cash_buffer', (string)max(0.0, (float)$_POST['cash_buffer']));
 	}
+	if (isset($_POST['cash_cap'])) {
+		setting_set($db, 'cash_cap', (string)max(0.0, (float)$_POST['cash_cap']));
+	}
 	if (isset($_POST['tax_monthly'])) {
 		setting_set($db, 'tax_monthly', (string)max(0.0, (float)$_POST['tax_monthly']));
 	}
