@@ -41,6 +41,36 @@ $cols    = cf_month_cols($hs, 12);
 $afford  = cf_afford_calc($live, $records, $opts);
 $qbAccounts = cf_qb_account_options($db);   // for the "auto-sync this account" picker
 
+// Opening position for the START column: where every balance line stood before
+// month 1, taken from the same $acc the projection opens from.
+$oCardBal = 0.0; $oCardLim = 0.0;
+foreach ($acc['cards'] as $c) { $oCardBal += (float)$c['balance']; $oCardLim += (float)($c['limit'] ?? 0); }
+$oLocGroups = [];
+foreach ($acc['locs'] as $l) {
+	if (!empty($l['payout'])) continue;
+	$fk = (($l['facility'] ?? '') !== '') ? strtolower($l['facility']) : ('#' . $l['label']);
+	if (!isset($oLocGroups[$fk])) $oLocGroups[$fk] = ['ceiling' => 0.0, 'drawn' => 0.0];
+	$oLocGroups[$fk]['ceiling'] = max($oLocGroups[$fk]['ceiling'], (float)$l['ceiling']);
+	$oLocGroups[$fk]['drawn']  += (float)$l['drawn'];
+}
+$oLocDrawn = 0.0; $oLocRoom = 0.0;
+foreach ($oLocGroups as $g) { $oLocDrawn += $g['drawn']; $oLocRoom += max(0.0, $g['ceiling'] - $g['drawn']); }
+$oShop      = (float)$acc['shopify_loan'];
+$oCash      = (float)$acc['start_cash'];
+$oCardAvail = $oCardLim - $oCardBal;                       // unfloored, same basis as the months
+$oAvail     = $oCardAvail + $oLocRoom;
+$open = [
+	'endCash'   => $oCash,
+	'endCredit' => $oCardBal + $oLocDrawn + $oShop,
+	'endCard'   => $oCardBal,
+	'endLoc'    => $oLocDrawn + $oShop,
+	'availCard' => $oCardAvail,
+	'availLoc'  => $oLocRoom,
+	'avail'     => $oAvail,
+	'liquid'    => $oCash + $oAvail,
+	'over'      => max(0.0, -$oCardAvail),
+];
+
 // "Now" readouts. LOC room and card room stay separate everywhere they're shown —
 // a line of credit can be drawn as cash, a credit card can only buy things — and
 // are only ever added back together in the combined "Liquid available" figure.
@@ -95,6 +125,14 @@ function cf_chart_svg($rows, $buffer) {
 }
 
 /* ---- matrix row renderer ---- */
+/**
+ * $c['start'] is the OPENING position for a balance row — where the line stood
+ * before month 1. Flow rows (income, spend) have no opening and render a dash.
+ * Without it every figure on screen was a closing balance with nothing to read
+ * it against: August's LOC line showed 83,365 having already absorbed a 21,250
+ * Shopify payment, which reads as "barely moved" unless you can see it started
+ * at 112,433.
+ */
 function cf_row($cols, $rows, $c) {
 	$ind = $c['indent'] ?? 0;
 	$trAttr = '';
@@ -106,6 +144,11 @@ function cf_row($cols, $rows, $c) {
 	echo '<span style="color:' . ($c['labelColor'] ?? 'var(--tx-mid)') . ';font-weight:' . ($c['weight'] ?? 500) . '">' . htmlspecialchars($c['label']) . '</span>';
 	if (!empty($c['sub'])) echo '<div class="cf-sub mono">' . htmlspecialchars($c['sub']) . '</div>';
 	echo '</td>';
+	if (array_key_exists('start', $c) && $c['start'] !== null) {
+		echo '<td class="cf-start cf-num" style="color:var(--tx-mid);font-weight:' . ($c['weight'] ?? 500) . '">' . cf_money($c['start']) . '</td>';
+	} else {
+		echo '<td class="cf-start cf-num" style="color:var(--tx-lo)">' . cf_dash() . '</td>';
+	}
 	foreach ($cols as $i => $col) {
 		$r = $rows[$i];
 		$v = ($c['get'])($r);
@@ -121,6 +164,7 @@ function cf_row($cols, $rows, $c) {
 }
 function cf_group_row($label, $cols) {
 	echo '<tr class="cf-grouprow"><td class="cf-stick cf-group">' . htmlspecialchars($label) . '</td>';
+	echo '<td class="cf-start cf-group"></td>';
 	foreach ($cols as $col) echo '<td class="cf-group"></td>';
 	echo '</tr>';
 }
@@ -188,15 +232,24 @@ $statsHtml = '';
 	.cf-ro.accent .cf-ro-val{ color:var(--accent); }
 
 	.cf-mx-wrap{ overflow-x:auto; }
-	table.cf-mx{ border-collapse:collapse; width:100%; min-width:1000px; }
+	/* border-collapse:separate is REQUIRED here: Chrome/Safari ignore position:sticky
+	   on table cells when borders are collapsed, which is why the label column used
+	   to scroll away. Spacing is zeroed so the layout is unchanged. */
+	table.cf-mx{ border-collapse:separate; border-spacing:0; width:100%; min-width:1000px; }
 	.cf-mx th, .cf-mx td{ padding:7px 12px; border-bottom:1px solid var(--line); white-space:nowrap; }
 	.cf-mx thead th{ position:sticky; top:0; z-index:2; background:var(--bg-inset); font-family:var(--font-mono); font-size:9.5px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--tx-lo); text-align:right; }
 	.cf-mx thead th .cf-yr{ display:block; font-size:8px; color:var(--tx-lo); opacity:.7; }
-	.cf-stick{ position:sticky; left:0; z-index:1; background:var(--bg-1); text-align:left; min-width:190px; }
+	.cf-stick{ position:sticky; left:0; z-index:2; background:var(--bg-1); text-align:left; min-width:190px;
+	           box-shadow:1px 0 0 var(--line); }
+	.cf-mx thead .cf-stick{ z-index:4; }
+	/* Opening-position column, pinned right after the label so START and the first
+	   month stay side by side while the rest scrolls. */
+	.cf-start{ position:sticky; left:190px; z-index:2; background:var(--bg-1); box-shadow:1px 0 0 var(--line); }
+	.cf-mx thead .cf-start{ z-index:4; background:var(--bg-inset); }
 	.cf-mx thead .cf-stick{ z-index:3; background:var(--bg-inset); }
 	.cf-mx td.cf-num, .cf-mx td:not(.cf-stick){ text-align:right; font-family:var(--font-num); font-variant-numeric:tabular-nums; font-size:12.5px; }
-	.cf-mx td:nth-child(2){ background:var(--accent-soft); box-shadow:inset 1px 0 0 var(--accent-line), inset -1px 0 0 var(--accent-line); }
-	.cf-mx thead th:nth-child(2){ background:var(--accent-soft); }
+	.cf-mx td:nth-child(3){ background:var(--accent-soft); box-shadow:inset 1px 0 0 var(--accent-line), inset -1px 0 0 var(--accent-line); }
+	.cf-mx thead th:nth-child(3){ background:var(--accent-soft); }
 	.cf-sub{ font-size:8px; letter-spacing:.05em; text-transform:uppercase; color:var(--tx-lo); margin-top:2px; }
 	.cf-cb{ background:none; border:none; cursor:pointer; font-family:var(--font-num); font-variant-numeric:tabular-nums; font-size:12.5px; color:var(--tx-hi); padding:2px 4px; border-radius:5px; }
 	.cf-cb:hover{ background:var(--accent-soft); color:var(--accent); box-shadow:inset 0 0 0 1px var(--accent-line); }
@@ -275,6 +328,7 @@ $statsHtml = '';
 					<table class="cf-mx">
 						<thead><tr>
 							<th class="cf-stick" style="text-align:left">Line item</th>
+							<th class="cf-start" title="Opening position, before the first month">START</th>
 							<?php foreach ($cols as $i => $col) {
 								$r = $rows[$i];
 								$hc = $r['cashRisk'] ? 'var(--crit)' : ($r['creditTight'] ? 'var(--warn)' : 'var(--tx-mid)');
@@ -305,22 +359,22 @@ $statsHtml = '';
 						// Held for the state, never ours to spend — taken out before ending cash
 						// so that figure is money we can actually use.
 						cf_row($cols, $rows, ['label' => 'Sales tax reserve', 'get' => fn($r) => $r['tax_collected'], 'dashzero' => true, 'color' => fn($r, $v) => 'var(--warn)']);
-						cf_row($cols, $rows, ['label' => 'Ending cash', 'get' => fn($r) => $r['endCash'], 'weight' => 700, 'color' => fn($r, $v) => $r['cashRisk'] ? 'var(--crit)' : 'var(--tx-hi)']);
+						cf_row($cols, $rows, ['start' => $open['endCash'], 'label' => 'Ending cash', 'get' => fn($r) => $r['endCash'], 'weight' => 700, 'color' => fn($r, $v) => $r['cashRisk'] ? 'var(--crit)' : 'var(--tx-hi)']);
 						// Debt and headroom are grouped by facility KIND rather than listed flat:
 						// card room is purchasing power, LOC room can be drawn as cash, and the
 						// two are never interchangeable. Balance then liquid, for each.
 						cf_group_row('Credit cards', $cols);
-						cf_row($cols, $rows, ['label' => 'Card balance', 'indent' => 16, 'get' => fn($r) => $r['endCard'], 'color' => fn($r, $v) => 'var(--tx-mid)']);
+						cf_row($cols, $rows, ['start' => $open['endCard'], 'label' => 'Card balance', 'indent' => 16, 'get' => fn($r) => $r['endCard'], 'color' => fn($r, $v) => 'var(--tx-mid)']);
 						// Negative = past the ceiling. Shown in red rather than clamped to zero, so
 						// "no room left" and "$40k over the limit" stop looking identical.
-						cf_row($cols, $rows, ['label' => 'Card liquid', 'indent' => 16, 'get' => fn($r) => $r['availCard'], 'color' => fn($r, $v) => $v < 0 ? 'var(--crit)' : 'var(--tx-mid)']);
-						cf_row($cols, $rows, ['label' => 'Over limit', 'sub' => 'PLAN EXCEEDS THE CEILING', 'indent' => 16, 'get' => fn($r) => $r['overCard'] + $r['overLoc'], 'dashzero' => true, 'color' => fn($r, $v) => $v > 0 ? 'var(--crit)' : 'var(--tx-lo)']);
+						cf_row($cols, $rows, ['start' => $open['availCard'], 'label' => 'Card liquid', 'indent' => 16, 'get' => fn($r) => $r['availCard'], 'color' => fn($r, $v) => $v < 0 ? 'var(--crit)' : 'var(--tx-mid)']);
+						cf_row($cols, $rows, ['start' => $open['over'], 'label' => 'Over limit', 'sub' => 'PLAN EXCEEDS THE CEILING', 'indent' => 16, 'get' => fn($r) => $r['overCard'] + $r['overLoc'], 'dashzero' => true, 'color' => fn($r, $v) => $v > 0 ? 'var(--crit)' : 'var(--tx-lo)']);
 						// Unindented: this is interest across BOTH kinds, so it belongs to neither.
 						cf_row($cols, $rows, ['label' => 'Interest accrued', 'get' => fn($r) => $r['interest'], 'color' => fn($r, $v) => 'var(--warn)']);
 						cf_group_row('Line of credit', $cols);
-						cf_row($cols, $rows, ['label' => 'LOC balance', 'indent' => 16, 'get' => fn($r) => $r['endLoc'], 'color' => fn($r, $v) => 'var(--tx-mid)']);
-						cf_row($cols, $rows, ['label' => 'LOC liquid', 'indent' => 16, 'get' => fn($r) => $r['availLoc'], 'color' => fn($r, $v) => 'var(--tx-mid)']);
-						cf_row($cols, $rows, ['label' => 'Ending liquid', 'get' => fn($r) => $r['liquid'], 'weight' => 700, 'rowbg' => true, 'color' => fn($r, $v) => 'var(--accent)']);
+						cf_row($cols, $rows, ['start' => $open['endLoc'], 'label' => 'LOC balance', 'indent' => 16, 'get' => fn($r) => $r['endLoc'], 'color' => fn($r, $v) => 'var(--tx-mid)']);
+						cf_row($cols, $rows, ['start' => $open['availLoc'], 'label' => 'LOC liquid', 'indent' => 16, 'get' => fn($r) => $r['availLoc'], 'color' => fn($r, $v) => 'var(--tx-mid)']);
+						cf_row($cols, $rows, ['start' => $open['liquid'], 'label' => 'Ending liquid', 'get' => fn($r) => $r['liquid'], 'weight' => 700, 'rowbg' => true, 'color' => fn($r, $v) => 'var(--accent)']);
 						?>
 						</tbody>
 					</table>
