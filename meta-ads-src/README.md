@@ -268,3 +268,68 @@ reverts.
 
 If you extend this app, do not weaken the guard. It exists so that adding a
 write has to be a deliberate, visible decision rather than an accident.
+
+
+---
+
+## Running on the MRP server
+
+In production this dashboard is served at **https://mrp.bbwmanager.com/meta**,
+reached from the "Meta Ads" item in the MRP sidebar. It is still a Next.js app
+rather than an MRP page, so a few pieces connect the two.
+
+### How a request gets here
+
+Apache reverse-proxies `/meta` to a Node process on `127.0.0.1:3100`, run by the
+`meta-ads` systemd unit. The process binds to loopback deliberately: Apache
+terminates TLS and strips the headers behind Next's middleware-bypass advisories,
+and a process listening on every interface would let a direct hit to port 3100
+skip both.
+
+### How the login works
+
+The app has no user table. Because it shares an origin with MRP, MRP can
+authenticate for it:
+
+1. The sidebar links to `/meta_gate.php`, not to `/meta`.
+2. That page checks the PHP session and `is_owner()` the ordinary MRP way.
+3. It mints an 8-hour HMAC-signed cookie and redirects into the dashboard.
+4. `src/middleware.ts` verifies the signature on every route, API routes
+   included, and bounces anything unsigned or expired back to the gate.
+
+The signing secret must match on both sides: `meta.sso_secret` in the MRP app's
+`includes/config.local.php`, and `META_SSO_SECRET` in `/opt/meta-ads/.env.local`.
+The middleware fails closed when it is absent — an ungated ad dashboard on a
+public host is worse than one that is briefly unreachable.
+
+### How a change ships
+
+Same as any MRP change: commit and push. The GitHub webhook pulls into
+`/var/www/html`, a systemd path unit notices the ref move and runs
+`/usr/local/bin/meta-ads-deploy`, which rsyncs `meta-ads-src/` to `/opt/meta-ads`,
+runs `npm ci && npm run build` and restarts the service. It exits immediately
+when a push did not touch `meta-ads-src/`, which is most of them. A rebuild takes
+a couple of minutes; watch `/var/log/meta-ads-deploy.log`.
+
+The build happens in `/opt/meta-ads` rather than in place because `.env.local`
+holds the Meta, Shopify and Anthropic tokens, and nothing under the web root
+should ever hold those.
+
+### What lives only on the server
+
+Neither of these is in the repo, and the deploy sync is careful not to delete
+them:
+
+- `/opt/meta-ads/.env.local` — all credentials, plus `NEXT_PUBLIC_BASE_PATH`,
+  `META_PUBLIC_ORIGIN` and `META_SSO_SECRET`. All three are read at build time,
+  so changing one needs a rebuild, not just a restart.
+- `/opt/meta-ads/adjustments.json` — the manual revenue deductions.
+
+### Handy commands
+
+```bash
+systemctl status meta-ads          # is it up
+journalctl -u meta-ads -n 50       # app logs
+tail -f /var/log/meta-ads-deploy.log
+/usr/local/bin/meta-ads-deploy     # force a rebuild
+```
