@@ -19,11 +19,14 @@ const COOKIE = "meta_sso";
 const GATE = "/meta_gate.php";
 
 function unauthorized(request: NextRequest) {
-  // The gate lives outside this app's basePath, on the MRP side of the proxy.
-  // Build it off the request origin so it works on any host.
-  const url = new URL(GATE, request.nextUrl.origin);
-  url.searchParams.set("next", request.nextUrl.pathname + request.nextUrl.search);
-  return NextResponse.redirect(url);
+  // A relative Location on purpose. Behind the proxy this app's own idea of its
+  // origin is the loopback address it binds to, so NextResponse.redirect() —
+  // which requires an absolute URL — sends the browser to localhost:3100. The
+  // browser resolves a relative Location against the address it actually asked
+  // for, which is the only one that is correct here.
+  const next = request.nextUrl.pathname + request.nextUrl.search;
+  const location = `${GATE}?next=${encodeURIComponent(next)}`;
+  return new NextResponse(null, { status: 307, headers: { Location: location } });
 }
 
 function timingSafeEqual(a: string, b: string): boolean {
@@ -78,5 +81,8 @@ export const config = {
   // Everything is gated, including the API routes — they are what actually
   // return the data. Next's own static chunks under /_next are exempt: they
   // hold no data, and a redirect there breaks the page for a signed-in user.
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  // "/" is listed separately: Next compiles the group in the pattern below as a
+  // required path segment, so it covers /setup and /api/* but never the root —
+  // which would leave the dashboard itself the one ungated page.
+  matcher: ["/", "/((?!_next/static|_next/image|favicon.ico).*)"],
 };
