@@ -265,6 +265,7 @@ export function buildDemoData(
         id: `demo_adset_${i}_${j}`,
         name: `${p.name} · ${suffix}`,
         level: "adset" as const,
+        campaignId: `demo_campaign_${i}`,
         status: p.status,
         dailyBudget: null,
         lifetimeBudget: null,
@@ -282,6 +283,9 @@ export function buildDemoData(
         id: `demo_ad_${i}_${j}`,
         name: `${p.name} · ${suffix}`,
         level: "ad" as const,
+        campaignId: `demo_campaign_${i}`,
+        // Three ads across two ad sets, so the tree is not a neat 1:1.
+        adsetId: `demo_adset_${i}_${j % 2}`,
         status: p.status,
         dailyBudget: null,
         lifetimeBudget: null,

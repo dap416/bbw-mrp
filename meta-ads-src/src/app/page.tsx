@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AdjustmentsPanel } from "@/components/AdjustmentsPanel";
 import { AdvicePanel } from "@/components/AdvicePanel";
 import { EntityTable } from "@/components/EntityTable";
+import type { Crumb } from "@/components/EntityTable";
 import { FindingsPanel } from "@/components/FindingsPanel";
 import { FunnelPanel } from "@/components/FunnelPanel";
 import { HourlyCharts } from "@/components/HourlyCharts";
@@ -13,7 +14,7 @@ import { StatTile } from "@/components/StatTile";
 import { TrendCharts } from "@/components/TrendCharts";
 import { PRESET_LABELS } from "@/lib/dates";
 import { count, delta, money, multiple, percent } from "@/lib/format";
-import type { DashboardData, Level, Preset } from "@/lib/types";
+import type { DashboardData, EntityRow, Level, Preset } from "@/lib/types";
 
 type CompareMode = "previous_period" | "previous_year";
 
@@ -46,6 +47,15 @@ export default function Page() {
   const [preset, setPreset] = useState<Preset>("last_28d");
   const [compare, setCompare] = useState<CompareMode>("previous_period");
   const [level, setLevel] = useState<Exclude<Level, "account">>("campaign");
+  /**
+   * Where the breakdown is drilled to. Held as id plus name so the trail keeps
+   * reading correctly across a reload of a different period, where the entity
+   * may not have delivered and so is absent from the new rows entirely.
+   */
+  const [focus, setFocus] = useState<{
+    campaign?: { id: string; name: string };
+    adset?: { id: string; name: string };
+  }>({});
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
   const [loading, setLoading] = useState(true);
@@ -196,23 +206,156 @@ export default function Page() {
             <AdvicePanel data={data} />
           </div>
           {data.canEdit && <AdjustmentsPanel data={data} onChanged={load} />}
-          <EntityTable
-            rows={
-              level === "campaign" ? data.campaigns
-              : level === "adset" ? data.adsets
-              : data.ads
-            }
-            currency={data.account.currency}
-            targetRoas={data.targets.roas}
-            compareLabel={data.compareLabel}
-            levels={LEVELS}
+          <Breakdown
+            data={data}
             level={level}
-            onLevelChange={setLevel}
+            setLevel={setLevel}
+            focus={focus}
+            setFocus={setFocus}
           />
           <Footnote data={data} />
         </>
       )}
     </main>
+  );
+}
+
+/* --- Breakdown ----------------------------------------------------------- */
+
+type Focus = {
+  campaign?: { id: string; name: string };
+  adset?: { id: string; name: string };
+};
+
+/**
+ * Holds the campaign → ad set → ad hierarchy together.
+ *
+ * Meta returns each level as its own flat list; the parent ids ride along on
+ * every row, so the tree can be reconstructed here rather than re-queried.
+ * Drilling is therefore instant and costs no extra API call.
+ */
+function Breakdown({
+  data,
+  level,
+  setLevel,
+  focus,
+  setFocus,
+}: {
+  data: DashboardData;
+  level: Exclude<Level, "account">;
+  setLevel: (level: Exclude<Level, "account">) => void;
+  focus: Focus;
+  setFocus: (focus: Focus) => void;
+}) {
+  const rows =
+    level === "campaign"
+      ? data.campaigns
+      : level === "adset"
+        ? focus.campaign
+          ? data.adsets.filter((r) => r.campaignId === focus.campaign!.id)
+          : data.adsets
+        : focus.adset
+          ? data.ads.filter((r) => r.adsetId === focus.adset!.id)
+          : focus.campaign
+            ? data.ads.filter((r) => r.campaignId === focus.campaign!.id)
+            : data.ads;
+
+  const name = (list: EntityRow[], id?: string) =>
+    id ? (list.find((r) => r.id === id)?.name ?? null) : null;
+
+  // The last crumb is always the current location and never links to itself,
+  // so each level appends its own ending rather than sharing one.
+  const crumbs: Crumb[] = [
+    {
+      label: "All campaigns",
+      onClick:
+        level === "campaign"
+          ? undefined
+          : () => {
+              setFocus({});
+              setLevel("campaign");
+            },
+    },
+  ];
+  if (level === "adset") {
+    crumbs.push(
+      focus.campaign
+        ? { label: focus.campaign.name }
+        : { label: "All ad sets" },
+    );
+  } else if (level === "ad") {
+    if (focus.campaign) {
+      crumbs.push({
+        label: focus.campaign.name,
+        onClick: () => {
+          setFocus({ campaign: focus.campaign });
+          setLevel("adset");
+        },
+      });
+    }
+    // Without an ad set in the trail we are looking at every ad under whatever
+    // is above, which needs saying — otherwise the campaign crumb reads as if
+    // its ad sets were on screen.
+    crumbs.push({ label: focus.adset ? focus.adset.name : "All ads" });
+  }
+
+  return (
+    <EntityTable
+      rows={rows}
+      accountId={data.account.id}
+      currency={data.account.currency}
+      targetRoas={data.targets.roas}
+      compareLabel={data.compareLabel}
+      levels={LEVELS}
+      level={level}
+      onLevelChange={(next) => {
+        // Going up abandons the part of the trail that is now below you;
+        // going down keeps it, so Ads after Ad sets stays within the ad set.
+        if (next === "campaign") setFocus({});
+        else if (next === "adset") setFocus({ campaign: focus.campaign });
+        setLevel(next);
+      }}
+      onDrill={
+        level === "campaign"
+          ? (row) => {
+              setFocus({ campaign: { id: row.id, name: row.name } });
+              setLevel("adset");
+            }
+          : level === "adset"
+            ? (row) => {
+                setFocus({
+                  campaign:
+                    focus.campaign ??
+                    (row.campaignId
+                      ? {
+                          id: row.campaignId,
+                          name:
+                            name(data.campaigns, row.campaignId) ?? "Campaign",
+                        }
+                      : undefined),
+                  adset: { id: row.id, name: row.name },
+                });
+                setLevel("ad");
+              }
+            : undefined
+      }
+      drillNoun={level === "campaign" ? "ad sets" : level === "adset" ? "ads" : undefined}
+      crumbs={crumbs}
+      parentLabel={(row) => {
+        // Only worth the space when the crumbs don't already say it.
+        if (level === "adset" && !focus.campaign) {
+          return name(data.campaigns, row.campaignId);
+        }
+        if (level === "ad" && !focus.adset) {
+          const adset = name(data.adsets, row.adsetId);
+          const campaign = focus.campaign
+            ? null
+            : name(data.campaigns, row.campaignId);
+          return [campaign, adset].filter(Boolean).join(" › ") || null;
+        }
+        return null;
+      }}
+    />
   );
 }
 
