@@ -22,7 +22,7 @@ export const dynamic = "force-dynamic";
 async function guard(request: Request): Promise<NextResponse | null> {
   if (await isAuthorized(request)) return null;
   return NextResponse.json(
-    { error: "Not authorised. Sign in to the MRP as the account owner." },
+    { error: "Not authorised. This needs Edit access to Meta Ads in the MRP." },
     { status: 403 },
   );
 }
