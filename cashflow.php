@@ -500,7 +500,15 @@
 	</div></div>
 </details>
 
-<?php $b0 = $blocks[0] ?? null; ?>
+<?php
+	// The paydown plan is for the CURRENT month. $blocks[0] can be the hidden prior
+	// month (kept for entering actuals), which carries no avalanche — using it labelled
+	// the panel with last month and reported "no card payments".
+	$b0 = null;
+	foreach ($blocks as $_b) { if (($_b['ym'] ?? '') === date('Y-m')) { $b0 = $_b; break; } }
+	if ($b0 === null) foreach ($blocks as $_b) { if (empty($_b['is_past'])) { $b0 = $_b; break; } }
+	if ($b0 === null) $b0 = $blocks[0] ?? null;
+?>
 <div class="row g-3 mb-1">
 	<!-- CARD PAYDOWN PLAN (this month) -->
 	<div class="col-12 col-lg-7">
