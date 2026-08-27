@@ -180,6 +180,70 @@
 			<button class="btn btn-primary" id="reconcileBtn"><i class="ti ti-checkbox me-1"></i>Reconcile now</button>
 		</div>
 
+		<!-- IN PROGRESS: this month is half-traded, so it is entered, not forecast.
+		     Sales so far are already in the bank; only the estimate for the days that are
+		     left can still bring cash in, and that estimate drives the whole 12-month plan. -->
+		<?php $ip = $tm['in_progress']; $needEst = !empty($ip['needs_estimate']); ?>
+		<div class="p-2 rounded mb-3" style="background:<?php echo $needEst ? '#fff8e6' : '#f2f7ff'; ?>;border-left:4px solid <?php echo $needEst ? '#e8a33d' : '#4680ff'; ?>;">
+			<div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+				<span class="badge" style="background:<?php echo $needEst ? '#e8a33d' : '#4680ff'; ?>;">IN PROGRESS</span>
+				<span class="fw-semibold" style="font-size:0.82rem;"><?php echo $tm['label']; ?> is <?php echo round($tm['frac']*100); ?>% through — <?php echo $tm['days_left']; ?> days left to trade</span>
+				<?php if (!empty($ip['as_of'])): ?>
+					<span class="text-muted" style="font-size:0.7rem;">sales updated <?php echo $ip['age_days'] === 0 ? 'today' : $ip['age_days'].'d ago'; ?></span>
+				<?php endif; ?>
+			</div>
+			<div class="row g-2 align-items-end">
+				<div class="col-6 col-lg-3">
+					<label class="text-muted text-uppercase fw-semibold d-block" style="font-size:0.6rem;letter-spacing:.04em;">Sales so far this month</label>
+					<div class="input-group input-group-sm">
+						<span class="input-group-text">$</span>
+						<input type="text" class="form-control mo-actual" data-ym="<?php echo $tm['ym']; ?>" data-field="mtd"
+						       value="<?php echo $ip['mtd']===null?'':number_format($ip['mtd'],0,'.',''); ?>" placeholder="enter">
+					</div>
+					<div class="text-muted" style="font-size:0.62rem;">already in your bank balance</div>
+				</div>
+				<div class="col-6 col-lg-3">
+					<label class="text-muted text-uppercase fw-semibold d-block" style="font-size:0.6rem;letter-spacing:.04em;">Est. through month end</label>
+					<div class="input-group input-group-sm">
+						<span class="input-group-text">$</span>
+						<input type="text" class="form-control mo-actual" data-ym="<?php echo $tm['ym']; ?>" data-field="rest"
+						       value="<?php echo $ip['rest']===null?'':number_format($ip['rest'],0,'.',''); ?>" placeholder="enter">
+					</div>
+					<div class="text-muted" style="font-size:0.62rem;">
+						<?php if ($ip['run_rate_rest'] !== null): ?>
+							at your current run rate: <strong><?php echo money0($ip['run_rate_rest']); ?></strong>
+						<?php else: ?>the only sales that can still come in<?php endif; ?>
+					</div>
+				</div>
+				<div class="col-6 col-lg-3">
+					<div class="text-muted text-uppercase fw-semibold" style="font-size:0.6rem;letter-spacing:.04em;">Month total</div>
+					<div class="h5 fw-bold mb-0"><?php echo $ip['month_total']===null?'—':money0($ip['month_total']); ?></div>
+					<div class="text-muted" style="font-size:0.62rem;">
+						<?php if ($ip['run_rate'] !== null): ?><?php echo money0($ip['run_rate']); ?>/day so far<?php else: ?>so far + estimate<?php endif; ?>
+					</div>
+				</div>
+				<div class="col-6 col-lg-3">
+					<div class="text-muted text-uppercase fw-semibold" style="font-size:0.6rem;letter-spacing:.04em;">vs Last <?php echo date('M', strtotime($tm['ym'].'-01')); ?></div>
+					<?php if ($tm['yoy']['available'] && $ip['month_total'] !== null): ?>
+						<div class="h5 fw-bold mb-0" style="color:<?php echo $tm['yoy']['delta']>=0?'#2ca01c':'#e64545'; ?>;"><?php echo ($tm['yoy']['delta']>=0?'+':'').$tm['yoy']['pct']; ?>%</div>
+						<div class="text-muted" style="font-size:0.62rem;"><?php echo money0($tm['yoy']['prior']); ?> last year</div>
+					<?php else: ?>
+						<div class="h5 fw-bold mb-0 text-muted">—</div>
+						<div class="text-muted" style="font-size:0.62rem;">enter sales to compare</div>
+					<?php endif; ?>
+				</div>
+			</div>
+			<?php if ($needEst): ?>
+				<div class="mt-2 mb-0" style="font-size:0.76rem;color:#8a6116;">
+					<i class="ti ti-alert-triangle me-1"></i>No estimate yet, so the plan plans on <strong>$0</strong> more coming in this month and will not suggest spending against it. Enter both figures above to see the real picture.
+				</div>
+			<?php elseif (!empty($ip['stale'])): ?>
+				<div class="mt-2 mb-0" style="font-size:0.76rem;color:#8a6116;">
+					<i class="ti ti-clock me-1"></i>These sales figures are <?php echo $ip['age_days']; ?> days old. Update them — the whole 12-month plan is built on this month's estimate.
+				</div>
+			<?php endif; ?>
+		</div>
+
 		<!-- KPI row -->
 		<div class="row g-2 mb-3">
 			<div class="col-6 col-lg-3"><div class="p-2 rounded h-100" style="background:#f6f8fa;">

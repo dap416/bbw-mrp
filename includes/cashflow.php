@@ -363,6 +363,9 @@
 			$a = $actuals[$m['ym']] ?? null;
 			$m['actual_proj']   = $a['proj']   ?? null;
 			$m['actual_income'] = $a['income'] ?? null;
+			$m['sales_mtd']     = $a['mtd']    ?? null;   // in-progress month: sold so far
+			$m['sales_rest']    = $a['rest']   ?? null;   // in-progress month: expected over the days left
+			$m['sales_asof']    = $a['asof']   ?? null;   // when those two were last updated
 			if ($m['actual_income'] !== null)   { $m['projected'] = $m['actual_income']; $m['income_source'] = 'income'; }
 			elseif ($m['actual_proj'] !== null) { $m['projected'] = $m['actual_proj'];   $m['income_source'] = 'projection'; }
 			else                                { $m['projected'] = $m['suggested'];     $m['income_source'] = 'suggested'; }
@@ -473,6 +476,9 @@
 				'actual_income'=> $m['actual_income'] ?? null,
 				'income_source'=> $m['income_source'] ?? 'suggested',
 				'is_past'      => !empty($m['is_past']),
+				'sales_mtd'    => $m['sales_mtd'] ?? null,
+				'sales_rest'   => $m['sales_rest'] ?? null,
+				'sales_asof'   => $m['sales_asof'] ?? null,
 				'prior_shopify'=> $m['prior_shopify'] ?? null,
 				'prior_qb'     => $m['prior_qb'] ?? null,
 				'recurring'  => $recurMo,
@@ -805,6 +811,13 @@
 			actual_income     DECIMAL(14,2) NULL,
 			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		) ENGINE=InnoDB");
+		// The IN-PROGRESS month is split in two: what has actually sold so far (already in
+		// the bank) and what you expect over the days that are left (the only part that can
+		// still arrive). Both are entered by hand — a month that is half over is not a
+		// forecast, and guessing the back half from last year overstates a declining season.
+		try { $db->exec("ALTER TABLE cash_month_actuals ADD COLUMN sales_mtd DECIMAL(14,2) NULL"); }   catch (Throwable $e) {}
+		try { $db->exec("ALTER TABLE cash_month_actuals ADD COLUMN sales_rest DECIMAL(14,2) NULL"); }  catch (Throwable $e) {}
+		try { $db->exec("ALTER TABLE cash_month_actuals ADD COLUMN sales_asof DATE NULL"); }           catch (Throwable $e) {}
 	}
 	function load_month_actuals($db) {
 		$out = [];
@@ -814,6 +827,9 @@
 				$out[$r['ym']] = [
 					'proj'   => $r['actual_projection'] !== null ? (float)$r['actual_projection'] : null,
 					'income' => $r['actual_income']     !== null ? (float)$r['actual_income']     : null,
+					'mtd'    => (isset($r['sales_mtd'])  && $r['sales_mtd']  !== null) ? (float)$r['sales_mtd']  : null,
+					'rest'   => (isset($r['sales_rest']) && $r['sales_rest'] !== null) ? (float)$r['sales_rest'] : null,
+					'asof'   => (!empty($r['sales_asof']) && $r['sales_asof'] !== '0000-00-00') ? $r['sales_asof'] : null,
 				];
 			}
 		} catch (Throwable $e) {}
@@ -990,25 +1006,24 @@
 			$in = []; $out = [];
 
 			// ── Cash in ──
-			// The current month is PART SPENT. Sales that happened on or before the date the
-			// bank balances were reconciled are already sitting in that balance — only the
-			// days that haven't happened yet can still bring money in. So the current month's
-			// projection is pro-rated to the days remaining; counting the whole month again
-			// on the 26th is a double-count that makes the plan spend cash that never arrives.
-			// (Past months and future months are untouched — a future month has all its days.)
-			$income   = (float)$row['income'];
-			$leftFrac = 1.0;
-			if (!$isPast && $ym === date('Y-m')) {
-				$daysIn  = (int)date('t');
-				$asOf    = $data['manual']['bank_asof'] ?? null;
-				// Elapsed = days already covered by the reconciled balance. A stale as-of
-				// (before this month) covers none of it, so nothing gets pro-rated away.
-				$elapsed = ($asOf && substr($asOf, 0, 7) === $ym) ? (int)date('j', strtotime($asOf)) : 0;
-				$leftFrac = max(0.0, min(1.0, ($daysIn - $elapsed) / $daysIn));
-				$income   = round($income * $leftFrac, 2);
+			// The current month is IN PROGRESS: what has already sold is in the bank balance,
+			// so the only sales that can still bring cash in are the ones over the days that
+			// are left. That figure is entered by hand (see sales_rest) rather than derived
+			// from last year — in a declining season a year-old baseline overstates the back
+			// half of every month. Until it IS entered, the month projects NO further sales:
+			// better to plan on nothing and be pleasantly surprised than to spend a guess.
+			// Past and future months keep their normal full-month projection.
+			$income     = (float)$row['income'];
+			$inProgress = (!$isPast && $ym === date('Y-m'));
+			$needsEst   = false;
+			if ($inProgress) {
+				$rest     = $row['sales_rest'];
+				$needsEst = ($rest === null);
+				$income   = $needsEst ? 0.0 : max(0.0, (float)$rest);
 			}
-			$incLabel = 'Projected sales (' . ($row['basis'] === 'qb' ? 'QB income' : 'Shopify') . ')'
-				. ($leftFrac < 1.0 ? ' — ' . round($leftFrac * (int)date('t')) . ' days left' : '');
+			$incLabel = $inProgress
+				? 'Sales expected over the rest of ' . date('M', strtotime($ym . '-01')) . ' (your estimate)'
+				: 'Projected sales (' . ($row['basis'] === 'qb' ? 'QB income' : 'Shopify') . ')';
 			if ($income > 0) $in[] = ['label' => $incLabel, 'amount' => $income, 'week' => 0, 'source' => 'auto', 'key' => 'sales', 'recon' => true];
 			$arIdx = 0;
 			foreach (($arByYm[$ym] ?? []) as $it) $in[] = ['label' => 'Receivable: ' . ($it['customer'] ?: $it['name']), 'amount' => (float)$it['amount'], 'week' => 0, 'source' => 'receivable', 'key' => 'ar' . ($arIdx++), 'recon' => true];
@@ -1171,6 +1186,7 @@
 
 			// ── Advice ──
 			$advice = [];
+			if ($needsEst) $advice[] = ['kind' => 'warn', 'text' => 'This month is in progress and has no sales estimate yet — it is planning on $0 more coming in. Enter sales so far and what you expect over the remaining days.'];
 			if ($cash < 0)            $advice[] = ['kind' => 'warn', 'text' => 'Cash goes negative (ending $' . number_format($cash, 0) . '). Reduce card extra or pull income forward.'];
 			elseif ($cash < $buffer)  $advice[] = ['kind' => 'warn', 'text' => 'Ends below your $' . number_format($buffer, 0) . ' buffer ($' . number_format($cash, 0) . '). Paying minimums only this month.'];
 			if ($targetIdx !== null && $pay[$targetIdx] > $cards[$targetIdx]['min']) {
@@ -1200,6 +1216,9 @@
 				'card_room' => round($cardRoomM), 'loc_room' => round($locRoomM),
 				'card_payments' => $cardPayments,
 				'tax_setaside' => $taxSet, 'tax_payment' => $taxPayment, 'tax_reserve' => $reserve,
+				'in_progress' => $inProgress, 'needs_estimate' => $needsEst,
+				'sales_mtd' => $row['sales_mtd'] ?? null, 'sales_rest' => $row['sales_rest'] ?? null,
+				'sales_asof' => $row['sales_asof'] ?? null,
 				'advice' => $advice,
 			], $incFields);
 		}
@@ -1312,6 +1331,27 @@
 		$fcRow = null;
 		foreach (($forecast['rows'] ?? []) as $r) { if ($r['ym'] === $curYm) { $fcRow = $r; break; } }
 		$thisIncome = $fcRow ? (float)($fcRow['income'] ?? 0) : $inPlanned;
+		// ── In-progress month: sold so far + expected over the days left ──
+		// Once you have entered them, THOSE are what this month is actually worth, so the
+		// year-over-year read compares real trading against last year instead of a baseline
+		// that was derived from last year in the first place.
+		$mtd  = $cur['sales_mtd']  ?? null;
+		$rest = $cur['sales_rest'] ?? null;
+		if ($mtd !== null || $rest !== null) $thisIncome = (float)$mtd + (float)$rest;
+		$salesAsOf = $cur['sales_asof'] ?? null;
+		$salesAge  = $salesAsOf ? (int)floor((strtotime(date('Y-m-d')) - strtotime($salesAsOf)) / 86400) : null;
+		$runRate   = ($mtd !== null && $day > 0) ? round($mtd / $day, 2) : null;   // per day, so far
+		$inProgress = [
+			'mtd' => $mtd === null ? null : round($mtd), 'rest' => $rest === null ? null : round($rest),
+			'month_total' => ($mtd === null && $rest === null) ? null : round((float)$mtd + (float)$rest),
+			'as_of' => $salesAsOf, 'age_days' => $salesAge,
+			'needs_estimate' => !empty($cur['needs_estimate']),
+			'run_rate' => $runRate,
+			// What the run rate implies for the days left — shown next to your estimate as a
+			// sanity check, never substituted for it.
+			'run_rate_rest' => $runRate === null ? null : round($runRate * $daysLeft),
+			'stale' => ($salesAge !== null && $salesAge >= 3),
+		];
 		$priorQb  = $fcRow['prior_qb'] ?? null;
 		$priorShop= $fcRow['prior_shopify'] ?? null;
 		$priorYear = $priorQb !== null ? (float)$priorQb : ($priorShop !== null ? (float)$priorShop : null);
@@ -1324,6 +1364,7 @@
 			'ym' => $curYm, 'label' => $cur['label'],
 			'day' => $day, 'days_in' => $daysIn, 'days_left' => $daysLeft, 'frac' => $frac,
 			'pace_frac' => $paceFrac, 'recon_day' => $reconDay,
+			'in_progress' => $inProgress,
 			'start_cash' => round($startCash), 'buffer' => round($buffer),
 			'proj_end' => $projEnd === null ? null : round($projEnd), 'end_status' => $endStatus,
 			'in' => ['planned' => round($inPlanned), 'received' => round($inReceived), 'remaining' => round($inRemaining),
