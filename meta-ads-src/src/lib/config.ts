@@ -138,19 +138,3 @@ export function envFilePath(): string {
   return ENV_PATH;
 }
 
-/**
- * The setup page can write credentials to disk, so it is restricted to
- * requests that actually originated on this machine. `next dev` binds to every
- * interface, which means without this check anyone on the same network could
- * open the page and read or replace the stored tokens.
- */
-export function isLocalRequest(request: Request): boolean {
-  const host = request.headers.get("host") ?? "";
-  const hostname = host.replace(/:\d+$/, "").replace(/^\[|\]$/g, "");
-  return (
-    hostname === "localhost" ||
-    hostname === "127.0.0.1" ||
-    hostname === "::1" ||
-    hostname.endsWith(".localhost")
-  );
-}

@@ -5,7 +5,8 @@ import {
   validateAdjustment,
   writeAdjustments,
 } from "@/lib/adjustments";
-import { getConfig, isLocalRequest } from "@/lib/config";
+import { isAuthorized } from "@/lib/auth";
+import { getConfig } from "@/lib/config";
 import { addDays } from "@/lib/dates";
 import { buildDemoData } from "@/lib/demo";
 import { MetaError, getAccountTotals, getEntityRows } from "@/lib/meta";
@@ -14,26 +15,26 @@ import type { Adjustment, Level } from "@/lib/types";
 export const dynamic = "force-dynamic";
 
 /**
- * Manages manual revenue deductions. Writes to disk, so it is restricted to
- * this machine for the same reason the setup endpoint is.
+ * Manages manual revenue deductions. Writes to disk, so it checks authorisation
+ * itself for the same reason the setup endpoint does.
  */
 
-function guard(request: Request): NextResponse | null {
-  if (isLocalRequest(request)) return null;
+async function guard(request: Request): Promise<NextResponse | null> {
+  if (await isAuthorized(request)) return null;
   return NextResponse.json(
-    { error: "Adjustments can only be changed from this computer." },
+    { error: "Not authorised. Sign in to the MRP as the account owner." },
     { status: 403 },
   );
 }
 
 export async function GET(request: Request) {
-  const blocked = guard(request);
+  const blocked = await guard(request);
   if (blocked) return blocked;
   return NextResponse.json({ adjustments: readAdjustments() });
 }
 
 export async function POST(request: Request) {
-  const blocked = guard(request);
+  const blocked = await guard(request);
   if (blocked) return blocked;
 
   let body: Partial<Adjustment>;
@@ -75,7 +76,7 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const blocked = guard(request);
+  const blocked = await guard(request);
   if (blocked) return blocked;
 
   const id = new URL(request.url).searchParams.get("id");
@@ -108,7 +109,7 @@ export async function DELETE(request: Request) {
  * average, but on its own day it stands out unmistakably.
  */
 export async function PUT(request: Request) {
-  const blocked = guard(request);
+  const blocked = await guard(request);
   if (blocked) return blocked;
 
   const accountId = getConfig("META_AD_ACCOUNT_ID");

@@ -4,10 +4,10 @@ import {
   SECRET_KEYS,
   envFilePath,
   getConfig,
-  isLocalRequest,
   saveConfig,
   type ConfigKey,
 } from "@/lib/config";
+import { isAuthorized } from "@/lib/auth";
 import { MetaError, listAdAccounts } from "@/lib/meta";
 
 export const dynamic = "force-dynamic";
@@ -15,18 +15,17 @@ export const dynamic = "force-dynamic";
 /**
  * Reads and writes .env.local for the setup page.
  *
- * This endpoint can persist credentials to disk, so it refuses any request
- * that did not come from this machine. `next dev` listens on every network
- * interface, so without that check a device on the same wifi could POST here.
+ * This endpoint can persist credentials to disk, so it checks authorisation
+ * itself rather than relying on the middleware having run. In production that
+ * means a valid token from meta_gate.php, which MRP issues only to the
+ * signed-in owner; in development, where there is no MRP, it still means a
+ * request from this machine.
  */
 
-function guard(request: Request): NextResponse | null {
-  if (isLocalRequest(request)) return null;
+async function guard(request: Request): Promise<NextResponse | null> {
+  if (await isAuthorized(request)) return null;
   return NextResponse.json(
-    {
-      error:
-        "Setup is only available from this computer. Open http://localhost:3100/setup directly.",
-    },
+    { error: "Not authorised. Sign in to the MRP as the account owner." },
     { status: 403 },
   );
 }
@@ -38,7 +37,7 @@ function mask(value: string): string {
 }
 
 export async function GET(request: Request) {
-  const blocked = guard(request);
+  const blocked = await guard(request);
   if (blocked) return blocked;
 
   const values: Record<string, string> = {};
@@ -56,7 +55,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const blocked = guard(request);
+  const blocked = await guard(request);
   if (blocked) return blocked;
 
   let body: Record<string, unknown>;
@@ -124,7 +123,7 @@ export async function POST(request: Request) {
  * to find an ID themselves.
  */
 export async function PUT(request: Request) {
-  const blocked = guard(request);
+  const blocked = await guard(request);
   if (blocked) return blocked;
 
   let token: string | undefined;

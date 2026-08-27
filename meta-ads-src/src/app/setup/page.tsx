@@ -146,7 +146,7 @@ export default function SetupPage() {
         </h1>
         <p className="secondary" style={{ margin: 0, fontSize: "0.875rem", lineHeight: 1.55 }}>
           Paste your keys below and press Save. They are written to{" "}
-          <code style={codeStyle}>{path || ".env.local"}</code> on this computer
+          <code style={codeStyle}>{path || ".env.local"}</code> on the server
           and never sent anywhere except to Meta, Shopify, and Anthropic when
           the dashboard loads data.
         </p>
