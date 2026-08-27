@@ -210,6 +210,29 @@
         </li>
         <?php } ?>
 
+        <?php
+        // Meta Ads dashboard — a separate Next.js app, not an MRP page. The URL lives in
+        // settings so it can be repointed (localhost → a real host) without a code change.
+        // While it points at localhost it only resolves on the machine running that app,
+        // which is why it opens in its own tab and is owner-only.
+        // Read it directly: setting_get() lives in shopify.php, which the header does not
+        // load, and the menu must never be able to fatal a page.
+        $metaUrl = 'http://localhost:4700';
+        try {
+            $_ms = $_db->prepare("SELECT sval FROM settings WHERE skey = 'meta_dashboard_url'");
+            $_ms->execute();
+            $_mr = $_ms->fetch();
+            if ($_mr && trim((string)$_mr['sval']) !== '') $metaUrl = trim((string)$_mr['sval']);
+        } catch (Throwable $e) { /* settings table missing — fall back to the default */ }
+        if (is_owner() && $metaUrl !== '') { ?>
+        <li class="pc-item">
+          <a href="<?php echo htmlspecialchars($metaUrl, ENT_QUOTES); ?>" class="pc-link" target="_blank" rel="noopener noreferrer">
+            <span class="pc-micon"><i class="ti ti-chart-line"></i></span>
+            <span class="pc-mtext">Meta Ads <i class="ti ti-external-link" style="font-size:0.68rem;opacity:.55;"></i></span>
+          </a>
+        </li>
+        <?php } ?>
+
         <?php if (has_access('research') && menu_visible('research')) { ?>
         <li class="pc-item">
           <a href="/research.php" class="pc-link">
