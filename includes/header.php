@@ -210,6 +210,20 @@
         </li>
         <?php } ?>
 
+        <?php
+        // Meta Ads dashboard — a separate Next.js app served from /meta, not an MRP page.
+        // The link goes through meta_gate.php rather than straight to /meta: the app has no
+        // login of its own, and the gate is what turns this PHP session into a token it can
+        // verify. Owner-only, matching the gate's own check.
+        if (is_owner()) { ?>
+        <li class="pc-item">
+          <a href="/meta_gate.php" class="pc-link">
+            <span class="pc-micon"><i class="ti ti-chart-line"></i></span>
+            <span class="pc-mtext">Meta Ads</span>
+          </a>
+        </li>
+        <?php } ?>
+
         <?php if (has_access('research') && menu_visible('research')) { ?>
         <li class="pc-item">
           <a href="/research.php" class="pc-link">

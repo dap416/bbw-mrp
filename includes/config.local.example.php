@@ -29,4 +29,13 @@
 			'client_secret' => 'CHANGE_ME',
 			'api_version'   => '2025-01',
 		],
+
+		// Meta Ads dashboard — the Next.js app served at /meta. It has no login
+		// of its own; meta_gate.php signs a token with this secret and the app's
+		// middleware verifies it, so the same value must appear as
+		// META_SSO_SECRET in that app's .env.local. Any long random string:
+		//   php -r "echo bin2hex(random_bytes(32));"
+		'meta' => [
+			'sso_secret' => 'CHANGE_ME',
+		],
 	];

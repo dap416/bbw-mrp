@@ -1,0 +1,198 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   Design tokens.
+
+   Light values live on bare :root so the default theme is complete without a
+   media query. Dark values are declared twice — once under prefers-color-scheme
+   (guarded so an explicit light choice still wins) and once under
+   [data-theme="dark"] so the in-app toggle beats the OS in both directions.
+
+   The chart palette is the validated categorical default: slot 1 blue,
+   slot 2 orange. Only these two are used, which keeps every chart clear of the
+   light-surface contrast warning that applies to the lighter slots.
+--------------------------------------------------------------------------- */
+
+:root {
+  color-scheme: light;
+
+  --page:            #f9f9f7;
+  --surface:         #fcfcfb;
+  --surface-sunken:  #f2f2ee;
+
+  --text-primary:    #0b0b0b;
+  --text-secondary:  #52514e;
+  --text-muted:      #898781;
+
+  --grid:            #e1e0d9;
+  --axis:            #c3c2b7;
+  --border:          rgba(11, 11, 11, 0.10);
+
+  --series-1:        #2a78d6;
+  --series-2:        #eb6834;
+
+  --status-good:     #0ca30c;
+  --status-warning:  #fab219;
+  --status-serious:  #ec835a;
+  --status-critical: #d03b3b;
+
+  /* Delta text needs to pass as text, so it is a darker step than the mark. */
+  --delta-good:      #006300;
+  --delta-bad:       #b32020;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --page:            #0d0d0d;
+    --surface:         #1a1a19;
+    --surface-sunken:  #222221;
+
+    --text-primary:    #ffffff;
+    --text-secondary:  #c3c2b7;
+    --text-muted:      #898781;
+
+    --grid:            #2c2c2a;
+    --axis:            #383835;
+    --border:          rgba(255, 255, 255, 0.10);
+
+    --series-1:        #3987e5;
+    --series-2:        #d95926;
+
+    --delta-good:      #0ca30c;
+    --delta-bad:       #e66767;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --page:            #0d0d0d;
+  --surface:         #1a1a19;
+  --surface-sunken:  #222221;
+
+  --text-primary:    #ffffff;
+  --text-secondary:  #c3c2b7;
+  --text-muted:      #898781;
+
+  --grid:            #2c2c2a;
+  --axis:            #383835;
+  --border:          rgba(255, 255, 255, 0.10);
+
+  --series-1:        #3987e5;
+  --series-2:        #d95926;
+
+  --delta-good:      #0ca30c;
+  --delta-bad:       #e66767;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--text-primary);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* --- Primitives ---------------------------------------------------------- */
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.secondary {
+  color: var(--text-secondary);
+}
+
+/* Columns of numbers align; standalone display figures do not use this. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Wide content scrolls inside its own container so the page never does. */
+.scroll-x {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* --- Controls ------------------------------------------------------------ */
+
+.control {
+  background: var(--surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.4rem 0.65rem;
+  font-size: 0.875rem;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.control:hover:not(:disabled) {
+  background: var(--surface-sunken);
+}
+
+.control:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.control-primary {
+  background: var(--series-1);
+  border-color: var(--series-1);
+  color: #ffffff;
+}
+
+.control-primary:hover:not(:disabled) {
+  background: var(--series-1);
+  filter: brightness(1.08);
+}
+
+:focus-visible {
+  outline: 2px solid var(--series-1);
+  outline-offset: 2px;
+}
+
+/* --- Recharts overrides -------------------------------------------------- */
+
+/* Gridlines are hairline and solid; Recharts defaults to a dashed stroke. */
+.recharts-cartesian-grid line {
+  stroke: var(--grid);
+  stroke-dasharray: none;
+}
+
+.recharts-cartesian-axis-line,
+.recharts-cartesian-axis-tick-line {
+  stroke: var(--axis);
+}
+
+.recharts-text {
+  fill: var(--text-muted);
+  font-size: 12px;
+}
+
+/* The crosshair is chrome, not data — it stays recessive. */
+.recharts-tooltip-cursor {
+  stroke: var(--axis);
+  stroke-width: 1;
+}
+
+.recharts-surface {
+  overflow: visible;
+}
+
+@media print {
+  body { background: #ffffff; }
+  .no-print { display: none !important; }
+}
