@@ -19,14 +19,16 @@ const COOKIE = "meta_sso";
 const GATE = "/meta_gate.php";
 
 function unauthorized(request: NextRequest) {
-  // A relative Location on purpose. Behind the proxy this app's own idea of its
-  // origin is the loopback address it binds to, so NextResponse.redirect() —
-  // which requires an absolute URL — sends the browser to localhost:3100. The
-  // browser resolves a relative Location against the address it actually asked
-  // for, which is the only one that is correct here.
-  const next = request.nextUrl.pathname + request.nextUrl.search;
-  const location = `${GATE}?next=${encodeURIComponent(next)}`;
-  return new NextResponse(null, { status: 307, headers: { Location: location } });
+  // Behind the proxy the app's own idea of its origin is the loopback address
+  // it binds to, so deriving the gate URL from the request sends the browser to
+  // localhost:3100. A relative Location would resolve correctly, but middleware
+  // rejects one as an invalid URL — hence the public origin, configured rather
+  // than inferred. Falling back to the request origin keeps local dev working,
+  // where the two are the same anyway.
+  const origin = process.env.META_PUBLIC_ORIGIN || request.nextUrl.origin;
+  const url = new URL(GATE, origin);
+  url.searchParams.set("next", request.nextUrl.pathname + request.nextUrl.search);
+  return NextResponse.redirect(url, 307);
 }
 
 function timingSafeEqual(a: string, b: string): boolean {
