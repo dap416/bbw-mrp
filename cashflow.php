@@ -665,7 +665,7 @@
 					echo $loanPaid ? ' <span class="badge bg-success" style="font-size:0.5rem;vertical-align:middle;">CLEARED</span>' : '';
 				?><br><span class="text-muted" style="font-size:0.66rem;">Bal <?php echo money0($c['balance']); ?><?php echo isset($c['available']) && $c['available'] !== null ? ' · '.money0($c['available']).' Avail' : ''; ?><?php echo !empty($c['due_day']) ? ' · due the '.(int)$c['due_day'].date('S', mktime(0,0,0,1,(int)$c['due_day'],2000)) : ''; ?></span></span>
 				<span class="text-end">
-					<?php if ($c['amount'] > 0): ?><span class="fw-semibold" style="color:#6f42c1;<?php echo $loanPaid ? 'text-decoration:line-through;' : ''; ?>"><?php echo money0($c['amount']); ?></span><?php elseif ($loanPaid && !empty($c['scheduled'])): ?><span class="text-muted" style="font-size:0.66rem;text-decoration:line-through;"><?php echo money0($c['scheduled']); ?></span><?php else: ?><span class="text-muted" style="font-size:0.66rem;">no pay</span><?php endif; ?>
+					<?php if ($c['amount'] > 0): ?><span class="fw-semibold" style="color:#6f42c1;<?php echo $loanPaid ? 'text-decoration:line-through;' : ''; ?>"><?php echo money0($c['amount']); ?></span><?php elseif ($loanPaid && !empty($c['scheduled'])): ?><span class="text-muted" style="font-size:0.66rem;text-decoration:line-through;"><?php echo money0($c['scheduled']); ?></span><?php elseif (!empty($c['via_draw'])): ?><span class="fw-semibold" style="color:#6f42c1;"><?php echo money0($c['via_draw']); ?></span><br><span class="text-muted" style="font-size:0.6rem;">via % of sales</span><?php else: ?><span class="text-muted" style="font-size:0.66rem;">no pay</span><?php endif; ?>
 				</span>
 			</div>
 			<?php endforeach; ?>

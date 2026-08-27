@@ -957,6 +957,14 @@
 			return $bb <=> $aa ?: $cards[$b]['bal'] <=> $cards[$a]['bal'];
 		});
 
+		// The Shopify Capital advance is repaid BY the %-of-sales draw — that draw is its
+		// amortization, not a separate expense. Find it so each month's draw pays the
+		// balance down, and so the draw stops once the advance is retired.
+		$shopIdx = null;
+		foreach ($cards as $k => $c) {
+			if (($c['type'] ?? '') === 'loc' && stripos($c['label'], 'shopify') !== false) { $shopIdx = $k; break; }
+		}
+
 		$reorder  = cashflow_reorder_suggestions($db);
 		$cardDone = cardpay_done_months($db);
 		$expDone  = expenses_done_months($db);
@@ -1018,8 +1026,17 @@
 			// The Shopify draw is a % of sales, so it comes off the SAME pro-rated income —
 			// otherwise a part-spent month pays a full month's draw on a partial month's sales.
 			$loan    = $expensesDone ? 0.0 : round($income * $loanPct / 100, 2);
+			// The draw can never exceed what's left on the advance, and stops entirely once
+			// it's repaid — otherwise the plan bleeds a % of sales forever against a loan
+			// that should have been retired, and the balance never amortizes.
+			$loanFinal = false;
+			if ($shopIdx !== null && $loan > 0) {
+				$owed = max(0.0, (float)$cards[$shopIdx]['bal']);
+				if ($loan >= $owed) { $loan = round($owed, 2); $loanFinal = true; }
+				$cards[$shopIdx]['bal'] = round($owed - $loan, 2);
+			}
 			$taxSet  = $expensesDone ? 0.0 : $taxMo;
-			if ($loan > 0)                              $out[] = ['label' => 'Shopify Capital (' . rtrim(rtrim(number_format($loanPct, 2), '0'), '.') . '% of sales)', 'amount' => $loan, 'week' => 0, 'source' => 'auto', 'key' => 'loan', 'payable' => true];
+			if ($loan > 0)                              $out[] = ['label' => 'Shopify Capital (' . rtrim(rtrim(number_format($loanPct, 2), '0'), '.') . '% of sales)' . ($loanFinal ? ' — final payment' : ''), 'amount' => $loan, 'week' => 0, 'source' => 'auto', 'key' => 'loan', 'payable' => true];
 			if (!$expensesDone && $row['recurring'] > 0)$out[] = ['label' => 'Recurring expenses', 'amount' => (float)$row['recurring'], 'week' => 0, 'source' => 'auto', 'key' => 'recurring', 'payable' => true];
 			if ($row['onetime'] > 0)                    $out[] = ['label' => 'Bills & POs due', 'amount' => (float)$row['onetime'], 'week' => 0, 'source' => 'auto', 'key' => 'bills', 'payable' => true];
 			if ($taxSet > 0)            $out[] = ['label' => 'Tax reserve set-aside', 'amount' => $taxSet, 'week' => 0, 'source' => 'auto', 'key' => 'tax', 'payable' => true];
@@ -1129,6 +1146,7 @@
 				                   'balance' => round((float)$c['bal'], 2), 'limit' => $c['limit'],
 				                   'available' => $avail === null ? null : round($avail, 2), 'type' => $c['type'],
 				                   'id' => $c['id'] ?? null, 'due_day' => $c['due_day'] ?? null,
+				                   'via_draw' => ($k === $shopIdx && $loan > 0) ? round($loan, 2) : null,
 				                   'key' => ($isLoc && !empty($c['id'])) ? 'locpay' . $c['id'] : null,
 				                   'payable' => $isLoc, 'paid' => $loanCleared[$k]];
 			}
