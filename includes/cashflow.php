@@ -944,7 +944,9 @@
 			            'id' => (int)($c['id'] ?? 0), 'due_day' => $c['due_day'] ?? null];
 		}
 		// Priority order for the avalanche: highest APR first (nulls last).
-		$order = array_keys($cards);
+		// LOC loans are EXCLUDED — a fixed-term loan takes its scheduled payment and
+		// nothing more, so spare cash never gets dumped into a loan payoff.
+		$order = array_keys(array_filter($cards, fn($c) => ($c['type'] ?? 'credit') !== 'loc'));
 		usort($order, function($a, $b) use ($cards) {
 			$aa = $cards[$a]['apr'] === null ? -1 : $cards[$a]['apr'];
 			$bb = $cards[$b]['apr'] === null ? -1 : $cards[$b]['apr'];
@@ -1072,7 +1074,13 @@
 					}
 					$pay[$k] = $m; $minTotal += $m;
 				}
-				$extraPool = max(0.0, $cashBeforeCards - $buffer - $minTotal);
+				// Extra above the minimums comes out of money you ACTUALLY have. For the
+				// current month that means cash in the bank (plus any cash-in already ticked
+				// received, which is in that balance) less what's still to pay — projected
+				// sales that haven't landed yet are not spendable. Future months have no
+				// "actual" to speak of, so they plan against the projection as before.
+				$payBasis  = ($ym === date('Y-m')) ? ($cash - $outBeforeCards) : $cashBeforeCards;
+				$extraPool = max(0.0, $payBasis - $buffer - $minTotal);
 				foreach ($order as $k) {
 					if ($extraPool <= 0) break;
 					$remaining = $cards[$k]['bal'] - $pay[$k];
