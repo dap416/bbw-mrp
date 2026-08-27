@@ -130,6 +130,7 @@
 			'cashflow'           => 'Cash Management',
 			'cash_flow'          => 'Cash Flow',
 			'research'           => 'Research',
+			'meta'               => 'Meta Ads',
 		];
 	}
 
@@ -151,6 +152,10 @@
 			'access_manufacturers'  => 'Manufacturers',
 			'access_research'       => 'Research',
 			'access_call_center'    => 'Call Center',
+			// The Meta Ads dashboard at /meta. View opens it; Edit additionally allows
+			// Setup and revenue Adjustments, which can rewrite the stored API tokens
+			// and the reported revenue respectively.
+			'access_meta'           => 'Meta Ads',
 		];
 	}
 

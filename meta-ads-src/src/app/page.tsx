@@ -195,7 +195,7 @@ export default function Page() {
             <FindingsPanel findings={data.findings} />
             <AdvicePanel data={data} />
           </div>
-          <AdjustmentsPanel data={data} onChanged={load} />
+          {data.canEdit && <AdjustmentsPanel data={data} onChanged={load} />}
           <EntityTable
             rows={
               level === "campaign" ? data.campaigns
@@ -295,13 +295,15 @@ function Header({
           {loading ? "Refreshing…" : "Refresh"}
         </button>
 
-        <Link
-          href="/setup"
-          className="control"
-          style={{ textDecoration: "none", color: "var(--text-primary)" }}
-        >
-          Setup
-        </Link>
+        {data?.canEdit !== false && (
+          <Link
+            href="/setup"
+            className="control"
+            style={{ textDecoration: "none", color: "var(--text-primary)" }}
+          >
+            Setup
+          </Link>
+        )}
 
         <ThemeToggle />
       </div>

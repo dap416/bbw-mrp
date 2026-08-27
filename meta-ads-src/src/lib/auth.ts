@@ -1,8 +1,9 @@
 /**
  * Verification of the single sign-on token minted by the MRP app.
  *
- * meta_gate.php checks the MRP session and is_owner(), then sets a cookie of
- * the form `<expiry>.<user id>.<hmac of the first two fields>`. Nothing here
+ * meta_gate.php checks the MRP session and the user's access to the Meta Ads
+ * area, then sets a cookie of the form
+ * `<expiry>.<user id>.<level>.<hmac of the first three fields>`. Nothing here
  * issues tokens; this only checks them.
  *
  * Deliberately dependency-free and built on Web Crypto rather than node:crypto,
@@ -64,23 +65,50 @@ export function isProduction(): boolean {
   return process.env.NODE_ENV === "production";
 }
 
-/** True when the request carries a signed, unexpired token from the gate. */
-export async function hasValidSsoToken(request: Request): Promise<boolean> {
+/**
+ * The MRP permission level the token was signed with: 0 none, 1 view, 2 edit.
+ *
+ * Mirrors access_level() in the MRP app. View opens the dashboard; Edit is
+ * additionally required for Setup and Adjustments, which can overwrite the
+ * stored API tokens and restate revenue.
+ */
+export type AuthLevel = 0 | 1 | 2;
+
+/**
+ * The level this request proves, or 0 for anything unsigned, forged or expired.
+ *
+ * Payload is `<expiry>.<user id>.<level>`; the signature covers all three, so
+ * the level cannot be edited without invalidating it.
+ */
+export async function ssoLevel(request: Request): Promise<AuthLevel> {
   const secret = process.env.META_SSO_SECRET;
-  if (!secret) return false;
+  if (!secret) return 0;
 
   const token = readCookie(request, SSO_COOKIE);
-  if (!token) return false;
+  if (!token) return 0;
 
   const cut = token.lastIndexOf(".");
-  if (cut < 0) return false;
+  if (cut < 0) return 0;
   const payload = token.slice(0, cut);
 
   const expected = await hmac(payload, secret);
-  if (!timingSafeEqual(token.slice(cut + 1), expected)) return false;
+  if (!timingSafeEqual(token.slice(cut + 1), expected)) return 0;
 
-  const expiry = Number(payload.split(".")[0]);
-  return Number.isFinite(expiry) && expiry * 1000 > Date.now();
+  const fields = payload.split(".");
+  const expiry = Number(fields[0]);
+  if (!Number.isFinite(expiry) || expiry * 1000 <= Date.now()) return 0;
+
+  // A token minted before the level was added carries only expiry and user id.
+  // Treat it as view: it is signed, so it is genuine, but it never proved edit.
+  // These expire within hours of the change and are not re-issued.
+  const level = Number(fields[2]);
+  if (level === 2) return 2;
+  return 1;
+}
+
+/** True when the request carries a signed, unexpired token from the gate. */
+export async function hasValidSsoToken(request: Request): Promise<boolean> {
+  return (await ssoLevel(request)) > 0;
 }
 
 /**
@@ -105,11 +133,14 @@ export function isLocalRequest(request: Request): boolean {
 /**
  * The check for endpoints that read or write credentials and stored data.
  *
- * In production, authorisation means one thing: a valid token from the gate,
- * which MRP only issues to the signed-in owner. In development there is no MRP
- * to issue one, so the old same-machine rule still applies.
+ * These need Edit, not merely access: Setup can overwrite the Meta, Shopify and
+ * Anthropic tokens, and Adjustments restates revenue. Someone granted View sees
+ * the figures and nothing more.
+ *
+ * In development there is no MRP to mint a token, so the old same-machine rule
+ * still stands in for it.
  */
 export async function isAuthorized(request: Request): Promise<boolean> {
-  if (isProduction()) return hasValidSsoToken(request);
-  return isLocalRequest(request) || (await hasValidSsoToken(request));
+  if (isProduction()) return (await ssoLevel(request)) >= 2;
+  return isLocalRequest(request) || (await ssoLevel(request)) >= 2;
 }

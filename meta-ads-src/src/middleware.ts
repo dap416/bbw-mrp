@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { hasValidSsoToken, isProduction } from "@/lib/auth";
+import { isProduction, ssoLevel } from "@/lib/auth";
 
 /**
  * Single sign-on with MRP.
@@ -32,16 +32,26 @@ function unauthorized(request: NextRequest) {
 }
 
 export async function middleware(request: NextRequest) {
-  if (await hasValidSsoToken(request)) return NextResponse.next();
-
   // Development runs standalone: there is no MRP to sign a token, and the gate
   // this would redirect to does not exist, so requiring one would only make the
   // app unopenable. The check is on the environment, not on whether a secret is
   // configured — a deployed build that lost its .env.local must fail closed
   // rather than serve the dashboard to anyone who asks.
-  if (!isProduction() && !process.env.META_SSO_SECRET) return NextResponse.next();
+  const standalone = !isProduction() && !process.env.META_SSO_SECRET;
 
-  return unauthorized(request);
+  const level = await ssoLevel(request);
+  if (level === 0 && !standalone) return unauthorized(request);
+
+  // Setup can overwrite the stored API tokens, so View is not enough to open
+  // it. Send a viewer to the dashboard rather than to a form that would refuse
+  // to save; the endpoints behind it check for themselves regardless.
+  if (level === 1 && request.nextUrl.pathname.startsWith("/setup")) {
+    const base = process.env.NEXT_PUBLIC_BASE_PATH || "";
+    const origin = process.env.META_PUBLIC_ORIGIN || request.nextUrl.origin;
+    return NextResponse.redirect(new URL(base || "/", origin), 307);
+  }
+
+  return NextResponse.next();
 }
 
 export const config = {

@@ -18,7 +18,7 @@ function run($db, $sql, &$log, $desc) {
     catch (Throwable $e) { $log[] = "⚠ $desc — " . $e->getMessage(); }
 }
 
-$areas = ['access_orders','access_inventory','access_products','access_build','access_manufacturers','access_research'];
+$areas = ['access_orders','access_inventory','access_products','access_build','access_manufacturers','access_research','access_meta'];
 
 // 1. Ensure every area column exists (TINYINT level). Duplicates error harmlessly.
 foreach ($areas as $col) {

@@ -203,6 +203,12 @@ export interface Advice {
 
 /** The full payload the dashboard renders. */
 export interface DashboardData {
+  /**
+   * Whether this viewer may change things — Setup and revenue Adjustments — or
+   * only read the figures. Mirrors Edit vs View on the MRP permission area, and
+   * is advisory for the UI only: the endpoints enforce it for themselves.
+   */
+  canEdit: boolean;
   account: AccountInfo;
   range: DateRange;
   compareRange: DateRange;

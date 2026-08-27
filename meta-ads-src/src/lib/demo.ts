@@ -353,6 +353,9 @@ export function buildDemoData(
   });
 
   return {
+    // Overridden by the route with the viewer's real level: demo mode changes
+    // the figures, not who is looking at them.
+    canEdit: false,
     account,
     range,
     compareRange,

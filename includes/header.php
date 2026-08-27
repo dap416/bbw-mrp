@@ -214,8 +214,9 @@
         // Meta Ads dashboard — a separate Next.js app served from /meta, not an MRP page.
         // The link goes through meta_gate.php rather than straight to /meta: the app has no
         // login of its own, and the gate is what turns this PHP session into a token it can
-        // verify. Owner-only, matching the gate's own check.
-        if (is_owner()) { ?>
+        // verify. The gate applies this same check, so the menu cannot offer a link that
+        // then refuses the user.
+        if (has_access('meta') && menu_visible('meta')) { ?>
         <li class="pc-item">
           <a href="/meta_gate.php" class="pc-link">
             <span class="pc-micon"><i class="ti ti-chart-line"></i></span>

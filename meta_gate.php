@@ -18,10 +18,10 @@
 	require_once(__DIR__."/includes/fns.php");
 	require_login();
 
-	if (!is_owner()) {
+	if (!has_access('meta')) {
 		http_response_code(403);
 		require_once(__DIR__."/includes/header.php");
-		echo '<div class="page-block"><div class="alert alert-warning">The Meta Ads dashboard is limited to the account owner.</div></div>';
+		echo '<div class="page-block"><div class="alert alert-warning">You do not have access to the Meta Ads dashboard.</div></div>';
 		exit;
 	}
 
@@ -35,7 +35,13 @@
 	// re-gating, short enough that a leaked cookie is not a standing key. The
 	// app re-issues silently on expiry as long as the MRP session is alive.
 	$expiry  = time() + 8 * 3600;
-	$payload = $expiry . '.' . (int)($_SESSION['user_id'] ?? 0);
+
+	// The permission level travels in the token. The dashboard is one app but two
+	// things: the figures, which View covers, and Setup and Adjustments, which can
+	// overwrite the stored API tokens and restate revenue. Signing the level here
+	// means the app can tell those apart without a second call back to MRP.
+	$level   = access_level('meta');
+	$payload = $expiry . '.' . (int)($_SESSION['user_id'] ?? 0) . '.' . $level;
 	$token   = $payload . '.' . hash_hmac('sha256', $payload, $secret);
 
 	setcookie('meta_sso', $token, [
