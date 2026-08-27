@@ -213,7 +213,7 @@
 			'credit_limit_total' => 0.0, 'credit_available' => 0.0,
 			'card_total' => 0.0, 'card_limit_total' => 0.0, 'card_available' => 0.0,
 			'loc_total' => 0.0, 'loc_payment' => 0.0, 'loc_limit' => 0.0, 'loc_available' => 0.0, 'loc_facilities' => [],
-			'oldest_asof' => null, 'due_count' => 0, 'update_days' => 7,
+			'oldest_asof' => null, 'bank_asof' => null, 'due_count' => 0, 'update_days' => 7,
 		];
 		try {
 			ensure_cash_balances_table($db);
@@ -246,6 +246,10 @@
 				if ($r['acct_type'] === 'bank') {
 					$res['bank'][] = $row;
 					$res['bank_total'] += $row['balance'];
+					// Cash is only known-good through the OLDEST bank as-of: if one account is
+					// stale, the total is stale. This date is what "already in the bank" means.
+					if (!empty($r['as_of']) && $r['as_of'] !== '0000-00-00'
+						&& ($res['bank_asof'] === null || $r['as_of'] < $res['bank_asof'])) $res['bank_asof'] = $r['as_of'];
 				} else {
 					$row['kind'] = $r['acct_type'] === 'loc' ? 'Line of Credit' : 'Credit Card';
 					$res['credit'][] = $row;
@@ -978,9 +982,26 @@
 			$in = []; $out = [];
 
 			// ── Cash in ──
-			// Every cash-in line carries a stable key + 'recon' so it can be reconciled
-			// ("already received — it's in the bank now") and excluded from the forecast.
-			if ($row['income'] > 0) $in[] = ['label' => 'Projected sales (' . ($row['basis'] === 'qb' ? 'QB income' : 'Shopify') . ')', 'amount' => (float)$row['income'], 'week' => 0, 'source' => 'auto', 'key' => 'sales', 'recon' => true];
+			// The current month is PART SPENT. Sales that happened on or before the date the
+			// bank balances were reconciled are already sitting in that balance — only the
+			// days that haven't happened yet can still bring money in. So the current month's
+			// projection is pro-rated to the days remaining; counting the whole month again
+			// on the 26th is a double-count that makes the plan spend cash that never arrives.
+			// (Past months and future months are untouched — a future month has all its days.)
+			$income   = (float)$row['income'];
+			$leftFrac = 1.0;
+			if (!$isPast && $ym === date('Y-m')) {
+				$daysIn  = (int)date('t');
+				$asOf    = $data['manual']['bank_asof'] ?? null;
+				// Elapsed = days already covered by the reconciled balance. A stale as-of
+				// (before this month) covers none of it, so nothing gets pro-rated away.
+				$elapsed = ($asOf && substr($asOf, 0, 7) === $ym) ? (int)date('j', strtotime($asOf)) : 0;
+				$leftFrac = max(0.0, min(1.0, ($daysIn - $elapsed) / $daysIn));
+				$income   = round($income * $leftFrac, 2);
+			}
+			$incLabel = 'Projected sales (' . ($row['basis'] === 'qb' ? 'QB income' : 'Shopify') . ')'
+				. ($leftFrac < 1.0 ? ' — ' . round($leftFrac * (int)date('t')) . ' days left' : '');
+			if ($income > 0) $in[] = ['label' => $incLabel, 'amount' => $income, 'week' => 0, 'source' => 'auto', 'key' => 'sales', 'recon' => true];
 			$arIdx = 0;
 			foreach (($arByYm[$ym] ?? []) as $it) $in[] = ['label' => 'Receivable: ' . ($it['customer'] ?: $it['name']), 'amount' => (float)$it['amount'], 'week' => 0, 'source' => 'receivable', 'key' => 'ar' . ($arIdx++), 'recon' => true];
 			foreach (($events['by_ym'][$ym]['in'] ?? []) as $e) $in[] = ['label' => $e['label'], 'amount' => $e['amount'], 'week' => $e['week'], 'source' => 'manual', 'id' => $e['id'], 'key' => 'ev' . $e['id'], 'recon' => true];
@@ -994,7 +1015,9 @@
 			// If a month's operating expenses are already paid (reflected in the bank
 			// balance), skip the recurring/loan/tax projections so they aren't double-counted.
 			$expensesDone = in_array($ym, $expDone, true);
-			$loan    = $expensesDone ? 0.0 : round((float)$row['income'] * $loanPct / 100, 2);
+			// The Shopify draw is a % of sales, so it comes off the SAME pro-rated income —
+			// otherwise a part-spent month pays a full month's draw on a partial month's sales.
+			$loan    = $expensesDone ? 0.0 : round($income * $loanPct / 100, 2);
 			$taxSet  = $expensesDone ? 0.0 : $taxMo;
 			if ($loan > 0)                              $out[] = ['label' => 'Shopify Capital (' . rtrim(rtrim(number_format($loanPct, 2), '0'), '.') . '% of sales)', 'amount' => $loan, 'week' => 0, 'source' => 'auto', 'key' => 'loan', 'payable' => true];
 			if (!$expensesDone && $row['recurring'] > 0)$out[] = ['label' => 'Recurring expenses', 'amount' => (float)$row['recurring'], 'week' => 0, 'source' => 'auto', 'key' => 'recurring', 'payable' => true];
