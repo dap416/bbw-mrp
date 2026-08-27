@@ -1263,8 +1263,17 @@
 		// ── Pace / burn ──
 		$day = (int)date('j'); $daysIn = (int)date('t'); $daysLeft = max(0, $daysIn - $day);
 		$frac = $daysIn > 0 ? min(1.0, $day / $daysIn) : 0.0;
-		$netMonth = $inPlanned - $outPlanned - $debtPlanned;   // planned net for the whole month
-		$dailyNet = $daysIn > 0 ? $netMonth / $daysIn : 0.0;
+		// The plan only covers the days AFTER the balances were reconciled — everything
+		// before that date is already in the bank. So pace and burn are measured over that
+		// remaining window, not the whole month; otherwise reconciling on the 26th instantly
+		// reads as "84% through the month and nothing collected."
+		$reconDay = 0;
+		$bankAsOf = $data['manual']['bank_asof'] ?? null;
+		if ($bankAsOf && substr($bankAsOf, 0, 7) === $curYm) $reconDay = min($day, (int)date('j', strtotime($bankAsOf)));
+		$window   = max(0, $daysIn - $reconDay);                                  // days the plan covers
+		$paceFrac = $window > 0 ? min(1.0, max(0.0, ($day - $reconDay) / $window)) : 1.0;
+		$netMonth = $inPlanned - $outPlanned - $debtPlanned;   // planned net over that window
+		$dailyNet = $window > 0 ? $netMonth / $window : 0.0;
 		// If cash is declining, the day-of-month it would cross the buffer at this pace.
 		$crossBufferDay = null;
 		if ($dailyNet < 0) {
@@ -1278,7 +1287,7 @@
 			}
 		}
 		// Collection pace: are receipts keeping up with the elapsed month?
-		$inExpectedByNow = $inPlanned * $frac;
+		$inExpectedByNow = $inPlanned * $paceFrac;
 		$inPaceDelta = $inReceived - $inExpectedByNow;   // + ahead on collecting, − behind
 
 		// ── Year-over-year: same month last year (graceful when no history) ──
@@ -1296,6 +1305,7 @@
 		return [
 			'ym' => $curYm, 'label' => $cur['label'],
 			'day' => $day, 'days_in' => $daysIn, 'days_left' => $daysLeft, 'frac' => $frac,
+			'pace_frac' => $paceFrac, 'recon_day' => $reconDay,
 			'start_cash' => round($startCash), 'buffer' => round($buffer),
 			'proj_end' => $projEnd === null ? null : round($projEnd), 'end_status' => $endStatus,
 			'in' => ['planned' => round($inPlanned), 'received' => round($inReceived), 'remaining' => round($inRemaining),
