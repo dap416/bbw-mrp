@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { api } from "@/lib/basePath";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AdjustmentsPanel } from "@/components/AdjustmentsPanel";
 import { AdvicePanel } from "@/components/AdvicePanel";
@@ -72,7 +73,7 @@ export default function Page() {
     setError(null);
     try {
       const res = await fetch(
-        `/api/insights?preset=${preset}&compare=${compare}${demo ? "&demo=1" : ""}`,
+        api(`/api/insights?preset=${preset}&compare=${compare}${demo ? "&demo=1" : ""}`),
         { cache: "no-store" },
       );
       const body = await res.json();
