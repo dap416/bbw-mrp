@@ -1,7 +1,7 @@
 "use client";
 
 import { EntityTable } from "./EntityTable";
-import { ImportPanel } from "./ImportPanel";
+import { ImportPanel, type SheetStatus } from "./ImportPanel";
 import { StatTile } from "./StatTile";
 import { count, delta, money, multiple, percent } from "@/lib/format";
 import type { OverviewData, PlatformSlice } from "@/lib/types";
@@ -20,11 +20,13 @@ export function PlatformView({
   slice,
   data,
   summary,
+  sheet,
   onImported,
 }: {
   slice: PlatformSlice;
   data: OverviewData;
   summary?: { rows: number; since: string; until: string; spend: number };
+  sheet?: SheetStatus;
   onImported: () => void;
 }) {
   const c = data.currency;
@@ -141,6 +143,7 @@ export function PlatformView({
         <ImportPanel
           platform={slice.platform as "google" | "microsoft"}
           summary={summary}
+          sheet={sheet}
           onImported={onImported}
         />
       ) : (

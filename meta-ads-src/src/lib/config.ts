@@ -30,6 +30,11 @@ export const CONFIG_KEYS = [
   // and apply to every platform's figures.
   "REPORTING_TIMEZONE",
   "REPORTING_CURRENCY",
+  // Published-CSV URLs for the platforms without an API connection. A Google
+  // Ads Script fills the sheet from inside the ad account, which is what lets
+  // us skip the Google Ads API's Basic Access application entirely.
+  "GOOGLE_SHEET_CSV_URL",
+  "MICROSOFT_SHEET_CSV_URL",
   "SHOPIFY_STORE_DOMAIN",
   "SHOPIFY_ADMIN_TOKEN",
   "SHOPIFY_EXCLUDE_TAGS",
@@ -46,6 +51,10 @@ export const SECRET_KEYS: ConfigKey[] = [
   "META_ACCESS_TOKEN",
   "SHOPIFY_ADMIN_TOKEN",
   "ANTHROPIC_API_KEY",
+  // Not a token, but it works like one: a published sheet needs no sign-in,
+  // so the URL alone grants read access to the figures.
+  "GOOGLE_SHEET_CSV_URL",
+  "MICROSOFT_SHEET_CSV_URL",
 ];
 
 let cache: { mtimeMs: number; values: Record<string, string> } | null = null;

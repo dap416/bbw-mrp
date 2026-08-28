@@ -9,6 +9,7 @@ import {
   type PlatformRow,
 } from "@/lib/platformData";
 import { isPlatform, type Platform } from "@/lib/platforms";
+import { isSheetConfigured, readSyncState, syncPlatformFromSheet } from "@/lib/sheetSync";
 
 export const dynamic = "force-dynamic";
 
@@ -62,10 +63,55 @@ export async function GET(request: Request) {
     summary[row.platform] = s;
   }
 
+  const sheets: Record<string, { connected: boolean; lastSync?: string; error?: string }> = {};
+  const syncState = readSyncState();
+  for (const key of ["google", "microsoft"] as const) {
+    sheets[key] = {
+      connected: isSheetConfigured(key),
+      lastSync: syncState[key]?.succeededAt,
+      error: syncState[key]?.error,
+    };
+  }
+
   return NextResponse.json({
     rows: filtered,
     summary,
+    sheets,
     path: platformDataFilePath(),
+  });
+}
+
+/**
+ * Pulls a connected sheet on demand. Separate from POST because it takes no
+ * body and changes nothing the caller supplied — and because an explicit
+ * "Sync now" must bypass the TTL that the automatic refresh honours.
+ */
+export async function PUT(request: Request) {
+  const blocked = await guard(request);
+  if (blocked) return blocked;
+
+  const url = new URL(request.url);
+  const platform = manualPlatform(url.searchParams.get("platform"));
+  if (!platform) {
+    return NextResponse.json(
+      { error: "Choose Google Ads or Microsoft Ads." },
+      { status: 400 },
+    );
+  }
+
+  const result = await syncPlatformFromSheet(platform, { force: true });
+  if (!result.ok) {
+    // 200 with an error field: the sync failing is an expected outcome the UI
+    // renders inline, not a transport fault worth an error status.
+    return NextResponse.json({ error: result.error }, { status: 200 });
+  }
+
+  return NextResponse.json({
+    saved: true,
+    added: result.added ?? 0,
+    updated: result.updated ?? 0,
+    warnings: result.warnings ?? [],
+    message: `Synced from the sheet: ${result.added ?? 0} rows added, ${result.updated ?? 0} updated.`,
   });
 }
 

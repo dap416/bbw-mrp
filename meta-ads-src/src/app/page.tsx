@@ -59,6 +59,12 @@ type DataSummary = Record<
   { rows: number; since: string; until: string; spend: number }
 >;
 
+/** Whether each manual platform has a published sheet wired up, and its state. */
+type SheetStatuses = Record<
+  string,
+  { connected: boolean; lastSync?: string; error?: string }
+>;
+
 export default function Page() {
   /**
    * Which tab is showing. The combined roll-up is the default: the question
@@ -86,6 +92,7 @@ export default function Page() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [overview, setOverview] = useState<OverviewData | null>(null);
   const [summary, setSummary] = useState<DataSummary>({});
+  const [sheets, setSheets] = useState<SheetStatuses>({});
   const [error, setError] = useState<ApiError | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -185,6 +192,7 @@ export default function Page() {
       if (!res.ok) return;
       const body = await res.json();
       setSummary((body.summary ?? {}) as DataSummary);
+      setSheets((body.sheets ?? {}) as SheetStatuses);
     } catch {
       // The panel simply omits the stored-rows line.
     }
@@ -258,6 +266,7 @@ export default function Page() {
           }
           data={overview}
           summary={summary[view]}
+          sheet={sheets[view]}
           onImported={onImported}
         />
       )}

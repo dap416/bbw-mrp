@@ -30,5 +30,8 @@ adjustments.json
 # Imported Google/Microsoft figures: this account's data, not source
 platform-data.json
 
+# When each connected sheet was last read. Local state, not source.
+sheet-sync.json
+
 # Scratch space for one-off checks
 .scratch/

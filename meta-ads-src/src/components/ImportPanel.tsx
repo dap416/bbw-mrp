@@ -36,13 +36,21 @@ interface Summary {
   spend: number;
 }
 
+export interface SheetStatus {
+  connected: boolean;
+  lastSync?: string;
+  error?: string;
+}
+
 export function ImportPanel({
   platform,
   summary,
+  sheet,
   onImported,
 }: {
   platform: Exclude<Platform, "meta">;
   summary?: Summary;
+  sheet?: SheetStatus;
   onImported: () => void;
 }) {
   const [csv, setCsv] = useState("");
@@ -55,6 +63,40 @@ export function ImportPanel({
 
   const meta = PLATFORM_META[platform];
   const guide = INSTRUCTIONS[platform];
+
+  async function syncNow() {
+    if (busy) return;
+    setBusy(true);
+    setResult(null);
+
+    try {
+      const res = await fetch(
+        api(`/api/platform-data?platform=${platform}`),
+        { method: "PUT" },
+      );
+      const body = await res.json();
+
+      if (body.error) {
+        setResult({ ok: false, message: body.error });
+        return;
+      }
+
+      setResult({
+        ok: true,
+        message: body.message ?? "Synced.",
+        warnings: body.warnings,
+      });
+      onImported();
+    } catch (err) {
+      setResult({
+        ok: false,
+        message:
+          err instanceof Error ? err.message : "Could not reach the server.",
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function submit() {
     if (!csv.trim() || busy) return;
@@ -98,16 +140,60 @@ export function ImportPanel({
         Import {meta.label} data
       </h2>
 
-      <p
-        className="muted"
-        style={{ margin: "0 0 1rem", fontSize: "0.8125rem", lineHeight: 1.5 }}
-      >
-        {meta.label} has no API connection yet, so its figures are imported from
-        a report export. {guide.where}
-        <br />
-        Wanted columns: <code>{guide.columns}</code>. Extra columns are ignored,
-        and re-importing the same days replaces them rather than adding to them.
-      </p>
+      {sheet?.connected ? (
+        <div
+          style={{
+            margin: "0 0 1rem",
+            padding: "0.75rem 0.9rem",
+            borderRadius: 6,
+            background: "var(--surface-sunken)",
+            borderLeft: `3px solid ${sheet.error ? "var(--status-warning)" : "var(--status-good)"}`,
+            fontSize: "0.875rem",
+          }}
+        >
+          <div style={{ color: "var(--text-primary)", marginBottom: "0.3rem" }}>
+            Connected to a published sheet — this updates itself.
+          </div>
+          <div className="secondary" style={{ fontSize: "0.8125rem" }}>
+            {sheet.error
+              ? `Last attempt failed: ${sheet.error}`
+              : sheet.lastSync
+                ? `Last successful sync ${new Date(sheet.lastSync).toLocaleString()}.`
+                : "Not synced yet."}{" "}
+            The dashboard re-reads the sheet on its own every few hours; pasting
+            below still works and is the way to correct a period by hand.
+          </div>
+          <button
+            className="control"
+            onClick={syncNow}
+            disabled={busy}
+            style={{ marginTop: "0.6rem" }}
+          >
+            {busy ? "Syncing…" : "Sync now"}
+          </button>
+        </div>
+      ) : (
+        <p
+          className="muted"
+          style={{ margin: "0 0 1rem", fontSize: "0.8125rem", lineHeight: 1.5 }}
+        >
+          No sheet is connected, so {meta.label} figures are pasted in from a
+          report export. {guide.where}
+          {platform === "google" && (
+            <>
+              {" "}
+              To make this automatic instead, run{" "}
+              <code>scripts/google-ads-export.js</code> in Google Ads on a daily
+              schedule and put its published-CSV URL on the setup page — no
+              Google API application is involved.
+            </>
+          )}
+          <br />
+          Wanted columns: <code>{guide.columns}</code>. Extra columns are
+          ignored, and re-importing the same days replaces them rather than
+          adding to them.
+        </p>
+      )}
 
       {summary && (
         <p

@@ -15,6 +15,7 @@ import {
   totalsFor,
 } from "./platformData";
 import { PLATFORM_META, type Platform } from "./platforms";
+import { isSheetConfigured, readSyncState, syncPlatformFromSheet } from "./sheetSync";
 import { applyAdjustments, inRange, readAdjustments } from "./adjustments";
 import type { AccountInfo, DateRange, PlatformSlice } from "./types";
 
@@ -22,10 +23,17 @@ import type { AccountInfo, DateRange, PlatformSlice } from "./types";
  * One function per platform, all returning the same `PlatformSlice`.
  *
  * This is the seam the combined dashboard is built on. Meta goes to the Graph
- * API; Google and Microsoft read the hand-entered store, because neither has
- * an API connection yet. Wiring up a real Google Ads or Microsoft Advertising
- * client later means replacing the body of `loadManual` for that platform with
- * a fetch — every caller keeps working, because the shape does not change.
+ * API. Google and Microsoft read a local store of campaign-by-day rows, which
+ * arrive one of two ways: pasted by hand, or fetched from a published Google
+ * Sheet that a Google Ads Script fills from inside the ad account.
+ *
+ * That second route is the point. Reading Google's own API would require a
+ * developer token at Basic Access — an application, a design document, a
+ * public business domain and a multi-day review, all to read figures we
+ * already own. A script running inside the account needs none of it.
+ *
+ * Should a direct API client ever be worth writing, it replaces the body of
+ * one function here and nothing downstream changes.
  */
 
 /** An empty slice, used for a platform with nothing configured or stored. */
@@ -129,6 +137,7 @@ function loadManual(
   range: DateRange,
   compareRange: DateRange,
   currency: string,
+  syncNote?: string,
 ): PlatformSlice {
   const meta = PLATFORM_META[platform];
   const all = readPlatformRows();
@@ -137,13 +146,20 @@ function loadManual(
 
   const hasAny = all.some((r) => r.platform === platform);
   if (!rows.length) {
+    const connected = isSheetConfigured(platform);
     return emptySlice(
       platform,
       hasAny,
       [
-        hasAny
-          ? `No ${meta.label} data recorded for this period. Import the report covering it.`
-          : `${meta.label} has no data yet. Import a campaign-by-day report on the Data tab.`,
+        syncNote ??
+          (hasAny
+            ? `No ${meta.label} data recorded for this period.` +
+              (connected
+                ? " The connected sheet does not cover it — widen the script's lookback, or pick a later range."
+                : " Import the report covering it.")
+            : connected
+              ? `${meta.label} is connected to a sheet but nothing has arrived yet. Run the Google Ads script once, then use Sync now.`
+              : `${meta.label} has no data yet. Connect a sheet or paste a report on its tab.`),
       ],
       range,
     );
@@ -158,6 +174,28 @@ function loadManual(
     timezone: "UTC",
   };
 
+  const warnings: string[] = [];
+  if (syncNote) warnings.push(syncNote);
+
+  if (isSheetConfigured(platform)) {
+    const last = readSyncState()[platform];
+    if (last?.error) {
+      warnings.push(
+        `${meta.label}'s sheet could not be read, so these figures are as of the last successful sync: ${last.error}`,
+      );
+    }
+
+    // The newest day present is the honest freshness signal — a sheet that
+    // stopped updating still returns 200 and still parses.
+    const newest = rows.reduce((max, r) => (r.date > max ? r.date : max), "");
+    const daysBehind = daysBetween(newest, range.until);
+    if (newest && daysBehind > 2) {
+      warnings.push(
+        `${meta.label} data stops at ${newest}, ${daysBehind} days before the end of this range. The export script may have stopped running.`,
+      );
+    }
+  }
+
   return {
     platform,
     label: meta.label,
@@ -169,8 +207,15 @@ function loadManual(
     previousTotals: totalsFor(previousRows),
     daily: dailyFor(rows, range),
     campaigns: campaignsFor(rows, previousRows, platform),
-    warnings: [],
+    warnings,
   };
+}
+
+function daysBetween(from: string, to: string): number {
+  const a = Date.parse(`${from}T00:00:00Z`);
+  const b = Date.parse(`${to}T00:00:00Z`);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return 0;
+  return Math.round((b - a) / 86_400_000);
 }
 
 export async function loadPlatform(
@@ -180,5 +225,19 @@ export async function loadPlatform(
   currency: string,
 ): Promise<PlatformSlice> {
   if (platform === "meta") return loadMeta(range, compareRange);
-  return loadManual(platform, range, compareRange, currency);
+
+  /*
+    Opportunistic refresh: if a sheet is connected and has not been read for a
+    while, pull it before rendering. syncPlatformFromSheet enforces its own TTL
+    and timeout, so the common case costs nothing and a hanging sheet costs a
+    bounded wait rather than the page. A failure here is never fatal — the
+    stored rows are still rendered, with the reason attached.
+  */
+  let syncNote: string | undefined;
+  if (isSheetConfigured(platform)) {
+    const result = await syncPlatformFromSheet(platform);
+    if (!result.ok) syncNote = `Could not refresh ${PLATFORM_META[platform].label}: ${result.error}`;
+  }
+
+  return loadManual(platform, range, compareRange, currency, syncNote);
 }

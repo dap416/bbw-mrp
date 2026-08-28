@@ -23,6 +23,8 @@ const EMPTY: Fields = {
   TARGET_CPA: "",
   REPORTING_TIMEZONE: "",
   REPORTING_CURRENCY: "",
+  GOOGLE_SHEET_CSV_URL: "",
+  MICROSOFT_SHEET_CSV_URL: "",
   ANTHROPIC_API_KEY: "",
   SHOPIFY_STORE_DOMAIN: "",
   SHOPIFY_ADMIN_TOKEN: "",
@@ -342,6 +344,47 @@ export default function SetupPage() {
             />
           </label>
         </div>
+
+        <p style={{ ...helpStyle, marginTop: "1.1rem" }}>
+          Google and Microsoft have no API connection here, and getting one is
+          disproportionate: Google&rsquo;s API needs a developer token at Basic
+          Access, which means an application, a design document, a public
+          business domain and a multi-day review &mdash; to read figures you
+          already own.
+          <br />
+          <br />
+          Instead, run <code>scripts/google-ads-export.js</code> inside Google
+          Ads on a daily schedule. It writes your campaign figures to a Google
+          Sheet; publish that sheet as CSV (File &gt; Share &gt; Publish to web
+          &gt; Comma-separated values) and paste the URL here. The dashboard
+          re-reads it on its own. Leave blank to keep pasting reports by hand.
+          <br />
+          <br />
+          A published sheet needs no sign-in, so treat its URL as a secret:
+          anyone holding it can read the figures.
+        </p>
+        <label style={{ display: "block", marginBottom: "0.9rem" }}>
+          <span style={labelStyle}>Google Ads &mdash; published sheet CSV URL</span>
+          <input
+            value={fields.GOOGLE_SHEET_CSV_URL}
+            onChange={(e) => set("GOOGLE_SHEET_CSV_URL", e.target.value)}
+            placeholder="https://docs.google.com/spreadsheets/d/e/…/pub?gid=0&single=true&output=csv"
+            spellCheck={false}
+            style={inputStyle}
+          />
+        </label>
+        <label style={{ display: "block" }}>
+          <span style={labelStyle}>
+            Microsoft Ads &mdash; published sheet CSV URL (optional)
+          </span>
+          <input
+            value={fields.MICROSOFT_SHEET_CSV_URL}
+            onChange={(e) => set("MICROSOFT_SHEET_CSV_URL", e.target.value)}
+            placeholder="Same idea, if you keep Microsoft figures in a sheet"
+            spellCheck={false}
+            style={inputStyle}
+          />
+        </label>
       </Section>
 
       {/* --- Step 4: optional extras -------------------------------------- */}

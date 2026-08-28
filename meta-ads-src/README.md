@@ -16,16 +16,48 @@ Four tabs:
 
 ## Google and Microsoft: why they are imported, not connected
 
-Both platforms' APIs need a developer token and an OAuth consent that have to be
-applied for, and the approval wait is the slow part. Rather than block the
-dashboard on that, their figures are imported from a report export — paste the
-CSV into the panel on that platform's tab. Re-importing an overlapping period
-replaces those days rather than doubling the spend, so a corrected export is
-always safe to paste again.
+Neither uses its vendor's API, and that is a deliberate choice rather than an
+unfinished one.
 
-Everything downstream of `src/lib/providers.ts` reads one normalized shape, so
-connecting the real APIs later means replacing one function per platform, not
-reworking the dashboard. The store lives in `platform-data.json`.
+Google's Ads API needs a developer token at **Basic Access**, which means a
+formal application: a design document, a public business domain, declarations
+about who uses the tool, and a multi-day review — all to read figures we
+already own. The default tier, Explorer Access, only reads *test* accounts, so
+it is useless for real reporting. That is a lot of process for a dashboard that
+only wants to say what was spent yesterday.
+
+**The way round it is a Google Ads Script.** It runs *inside* the ad account,
+so it is already authorised and there is nothing to apply for. `scripts/
+google-ads-export.js` writes campaign-by-day figures into a Google Sheet on a
+daily schedule; publish that sheet as CSV and paste the URL into the setup
+page. The dashboard re-reads it by itself.
+
+```
+Google Ads (script, daily) --> Google Sheet --> published CSV --> dashboard
+```
+
+Setup instructions are in the header comment of that script. Microsoft has no
+scripts feature, so it is either a manual paste or its own sheet kept by hand.
+
+Both platforms also accept a **direct paste** of a report export at any time,
+which is the way to correct a period without waiting for the next run. Parsing
+is the same code path either way, and rows are keyed by platform, date and
+campaign — so re-importing an overlapping period replaces those days rather
+than doubling the spend.
+
+Everything downstream of `src/lib/providers.ts` reads one normalised shape, so
+if a direct API client is ever worth writing it replaces one function and
+nothing else changes. The row store is `platform-data.json`; when each sheet
+was last read is in `sheet-sync.json`.
+
+### When the numbers go stale
+
+A sheet that stops updating still returns `200` and still parses, so silence is
+the dangerous failure here. The dashboard guards against it by checking the
+newest date actually present in the data, and warns on the platform's tab when
+that falls more than two days behind the range being viewed. A fetch that fails
+outright leaves the previously stored figures on screen, labelled with when
+they were last refreshed and why the refresh failed.
 
 **A caution the dashboard repeats where it matters:** cross-platform ROAS is not
 a like-for-like number. Each platform counts conversions its own way, and Meta
