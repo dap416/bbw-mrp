@@ -1,7 +1,38 @@
-# Meta Ads Dashboard
+# Ads Dashboard
 
-A local dashboard for your Meta ad account: ROAS and the metrics around it,
-compared against a previous period, with findings and advice on what to change.
+A local dashboard for your ad spend across **Meta, Google and Microsoft**: ROAS
+and the metrics around it, compared against a previous period, with findings and
+advice on what to change — and a combined view for deciding how to split the
+budget between the three.
+
+Four tabs:
+
+| Tab | What it shows | Where the data comes from |
+| --- | --- | --- |
+| **All platforms** | Combined spend and return, the daily spend mix, the balancing table, and cross-platform findings | Everything below, rolled up |
+| **Meta Ads** | The full account view: campaign → ad set → ad, hourly breakdowns, funnel, written analysis | Meta Marketing API |
+| **Google Ads** | Spend, return and a campaign table | Imported report export |
+| **Microsoft Ads** | Spend, return and a campaign table | Imported report export |
+
+## Google and Microsoft: why they are imported, not connected
+
+Both platforms' APIs need a developer token and an OAuth consent that have to be
+applied for, and the approval wait is the slow part. Rather than block the
+dashboard on that, their figures are imported from a report export — paste the
+CSV into the panel on that platform's tab. Re-importing an overlapping period
+replaces those days rather than doubling the spend, so a corrected export is
+always safe to paste again.
+
+Everything downstream of `src/lib/providers.ts` reads one normalized shape, so
+connecting the real APIs later means replacing one function per platform, not
+reworking the dashboard. The store lives in `platform-data.json`.
+
+**A caution the dashboard repeats where it matters:** cross-platform ROAS is not
+a like-for-like number. Each platform counts conversions its own way, and Meta
+claims view-through conversions the others do not, so the three attributed
+revenue figures routinely add up to more than the shop actually took. Where
+Shopify is connected, blended ROAS — real revenue over total spend — is the
+figure to trust, and it is the one the combined view leads with.
 
 Runs on **http://localhost:3100** (port 3000 is deliberately left alone — change
 it in `package.json` if 3100 is also taken).

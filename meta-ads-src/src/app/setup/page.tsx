@@ -21,6 +21,8 @@ const EMPTY: Fields = {
   META_AD_ACCOUNT_ID: "",
   TARGET_ROAS: "",
   TARGET_CPA: "",
+  REPORTING_TIMEZONE: "",
+  REPORTING_CURRENCY: "",
   ANTHROPIC_API_KEY: "",
   SHOPIFY_STORE_DOMAIN: "",
   SHOPIFY_ADMIN_TOKEN: "",
@@ -308,6 +310,34 @@ export default function SetupPage() {
               onChange={(e) => set("TARGET_CPA", e.target.value)}
               placeholder="e.g. 35"
               inputMode="decimal"
+              style={inputStyle}
+            />
+          </label>
+        </div>
+
+        <p style={{ ...helpStyle, marginTop: "1.1rem" }}>
+          The combined view spans three platforms, so &ldquo;yesterday&rdquo; and
+          the currency label have to be stated once rather than taken from any
+          one account. Both are optional &mdash; they default to Pacific time and
+          USD, and the Meta account&rsquo;s own currency wins wherever it is
+          connected.
+        </p>
+        <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
+          <label style={{ flex: "1 1 180px" }}>
+            <span style={labelStyle}>Reporting timezone</span>
+            <input
+              value={fields.REPORTING_TIMEZONE}
+              onChange={(e) => set("REPORTING_TIMEZONE", e.target.value)}
+              placeholder="America/Los_Angeles"
+              style={inputStyle}
+            />
+          </label>
+          <label style={{ flex: "1 1 180px" }}>
+            <span style={labelStyle}>Reporting currency</span>
+            <input
+              value={fields.REPORTING_CURRENCY}
+              onChange={(e) => set("REPORTING_CURRENCY", e.target.value)}
+              placeholder="USD"
               style={inputStyle}
             />
           </label>

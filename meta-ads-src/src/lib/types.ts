@@ -244,3 +244,82 @@ export interface DashboardData {
   /** Non-fatal problems (e.g. Shopify failed but Meta worked). */
   warnings: string[];
 }
+
+/* --- Multi-platform ------------------------------------------------------- */
+
+/**
+ * One platform's figures for the selected period, in the same shape whatever
+ * the source. The combined view only ever reads this, so a platform moving
+ * from hand-entered rows to a live API changes nothing downstream.
+ */
+export interface PlatformSlice {
+  platform: import("./platforms").Platform;
+  label: string;
+  color: string;
+  /** How these numbers got here — "api" or "manual". Shown in the UI. */
+  source: "api" | "manual";
+  /** False when there is no connection and no stored data for the period. */
+  configured: boolean;
+  /** Account name/currency where known; null for a platform with no data. */
+  account: AccountInfo | null;
+  totals: Metrics;
+  previousTotals: Metrics;
+  daily: DailyPoint[];
+  campaigns: EntityRow[];
+  /** Why this platform is empty or partial, when it is. */
+  warnings: string[];
+}
+
+/** One platform's line in the balancing table. */
+export interface PlatformComparisonRow {
+  platform: import("./platforms").Platform;
+  label: string;
+  color: string;
+  spend: number;
+  /** This platform's share of total spend, 0-1. */
+  spendShare: number;
+  revenue: number;
+  revenueShare: number;
+  roas: number | null;
+  cpa: number | null;
+  purchases: number;
+  /** Change in spend against the comparison period, as a fraction. */
+  spendDelta: number | null;
+  roasDelta: number | null;
+  /**
+   * Spend to move onto (positive) or off (negative) this platform to even out
+   * return across the mix. null when there is too little data to say.
+   */
+  suggestedShift: number | null;
+}
+
+/** The combined roll-up across every platform. */
+export interface OverviewData {
+  canEdit: boolean;
+  range: DateRange;
+  compareRange: DateRange;
+  compareLabel: string;
+  currency: string;
+  /** True when the range runs to today, so figures are still moving. */
+  partial: boolean;
+  /** Every platform, including unconfigured ones, so the UI can say so. */
+  platforms: PlatformSlice[];
+  /** Spend/revenue/ROAS summed across platforms. */
+  totals: Metrics;
+  previousTotals: Metrics;
+  /** Per-day totals across platforms, for the stacked spend chart. */
+  daily: DailyPoint[];
+  /** Per-day spend by platform, keyed by date, for the stacked series. */
+  dailyByPlatform: {
+    date: string;
+    spend: Record<string, number>;
+    revenue: Record<string, number>;
+  }[];
+  comparison: PlatformComparisonRow[];
+  /** Blended: Shopify revenue over total spend across all three platforms. */
+  shopify: ShopifyRevenue | null;
+  blendedRoas: number | null;
+  targets: { roas: number; cpa: number | null };
+  findings: Finding[];
+  warnings: string[];
+}

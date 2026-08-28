@@ -130,7 +130,7 @@
 			'cashflow'           => 'Cash Management',
 			'cash_flow'          => 'Cash Flow',
 			'research'           => 'Research',
-			'meta'               => 'Meta Ads',
+			'meta'               => 'Ads Dashboard',
 		];
 	}
 
@@ -152,10 +152,12 @@
 			'access_manufacturers'  => 'Manufacturers',
 			'access_research'       => 'Research',
 			'access_call_center'    => 'Call Center',
-			// The Meta Ads dashboard at /meta. View opens it; Edit additionally allows
-			// Setup and revenue Adjustments, which can rewrite the stored API tokens
-			// and the reported revenue respectively.
-			'access_meta'           => 'Meta Ads',
+			// The ads dashboard at /meta — Meta, Google and Microsoft together. View
+			// opens it; Edit additionally allows Setup, revenue Adjustments and importing
+			// the Google/Microsoft figures, which rewrite stored API tokens and reported
+			// revenue respectively. The column keeps its original name: renaming it would
+			// mean a migration that silently revokes everyone's access if it half-runs.
+			'access_meta'           => 'Ads Dashboard',
 		];
 	}
 
@@ -547,4 +549,4 @@
 
 
 
-?>
+?>

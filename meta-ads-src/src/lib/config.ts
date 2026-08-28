@@ -24,6 +24,12 @@ export const CONFIG_KEYS = [
   "META_ATTRIBUTION_WINDOWS",
   "TARGET_ROAS",
   "TARGET_CPA",
+  // Multi-platform reporting. The combined view has to anchor its date range
+  // and label its money somewhere before any platform has loaded, and only
+  // Meta can report its own account settings — so these are stated once here
+  // and apply to every platform's figures.
+  "REPORTING_TIMEZONE",
+  "REPORTING_CURRENCY",
   "SHOPIFY_STORE_DOMAIN",
   "SHOPIFY_ADMIN_TOKEN",
   "SHOPIFY_EXCLUDE_TAGS",

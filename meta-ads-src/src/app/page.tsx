@@ -10,11 +10,21 @@ import type { Crumb } from "@/components/EntityTable";
 import { FindingsPanel } from "@/components/FindingsPanel";
 import { FunnelPanel } from "@/components/FunnelPanel";
 import { HourlyCharts } from "@/components/HourlyCharts";
+import { OverviewView } from "@/components/OverviewView";
+import { PlatformTabs } from "@/components/PlatformTabs";
+import { PlatformView } from "@/components/PlatformView";
 import { StatTile } from "@/components/StatTile";
 import { TrendCharts } from "@/components/TrendCharts";
 import { PRESET_LABELS } from "@/lib/dates";
 import { count, delta, money, multiple, percent } from "@/lib/format";
-import type { DashboardData, EntityRow, Level, Preset } from "@/lib/types";
+import { PLATFORM_META, type PlatformView as View } from "@/lib/platforms";
+import type {
+  DashboardData,
+  EntityRow,
+  Level,
+  OverviewData,
+  Preset,
+} from "@/lib/types";
 
 type CompareMode = "previous_period" | "previous_year";
 
@@ -43,7 +53,19 @@ interface ApiError {
   setup?: boolean;
 }
 
+/** Per-platform stored-row summary, from /api/platform-data. */
+type DataSummary = Record<
+  string,
+  { rows: number; since: string; until: string; spend: number }
+>;
+
 export default function Page() {
+  /**
+   * Which tab is showing. The combined roll-up is the default: the question
+   * the dashboard now exists to answer is how the budget is split, and a
+   * single platform's page cannot answer it.
+   */
+  const [view, setView] = useState<View>("all");
   const [preset, setPreset] = useState<Preset>("last_28d");
   const [compare, setCompare] = useState<CompareMode>("previous_period");
   const [level, setLevel] = useState<Exclude<Level, "account">>("campaign");
@@ -57,6 +79,8 @@ export default function Page() {
     adset?: { id: string; name: string };
   }>({});
   const [data, setData] = useState<DashboardData | null>(null);
+  const [overview, setOverview] = useState<OverviewData | null>(null);
+  const [summary, setSummary] = useState<DataSummary>({});
   const [error, setError] = useState<ApiError | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -67,7 +91,12 @@ export default function Page() {
   const [demo, setDemo] = useState<boolean | null>(null);
 
   useEffect(() => {
-    setDemo(new URLSearchParams(window.location.search).get("demo") === "1");
+    const isDemo = new URLSearchParams(window.location.search).get("demo") === "1";
+    setDemo(isDemo);
+    // The sample data is Meta's alone — there is no demo mode for the roll-up,
+    // and landing on a combined view showing one real-looking platform and two
+    // empty ones would misrepresent what demo mode is.
+    if (isDemo) setView("meta");
   }, []);
 
   // Monotonic request id. Responses that arrive after a newer request has
@@ -75,40 +104,96 @@ export default function Page() {
   // response on screen.
   const requestId = useRef(0);
 
+  /**
+   * The two payloads load together for any period.
+   *
+   * The combined roll-up is fetched even while a single platform's tab is
+   * open, because the tab strip shows each platform's spend as its subtitle —
+   * switching tabs should be instant, not a second round-trip. The Meta
+   * payload is the expensive one (ad-level rows and hourly breakdowns), so it
+   * is fetched only when its own tab is showing.
+   */
   const load = useCallback(async () => {
     if (demo === null) return;
 
     const id = ++requestId.current;
     setLoading(true);
     setError(null);
+
+    const query = `preset=${preset}&compare=${compare}`;
+    const wantMeta = view === "meta";
+
     try {
-      const res = await fetch(
-        api(`/api/insights?preset=${preset}&compare=${compare}${demo ? "&demo=1" : ""}`),
-        { cache: "no-store" },
-      );
-      const body = await res.json();
+      const [overviewRes, metaRes] = await Promise.all([
+        // No roll-up in demo mode — see the demo note above.
+        demo ? null : fetch(api(`/api/overview?${query}`), { cache: "no-store" }),
+        wantMeta
+          ? fetch(api(`/api/insights?${query}${demo ? "&demo=1" : ""}`), {
+              cache: "no-store",
+            })
+          : null,
+      ]);
       if (id !== requestId.current) return;
 
-      if (!res.ok) {
-        setError(body as ApiError);
-        setData(null);
-        return;
+      if (overviewRes) {
+        const body = await overviewRes.json();
+        if (id !== requestId.current) return;
+        if (overviewRes.ok) setOverview(body as OverviewData);
+        // A failed roll-up must not blank the Meta tab, which has its own
+        // payload and its own error handling below.
+        else if (!wantMeta) setError(body as ApiError);
       }
-      setData(body as DashboardData);
+
+      if (metaRes) {
+        const body = await metaRes.json();
+        if (id !== requestId.current) return;
+        if (!metaRes.ok) {
+          setError(body as ApiError);
+          setData(null);
+        } else {
+          setData(body as DashboardData);
+        }
+      }
     } catch (err) {
       if (id !== requestId.current) return;
       setError({
         error: err instanceof Error ? err.message : "Could not reach the API route.",
       });
-      setData(null);
+      if (wantMeta) setData(null);
     } finally {
       if (id === requestId.current) setLoading(false);
     }
-  }, [preset, compare, demo]);
+  }, [preset, compare, demo, view]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  /**
+   * What is stored for the manual platforms, for the import panel's "currently
+   * stored" line. Only readable with Edit access, so a 403 here is expected
+   * rather than an error worth surfacing.
+   */
+  const loadSummary = useCallback(async () => {
+    try {
+      const res = await fetch(api("/api/platform-data"), { cache: "no-store" });
+      if (!res.ok) return;
+      const body = await res.json();
+      setSummary((body.summary ?? {}) as DataSummary);
+    } catch {
+      // The panel simply omits the stored-rows line.
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadSummary();
+  }, [loadSummary]);
+
+  /** After an import, both the summary and the figures are stale. */
+  const onImported = useCallback(() => {
+    void loadSummary();
+    void load();
+  }, [loadSummary, load]);
 
   return (
     <main
@@ -122,6 +207,8 @@ export default function Page() {
     >
       <Header
         data={data}
+        overview={overview}
+        view={view}
         preset={preset}
         compare={compare}
         loading={loading}
@@ -130,6 +217,15 @@ export default function Page() {
         onRefresh={load}
       />
 
+      {/* Hidden in demo mode, which is Meta-only. */}
+      {!demo && (
+        <PlatformTabs
+          view={view}
+          onChange={setView}
+          subtitles={tabSubtitles(overview)}
+        />
+      )}
+
       {error && (
         <ErrorPanel
           error={error}
@@ -137,15 +233,31 @@ export default function Page() {
         />
       )}
 
-      {loading && !data && (
+      {loading && !data && !overview && (
         <div className="card" style={{ padding: "3rem", textAlign: "center" }}>
           <p className="secondary" style={{ margin: 0 }}>
-            Loading from the Meta Marketing API…
+            {view === "meta"
+              ? "Loading from the Meta Marketing API…"
+              : "Loading your ad platforms…"}
           </p>
         </div>
       )}
 
-      {data && (
+      {view === "all" && overview && <OverviewView data={overview} />}
+
+      {view !== "all" && view !== "meta" && overview && (
+        <PlatformView
+          slice={
+            overview.platforms.find((s) => s.platform === view) ??
+            overview.platforms[0]
+          }
+          data={overview}
+          summary={summary[view]}
+          onImported={onImported}
+        />
+      )}
+
+      {view === "meta" && data && (
         <>
           {data.warnings.map((w) => (
             <div
@@ -361,8 +473,30 @@ function Breakdown({
 
 /* --- Header & controls --------------------------------------------------- */
 
+/**
+ * Each tab's spend for the period, so the strip carries the shape of the mix
+ * without the reader having to open every tab to find it.
+ */
+function tabSubtitles(
+  overview: OverviewData | null,
+): Partial<Record<View, string>> {
+  if (!overview) return {};
+
+  const out: Partial<Record<View, string>> = {
+    all: money(overview.totals.spend, overview.currency, { compact: true }),
+  };
+  for (const slice of overview.platforms) {
+    out[slice.platform] = slice.totals.spend
+      ? money(slice.totals.spend, overview.currency, { compact: true })
+      : "no spend";
+  }
+  return out;
+}
+
 function Header({
   data,
+  overview,
+  view,
   preset,
   compare,
   loading,
@@ -371,6 +505,8 @@ function Header({
   onRefresh,
 }: {
   data: DashboardData | null;
+  overview: OverviewData | null;
+  view: View;
   preset: Preset;
   compare: CompareMode;
   loading: boolean;
@@ -378,6 +514,28 @@ function Header({
   onCompare: (c: CompareMode) => void;
   onRefresh: () => void;
 }) {
+  // The heading names where you are. On a platform tab that is the account;
+  // on the roll-up there is no single account to name.
+  const title =
+    view === "all"
+      ? "Ads Dashboard"
+      : view === "meta"
+        ? (data?.account.name ?? PLATFORM_META.meta.label)
+        : PLATFORM_META[view].label;
+
+  const subtitle =
+    view === "all"
+      ? overview
+        ? `${overview.range.since} to ${overview.range.until} · ${overview.currency} · Meta, Google and Microsoft combined`
+        : "Loading every connected ad platform"
+      : view === "meta"
+        ? data
+          ? `${data.range.since} to ${data.range.until} · ${data.account.currency} · times in ${data.account.timezone}`
+          : "Connecting to your ad account"
+        : overview
+          ? `${overview.range.since} to ${overview.range.until} · ${overview.currency} · imported figures`
+          : "Loading imported figures";
+
   return (
     <header
       style={{
@@ -397,12 +555,10 @@ function Header({
             letterSpacing: "-0.01em",
           }}
         >
-          {data ? data.account.name : "Meta Ads Dashboard"}
+          {title}
         </h1>
         <p className="muted" style={{ margin: "0.2rem 0 0", fontSize: "0.8125rem" }}>
-          {data
-            ? `${data.range.since} to ${data.range.until} · ${data.account.currency} · times in ${data.account.timezone}`
-            : "Connecting to your ad account"}
+          {subtitle}
         </p>
       </div>
 

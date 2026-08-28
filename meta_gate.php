@@ -1,7 +1,7 @@
 <?php
 
 	/**
-	 * Single sign-on bridge to the Meta Ads dashboard.
+	 * Single sign-on bridge to the Ads Dashboard (Meta, Google, Microsoft).
 	 *
 	 * That dashboard is a Next.js app, not an MRP page. Apache reverse-proxies
 	 * /meta to it on localhost:3100, so it shares this origin — but it cannot
@@ -21,7 +21,7 @@
 	if (!has_access('meta')) {
 		http_response_code(403);
 		require_once(__DIR__."/includes/header.php");
-		echo '<div class="page-block"><div class="alert alert-warning">You do not have access to the Meta Ads dashboard.</div></div>';
+		echo '<div class="page-block"><div class="alert alert-warning">You do not have access to the Ads Dashboard.</div></div>';
 		exit;
 	}
 

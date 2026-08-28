@@ -211,7 +211,8 @@
         <?php } ?>
 
         <?php
-        // Meta Ads dashboard — a separate Next.js app served from /meta, not an MRP page.
+        // Ads dashboard (Meta, Google, Microsoft) — a separate Next.js app served from
+        // /meta, not an MRP page.
         // The link goes through meta_gate.php rather than straight to /meta: the app has no
         // login of its own, and the gate is what turns this PHP session into a token it can
         // verify. The gate applies this same check, so the menu cannot offer a link that
@@ -220,7 +221,7 @@
         <li class="pc-item">
           <a href="/meta_gate.php" class="pc-link">
             <span class="pc-micon"><i class="ti ti-chart-line"></i></span>
-            <span class="pc-mtext">Meta Ads</span>
+            <span class="pc-mtext">Ads Dashboard</span>
           </a>
         </li>
         <?php } ?>

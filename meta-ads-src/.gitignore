@@ -26,3 +26,9 @@ logs/
 
 # Manual revenue deductions: local knowledge, not source
 adjustments.json
+
+# Imported Google/Microsoft figures: this account's data, not source
+platform-data.json
+
+# Scratch space for one-off checks
+.scratch/
