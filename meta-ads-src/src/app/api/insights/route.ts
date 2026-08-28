@@ -44,9 +44,9 @@ export async function GET(request: Request) {
   // Always flagged as demo in the payload's warnings so it cannot be mistaken
   // for a real account.
   if (url.searchParams.get("demo") === "1") {
-    const preset = (url.searchParams.get("preset") as Preset | null) ?? "last_28d";
+    const preset = (url.searchParams.get("preset") as Preset | null) ?? "today";
     const demo = buildDemoData(
-      VALID_PRESETS.includes(preset) ? preset : "last_28d",
+      VALID_PRESETS.includes(preset) ? preset : "today",
       compareModeParam,
     );
 
@@ -282,6 +282,6 @@ function resolveRange(url: URL, timezone: string): DateRange {
   }
 
   const preset = url.searchParams.get("preset") as Preset | null;
-  const valid = preset && VALID_PRESETS.includes(preset) ? preset : "last_28d";
+  const valid = preset && VALID_PRESETS.includes(preset) ? preset : "today";
   return rangeFromPreset(valid, timezone);
 }

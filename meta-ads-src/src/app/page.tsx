@@ -66,7 +66,12 @@ export default function Page() {
    * single platform's page cannot answer it.
    */
   const [view, setView] = useState<View>("all");
-  const [preset, setPreset] = useState<Preset>("last_28d");
+  /**
+   * Opens on today. The figures are partial by definition — attributed
+   * conversions keep climbing for days after the click — so the page carries a
+   * standing notice saying so whenever the range runs to today.
+   */
+  const [preset, setPreset] = useState<Preset>("today");
   const [compare, setCompare] = useState<CompareMode>("previous_period");
   const [level, setLevel] = useState<Exclude<Level, "account">>("campaign");
   /**

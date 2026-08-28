@@ -188,6 +188,6 @@ function resolveRange(url: URL, timezone: string): DateRange {
   }
 
   const preset = url.searchParams.get("preset") as Preset | null;
-  const valid = preset && VALID_PRESETS.includes(preset) ? preset : "last_28d";
+  const valid = preset && VALID_PRESETS.includes(preset) ? preset : "today";
   return rangeFromPreset(valid, timezone);
 }
