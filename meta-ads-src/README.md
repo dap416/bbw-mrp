@@ -36,8 +36,20 @@ page. The dashboard re-reads it by itself.
 Google Ads (script, daily) --> Google Sheet --> published CSV --> dashboard
 ```
 
-Setup instructions are in the header comment of that script. Microsoft has no
-scripts feature, so it is either a manual paste or its own sheet kept by hand.
+Setup instructions are in the header comment of that script.
+
+**Microsoft takes the same route by a different road.** It has no scripts
+feature and its Reporting API wants an Entra app registration, a client secret
+and an OAuth refresh token — a great deal of credential handling for a
+read-only report. But it will email a scheduled report, so
+`scripts/microsoft-ads-import.gs` runs as a Google Apps Script on the
+spreadsheet, reads that email out of Gmail, and writes a second tab. Publish
+that tab too and the dashboard treats it exactly like Google's.
+
+The one structural difference: the Google script re-queries 90 days on every
+run and can safely overwrite its tab, whereas each Microsoft email is only a
+snapshot of a rolling window — so that script *merges* by date and campaign
+instead, and leaves the tab untouched when no email is found.
 
 Both platforms also accept a **direct paste** of a report export at any time,
 which is the way to correct a period without waiting for the next run. Parsing
