@@ -345,23 +345,37 @@ export default function SetupPage() {
           </label>
         </div>
 
-        <p style={{ ...helpStyle, marginTop: "1.1rem" }}>
-          Google and Microsoft have no API connection here, and getting one is
-          disproportionate: Google&rsquo;s API needs a developer token at Basic
-          Access, which means an application, a design document, a public
-          business domain and a multi-day review &mdash; to read figures you
-          already own.
+      </Section>
+
+      {/*
+        --- Step 4: Google & Microsoft ------------------------------------
+        Its own step rather than a footnote under "Your targets", where these
+        two fields first lived. Nobody looking for "the Google area" thinks to
+        open a section about ROAS targets, and they did not find it.
+      */}
+      <Section
+        step="4"
+        title="Google Ads &amp; Microsoft Ads"
+        done={Boolean(present.GOOGLE_SHEET_CSV_URL || present.MICROSOFT_SHEET_CSV_URL)}
+      >
+        <p style={helpStyle}>
+          Neither uses its vendor&rsquo;s API, deliberately. Google&rsquo;s would
+          need a developer token at Basic Access &mdash; an application, a design
+          document, a public business domain and a multi-day review, to read
+          figures you already own.
           <br />
           <br />
-          Instead, run <code>scripts/google-ads-export.js</code> inside Google
-          Ads on a daily schedule. It writes your campaign figures to a Google
-          Sheet; publish that sheet as CSV (File &gt; Share &gt; Publish to web
-          &gt; Comma-separated values) and paste the URL here. The dashboard
-          re-reads it on its own. Leave blank to keep pasting reports by hand.
+          Instead, <code>scripts/google-ads-export.js</code> runs inside your
+          Google Ads account on a schedule and writes your campaign figures to a
+          Google Sheet. Publish that sheet as CSV (File &gt; Share &gt; Publish
+          to web &gt; Comma-separated values) and paste the URL below. The
+          dashboard re-reads it on its own; the paste box on each platform&rsquo;s
+          own tab still works for correcting a period by hand.
           <br />
           <br />
-          A published sheet needs no sign-in, so treat its URL as a secret:
-          anyone holding it can read the figures.
+          Leave blank to keep pasting reports manually. A published sheet needs
+          no sign-in, so treat these URLs as secrets: anyone holding one can read
+          the figures.
         </p>
         <label style={{ display: "block", marginBottom: "0.9rem" }}>
           <span style={labelStyle}>Google Ads &mdash; published sheet CSV URL</span>
@@ -387,9 +401,9 @@ export default function SetupPage() {
         </label>
       </Section>
 
-      {/* --- Step 4: optional extras -------------------------------------- */}
+      {/* --- Step 5: optional extras -------------------------------------- */}
       <Section
-        step="4"
+        step="5"
         title="Optional extras"
         done={Boolean(present.ANTHROPIC_API_KEY || present.SHOPIFY_ADMIN_TOKEN)}
       >
@@ -455,7 +469,7 @@ export default function SetupPage() {
 
       {/* --- Step 5: wholesale exclusions --------------------------------- */}
       <Section
-        step="5"
+        step="6"
         title="Exclude wholesale orders"
         done={Boolean(present.SHOPIFY_EXCLUDE_TAGS || present.SHOPIFY_EXCLUDE_ABOVE)}
       >
