@@ -26,8 +26,16 @@ const URL_KEY: Partial<Record<Platform, ConfigKey>> = {
   microsoft: "MICROSOFT_SHEET_CSV_URL",
 };
 
-/** Don't re-fetch more often than this when syncing opportunistically. */
-const TTL_MS = 6 * 60 * 60 * 1000;
+/**
+ * Don't re-fetch more often than this when syncing opportunistically.
+ *
+ * Kept a little under the export script's hourly cadence. It was six hours
+ * when that script ran daily, which was right then and wrong the moment the
+ * script went hourly: the sheet would be current while the dashboard sat on a
+ * copy most of a working day old, with nothing on screen to say so. The rule
+ * is that this interval tracks whatever fills the sheet.
+ */
+const TTL_MS = 20 * 60 * 1000;
 
 /** A slow or hanging sheet must not hold the dashboard open. */
 const FETCH_TIMEOUT_MS = 10_000;
