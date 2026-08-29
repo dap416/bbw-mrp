@@ -15,8 +15,10 @@
  *   1. Create a Google Sheet. Copy its URL into SHEET_URL below.
  *   2. In Google Ads: Tools > Bulk actions > Scripts > + New script.
  *   3. Paste this file in, click Authorise, then Preview to check it runs.
- *   4. Save, then set a schedule — Daily, early morning, is right. Yesterday's
- *      figures have settled by then.
+ *   4. Save, then set a schedule. HOURLY is the right choice: the dashboard
+ *      opens on Today, and an export that runs once a day leaves Google
+ *      reading empty next to Meta's live figures for most of the working day.
+ *      Hourly costs nothing here — the query returns a few dozen rows.
  *   5. In the Sheet: File > Share > Publish to web > choose the "Ads Export"
  *      sheet, format Comma-separated values (.csv), Publish. Put that URL in
  *      the dashboard's setup page as the Google Sheet CSV URL.
@@ -29,7 +31,10 @@
  *     re-stated conversion figure corrects itself. LOOKBACK_DAYS therefore
  *     controls how much history the dashboard can see.
  *   - Conversions keep being attributed for days after the click, which is why
- *     the lookback re-exports old days instead of only writing yesterday.
+ *     the lookback re-exports old days instead of only writing the newest one.
+ *   - Today's row is always partial and climbs through the day. The dashboard
+ *     already flags any range running to today as still moving, so this is
+ *     consistent with how Meta's own figures behave there.
  */
 
 /** The Google Sheet to write into. Paste your own URL here. */
@@ -62,20 +67,28 @@ function main() {
 }
 
 /**
- * Yesterday backwards, in the account's own timezone — using the script
- * runner's timezone would file spend under the wrong day either side of
- * midnight. Today is excluded because it is still accumulating.
+ * Today backwards, in the account's own timezone — using the script runner's
+ * timezone would file spend under the wrong day either side of midnight.
+ *
+ * Today is INCLUDED even though it is still accumulating. Excluding it looked
+ * tidier but was wrong in practice: the dashboard opens on Today, so a
+ * yesterday-only export left Google reading "no data" every single day, while
+ * Meta showed live figures beside it. A partial number the dashboard already
+ * labels as partial beats an absent one that looks like a decision not to
+ * advertise.
+ *
+ * The corollary is that this script has to run more than once a day to be
+ * worth anything on the Today view — see the schedule note in the header.
  */
 function dateRange(lookbackDays) {
   var timezone = AdsApp.currentAccount().getTimeZone();
   var now = new Date();
 
-  var until = new Date(now.getTime() - 24 * 60 * 60 * 1000);
   var since = new Date(now.getTime() - lookbackDays * 24 * 60 * 60 * 1000);
 
   return {
     since: Utilities.formatDate(since, timezone, 'yyyy-MM-dd'),
-    until: Utilities.formatDate(until, timezone, 'yyyy-MM-dd'),
+    until: Utilities.formatDate(now, timezone, 'yyyy-MM-dd'),
   };
 }
 

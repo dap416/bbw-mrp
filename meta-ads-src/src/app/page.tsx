@@ -500,9 +500,21 @@ function tabSubtitles(
     all: money(overview.totals.spend, overview.currency, { compact: true }),
   };
   for (const slice of overview.platforms) {
-    out[slice.platform] = slice.totals.spend
-      ? money(slice.totals.spend, overview.currency, { compact: true })
-      : "no spend";
+    if (slice.totals.spend) {
+      out[slice.platform] = money(slice.totals.spend, overview.currency, {
+        compact: true,
+      });
+      continue;
+    }
+
+    /*
+      "no spend" and "no data" are different claims, and conflating them is a
+      lie the reader cannot detect. A platform whose export has not reached
+      this period yet has an empty slice — no account resolved — and saying it
+      spent nothing would read as a decision not to advertise rather than as a
+      gap in the figures.
+    */
+    out[slice.platform] = slice.account ? "no spend" : "no data";
   }
   return out;
 }
