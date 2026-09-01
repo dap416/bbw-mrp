@@ -2,7 +2,18 @@
 
 import { api } from "@/lib/basePath";
 import { useState } from "react";
-import type { Advice, DashboardData } from "@/lib/types";
+import type { Platform } from "@/lib/platforms";
+import type { Advice, DashboardData, OverviewData } from "@/lib/types";
+
+/**
+ * What to analyse. The three scopes carry different data, so the panel passes
+ * the request through untouched and lets /api/advice pick the brief and the
+ * system prompt for each.
+ */
+export type AdvicePayload =
+  | { scope: "meta"; data: DashboardData }
+  | { scope: "platform"; platform: Platform; data: OverviewData }
+  | { scope: "all"; data: OverviewData };
 
 const PRIORITY: Record<
   Advice["actions"][number]["priority"],
@@ -13,7 +24,16 @@ const PRIORITY: Record<
   monitor: { label: "Monitor", color: "var(--text-muted)" },
 };
 
-export function AdvicePanel({ data }: { data: DashboardData }) {
+export function AdvicePanel({
+  payload,
+  blurb = "Claude reads the findings above and says what to do first.",
+  buttonLabel = "Analyse this period",
+}: {
+  payload: AdvicePayload;
+  /** One line under the heading, saying what this particular analysis covers. */
+  blurb?: string;
+  buttonLabel?: string;
+}) {
   const [advice, setAdvice] = useState<Advice | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -25,7 +45,7 @@ export function AdvicePanel({ data }: { data: DashboardData }) {
       const res = await fetch(api("/api/advice"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
+        body: JSON.stringify(payload),
       });
       const body = await res.json();
       if (!res.ok) {
@@ -56,7 +76,7 @@ export function AdvicePanel({ data }: { data: DashboardData }) {
             Written analysis
           </h2>
           <p className="muted" style={{ margin: 0, fontSize: "0.8125rem" }}>
-            Claude reads the findings above and says what to do first.
+            {blurb}
           </p>
         </div>
         <button
@@ -64,7 +84,7 @@ export function AdvicePanel({ data }: { data: DashboardData }) {
           onClick={generate}
           disabled={loading}
         >
-          {loading ? "Analysing…" : advice ? "Re-analyse" : "Analyse this period"}
+          {loading ? "Analysing…" : advice ? "Re-analyse" : buttonLabel}
         </button>
       </div>
 

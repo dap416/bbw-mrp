@@ -1,5 +1,6 @@
 "use client";
 
+import { AdvicePanel } from "./AdvicePanel";
 import { FindingsPanel } from "./FindingsPanel";
 import { PlatformComparison } from "./PlatformComparison";
 import { SpendMixChart } from "./SpendMixChart";
@@ -137,7 +138,26 @@ export function OverviewView({ data }: { data: OverviewData }) {
         compareLabel={data.compareLabel}
       />
 
-      <FindingsPanel findings={data.findings} />
+      {/*
+        alignItems: start so the analysis card keeps its natural height —
+        stretching it to match the findings list leaves a tall empty box
+        before anything has been generated.
+      */}
+      <div
+        style={{
+          display: "grid",
+          gap: "1.25rem",
+          alignItems: "start",
+          gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 420px), 1fr))",
+        }}
+      >
+        <FindingsPanel findings={data.findings} />
+        <AdvicePanel
+          payload={{ scope: "all", data }}
+          blurb="Claude weighs all three platforms against each other and says where the budget should sit."
+          buttonLabel="Analyse all platforms"
+        />
+      </div>
     </>
   );
 }

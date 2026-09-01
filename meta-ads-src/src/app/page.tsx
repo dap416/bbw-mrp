@@ -329,7 +329,7 @@ export default function Page() {
             }}
           >
             <FindingsPanel findings={data.findings} />
-            <AdvicePanel data={data} />
+            <AdvicePanel payload={{ scope: "meta", data }} />
           </div>
           {data.canEdit && <AdjustmentsPanel data={data} onChanged={load} />}
           <Breakdown

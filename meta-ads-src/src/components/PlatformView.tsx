@@ -1,5 +1,6 @@
 "use client";
 
+import { AdvicePanel } from "./AdvicePanel";
 import { EntityTable } from "./EntityTable";
 import { ImportPanel, type SheetStatus } from "./ImportPanel";
 import { StatTile } from "./StatTile";
@@ -136,6 +137,18 @@ export function PlatformView({
               crumbs={[{ label: "All campaigns" }]}
             />
           )}
+
+          {/*
+            Full width rather than paired with a findings list as on the Meta
+            tab: the rules engine runs per-account and does not produce
+            per-platform findings for the imported platforms, so there is no
+            second column to sit beside.
+          */}
+          <AdvicePanel
+            payload={{ scope: "platform", platform: slice.platform, data }}
+            blurb={`Claude reads the ${slice.label} figures above and says what to do first.`}
+            buttonLabel={`Analyse ${slice.label}`}
+          />
         </>
       )}
 
