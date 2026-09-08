@@ -493,7 +493,18 @@ loadBriefing(false);
 			<span class="panel-title"><i class="ti ti-cash me-1"></i>Cash Flow — Payments to Make This Month</span>
 			<a href="/cashflow.php" class="small text-muted">Open Cash Flow →</a>
 		</div>
-		<div id="dash-payments"><div class="text-muted small"><span class="spinner-border spinner-border-sm me-1"></span>Loading payments…</div></div>
+		<div class="d-flex align-items-center flex-wrap gap-2 mt-1" id="dash-payments-cta">
+			<button class="btn btn-primary fw-semibold" id="dash-payments-btn" style="white-space:nowrap;">
+				<i class="ti ti-cash me-1"></i>Show payments to make
+			</button>
+			<span class="text-muted small" style="max-width:640px;">
+				Runs this month's cash-flow numbers and lists what to pay: each credit-card
+				payment (with the focus/highest-APR card flagged), bills and POs due this month,
+				and which card each raw-material PO should go on. Read-only — nothing is paid,
+				scheduled or changed. Takes a few seconds.
+			</span>
+		</div>
+		<div id="dash-payments" class="mt-2"></div>
 	</div>
 </div>
 <?php endif; ?>
@@ -1150,13 +1161,19 @@ $('#briefing-run').on('click', function() { loadBriefing(true); });
 loadBriefing(false);
 
 // ── CASH FLOW PAYMENTS WIDGET (admin) ───────────────────────────────────────
-if (document.getElementById('dash-payments')) {
+// Nothing runs until the button is pressed — the cash-flow build behind this
+// is expensive, and most dashboard visits don't need it.
+$('#dash-payments-btn').on('click', function() {
+	var $p = $('#dash-payments'), $btn = $(this);
+	$btn.prop('disabled', true);
+	$p.html('<div class="text-muted small"><span class="spinner-border spinner-border-sm me-1"></span>Working out this month's payments…</div>');
 	$.getJSON('/ajax/dash_payments.php', function(res) {
-		var $p = $('#dash-payments');
 		if (res && res.html) $p.html(res.html);
 		else $p.html('<div class="text-muted small">Payments unavailable' + (res && res.error ? ': ' + res.error : '') + '.</div>');
-	}).fail(function() { $('#dash-payments').html('<div class="text-muted small">Could not load payments.</div>'); });
-}
+	}).fail(function() {
+		$p.html('<div class="text-muted small">Could not load payments.</div>');
+	}).always(function() { $btn.prop('disabled', false).html('<i class="ti ti-refresh me-1"></i>Refresh payments'); });
+});
 </script>
 
 <?php require_once(__DIR__."/includes/footer.php"); ?>
