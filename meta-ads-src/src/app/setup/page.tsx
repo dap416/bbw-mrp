@@ -627,6 +627,15 @@ export default function SetupPage() {
           {ready ? "Open the dashboard →" : "Back to dashboard"}
         </Link>
 
+        {/* Plain anchor: this leaves the /meta app entirely, back into MRP. */}
+        <a
+          href="/home.php"
+          className="control"
+          style={{ textDecoration: "none", color: "var(--text-primary)" }}
+        >
+          ← Back to MRP
+        </a>
+
         {!ready && (
           <span className="muted" style={{ fontSize: "0.8125rem" }}>
             A token and an ad account are needed before real data will load.

@@ -620,6 +620,19 @@ function Header({
           {loading ? "Refreshing…" : "Refresh"}
         </button>
 
+        {/*
+          The way back out. This app is reverse-proxied under /meta inside MRP,
+          so a plain anchor (not next/link, which would prefix the basePath) is
+          what leaves the dashboard and returns to the MRP dashboard.
+        */}
+        <a
+          href="/home.php"
+          className="control"
+          style={{ textDecoration: "none", color: "var(--text-primary)" }}
+        >
+          ← Back to MRP
+        </a>
+
         {data?.canEdit !== false && (
           <Link
             href="/setup"
