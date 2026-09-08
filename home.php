@@ -345,12 +345,15 @@ details.dash-section[open] > summary .ti-chevron-right { transform:rotate(90deg)
 <!-- ── AI BRIEFING ──────────────────────────────────────────────────────── -->
 <div class="card mb-3" style="border-left:4px solid #4680ff;">
 	<div class="card-body py-3">
-		<div class="d-flex justify-content-between align-items-center">
-			<span class="section-title mb-0"><i class="ti ti-sparkles me-1"></i>Your Weekly Briefing</span>
-			<button class="btn btn-sm btn-link text-muted p-0 ms-2" id="briefing-refresh" title="Refresh briefing"><i class="ti ti-refresh"></i></button>
+		<div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+			<span class="section-title mb-0"><i class="ti ti-sparkles me-1"></i>Overall Daily Update</span>
+			<span class="text-muted small" id="briefing-asof"></span>
 		</div>
+		<button class="btn btn-primary w-100 mt-2 py-3 fw-bold" id="briefing-run" style="font-size:1rem; letter-spacing:.04em;">
+			<i class="ti ti-sparkles me-2"></i>OVERALL DAILY UPDATE
+		</button>
 		<div id="briefing-body" class="mt-2" style="font-size:0.9rem;">
-			<div class="text-muted small"><span class="spinner-border spinner-border-sm me-1"></span>Putting together your briefing…</div>
+			<div class="text-muted small">Press the button for today's update.</div>
 		</div>
 	</div>
 </div>
@@ -425,15 +428,28 @@ details.dash-section[open] > summary .ti-chevron-right { transform:rotate(90deg)
 </div><!-- end main (standard-user dashboard) -->
 
 <script>
+// Page load only reads the last saved update (no AI call). The button below
+// is the only thing that asks Claude for a fresh one.
 function loadBriefing(force) {
-	var $b = $('#briefing-body');
-	if (force) $b.html('<div class="text-muted small"><span class="spinner-border spinner-border-sm me-1"></span>Refreshing…</div>');
-	$.getJSON('/ajax/briefing.php' + (force ? '?refresh=1' : ''), function(res) {
-		if (res && res.html) $b.html(res.html);
-		else $b.html('<div class="text-muted small">Briefing unavailable' + (res && res.error ? ': ' + res.error : '') + '.</div>');
-	}).fail(function() { $b.html('<div class="text-muted small">Could not load the briefing.</div>'); });
+	var $b = $('#briefing-body'), $btn = $('#briefing-run');
+	if (force) {
+		$b.html('<div class="text-muted small"><span class="spinner-border spinner-border-sm me-1"></span>Pulling your daily update…</div>');
+		$btn.prop('disabled', true);
+	}
+	$.getJSON('/ajax/briefing.php?' + (force ? 'refresh=1' : 'cached_only=1'), function(res) {
+		if (res && res.html) {
+			$b.html(res.html);
+			$('#briefing-asof').text(res.as_of ? 'as of ' + res.as_of : '');
+		} else if (res && res.empty) {
+			$b.html('<div class="text-muted small">Press the button for today's update.</div>');
+		} else {
+			$b.html('<div class="text-muted small">Update unavailable' + (res && res.error ? ': ' + res.error : '') + '.</div>');
+		}
+	}).fail(function() {
+		if (force) $b.html('<div class="text-muted small">Could not pull the update.</div>');
+	}).always(function() { $btn.prop('disabled', false); });
 }
-$('#briefing-refresh').on('click', function() { loadBriefing(true); });
+$('#briefing-run').on('click', function() { loadBriefing(true); });
 loadBriefing(false);
 </script>
 
@@ -1109,15 +1125,28 @@ $(document).on('blur change', '.eta-input', function(e) {
 });
 
 // ── AI BRIEFING ─────────────────────────────────────────────────────────────
+// Page load only reads the last saved update (no AI call). The button below
+// is the only thing that asks Claude for a fresh one.
 function loadBriefing(force) {
-	var $b = $('#briefing-body');
-	if (force) $b.html('<div class="text-muted small"><span class="spinner-border spinner-border-sm me-1"></span>Refreshing…</div>');
-	$.getJSON('/ajax/briefing.php' + (force ? '?refresh=1' : ''), function(res) {
-		if (res && res.html) $b.html(res.html);
-		else $b.html('<div class="text-muted small">Briefing unavailable' + (res && res.error ? ': ' + res.error : '') + '.</div>');
-	}).fail(function() { $b.html('<div class="text-muted small">Could not load the briefing.</div>'); });
+	var $b = $('#briefing-body'), $btn = $('#briefing-run');
+	if (force) {
+		$b.html('<div class="text-muted small"><span class="spinner-border spinner-border-sm me-1"></span>Pulling your daily update…</div>');
+		$btn.prop('disabled', true);
+	}
+	$.getJSON('/ajax/briefing.php?' + (force ? 'refresh=1' : 'cached_only=1'), function(res) {
+		if (res && res.html) {
+			$b.html(res.html);
+			$('#briefing-asof').text(res.as_of ? 'as of ' + res.as_of : '');
+		} else if (res && res.empty) {
+			$b.html('<div class="text-muted small">Press the button for today's update.</div>');
+		} else {
+			$b.html('<div class="text-muted small">Update unavailable' + (res && res.error ? ': ' + res.error : '') + '.</div>');
+		}
+	}).fail(function() {
+		if (force) $b.html('<div class="text-muted small">Could not pull the update.</div>');
+	}).always(function() { $btn.prop('disabled', false); });
 }
-$('#briefing-refresh').on('click', function() { loadBriefing(true); });
+$('#briefing-run').on('click', function() { loadBriefing(true); });
 loadBriefing(false);
 
 // ── CASH FLOW PAYMENTS WIDGET (admin) ───────────────────────────────────────

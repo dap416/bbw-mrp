@@ -25,8 +25,23 @@
 
 	// ── Cache (data_cache) ────────────────────────────────────────────────────
 	$db->exec("CREATE TABLE IF NOT EXISTS data_cache (ckey VARCHAR(64) PRIMARY KEY, cval LONGTEXT, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB");
-	$cacheKey = 'briefing_' . $uid . '_' . $partOfDay;
+	$cacheKey = 'briefing_' . $uid;
 	$force = !empty($_GET['refresh']);
+
+	// The dashboard loads with cached_only=1 so simply opening the page never
+	// calls the AI. George presses "Overall Daily Update" to actually generate
+	// one (that request comes in with refresh=1).
+	if (!empty($_GET['cached_only'])) {
+		try {
+			$s = $db->prepare("SELECT cval, updated_at FROM data_cache WHERE ckey = ?"); $s->execute([$cacheKey]);
+			if ($row = $s->fetch()) {
+				echo json_encode(['ok' => true, 'html' => $row['cval'], 'cached' => true, 'as_of' => $row['updated_at']]);
+				exit;
+			}
+		} catch (Throwable $e) {}
+		echo json_encode(['ok' => true, 'html' => '', 'empty' => true]);
+		exit;
+	}
 	// The welcome message defaults to a WEEKLY update, but regenerates early
 	// whenever an important event (task done / payment / delivery) bumps the
 	// global 'briefing_dirty' marker via briefing_touch().
@@ -253,4 +268,4 @@ Write it like you're speaking to them:
 			if (!preg_match('#^(/(?!/)|https?://)#i', $url)) return $m[0];
 			return '<a href="' . $m[2] . '" style="text-decoration:underline;">' . $m[1] . '</a>';
 		}, $s);
-	}
+	}
