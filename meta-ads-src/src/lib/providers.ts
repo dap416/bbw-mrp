@@ -158,7 +158,11 @@ function loadManual(
                 ? " The connected sheet does not cover it — widen the script's lookback, or pick a later range."
                 : " Import the report covering it.")
             : connected
-              ? `${meta.label} is connected to a sheet but nothing has arrived yet. Run the Google Ads script once, then use Sync now.`
+              ? `${meta.label} is connected to a sheet but nothing has arrived yet. ${
+                  platform === "microsoft"
+                    ? "Run importMicrosoftReport in the sheet's Apps Script once (it needs a Microsoft report email to have arrived), check its log says it wrote rows, and confirm the URL here points at the Microsoft Export tab — a published-CSV URL names that tab with its own gid."
+                    : "Run the Google Ads script once, then use Sync now."
+                } Then use Sync now.`
               : `${meta.label} has no data yet. Connect a sheet or paste a report on its tab.`),
       ],
       range,

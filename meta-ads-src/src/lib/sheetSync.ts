@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { getConfig, type ConfigKey } from "./config";
 import { CsvError, parsePlatformCsv } from "./csv";
 import { upsertPlatformRows } from "./platformData";
-import type { Platform } from "./platforms";
+import { PLATFORMS, type Platform } from "./platforms";
 
 /**
  * Pulls a platform's figures from a published Google Sheet.
@@ -103,6 +103,23 @@ export async function syncPlatformFromSheet(
   const url = sheetUrl(platform);
   if (!url) {
     return { ok: false, platform, error: "No sheet URL is configured." };
+  }
+
+  /*
+    Google and Microsoft live on two tabs of one spreadsheet, and "Publish to
+    web" defaults to the first tab — so pasting the same URL into both is an
+    easy mistake that otherwise shows up as Microsoft silently mirroring
+    Google's numbers. Catch it by name rather than letting it import.
+  */
+  for (const other of PLATFORMS) {
+    if (other === platform) continue;
+    if (sheetUrl(other) === url) {
+      return {
+        ok: false,
+        platform,
+        error: `This is the same published URL as ${other}. Publish the platform's own tab (File > Share > Publish to web, pick that tab, Comma-separated values) — its URL carries that tab's own gid.`,
+      };
+    }
   }
 
   const state = readSyncState();
