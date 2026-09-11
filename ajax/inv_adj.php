@@ -12,7 +12,8 @@
 	$reason      = $_POST['reason']             ?? '';
 	$warehouseId = (int)($_POST['warehouse_id'] ?? 0);
 
-	if (!$partId) { echo 'error: missing part id'; exit; }
+	if (!$partId) { http_response_code(400); echo 'error: missing part id'; exit; }
+	if (!is_numeric($_POST['qty'] ?? null)) { http_response_code(400); echo 'error: QOH must be a whole number'; exit; }
 
 	try {
 		// Get current warehouse-specific qty (or total if no warehouse selected)
@@ -31,11 +32,13 @@
 			$db->exec("UPDATE `parts` SET `qoh` = '$newQty' WHERE `id` = '$partId'");
 		}
 
-		// Transaction
-		$userId = $_SESSION['user_id'] ?? null;
-		$stmt = $db->prepare("INSERT INTO `trans` (`partid`,`type`,`adjreason`,`date`,`qty`,`old`,`new`,`user_id`,`warehouse_id`)
-		                      VALUES (?,?,?,?,?,?,?,?,?)");
-		$stmt->execute([$partId,'ADJUST',$reason,$now,$diff,$currentQty,$newQty,$userId,$warehouseId?:null]);
+		// Transaction (skip the audit row when the count already matched)
+		if ($diff !== 0) {
+			$userId = $_SESSION['user_id'] ?? null;
+			$stmt = $db->prepare("INSERT INTO `trans` (`partid`,`type`,`adjreason`,`date`,`qty`,`old`,`new`,`user_id`,`warehouse_id`)
+			                      VALUES (?,?,?,?,?,?,?,?,?)");
+			$stmt->execute([$partId,'ADJUST',$reason,$now,$diff,$currentQty,$newQty,$userId,$warehouseId?:null]);
+		}
 
 		$newTotal = (int)$db->query("SELECT `qoh` FROM `parts` WHERE `id` = '$partId'")->fetch()['qoh'];
 	} catch (Throwable $e) {
@@ -44,4 +47,5 @@
 		exit;
 	}
 
-	echo json_encode(['ok' => true, 'qoh' => $newTotal]);
+	header('Content-Type: application/json');
+	echo json_encode(['ok' => true, 'qoh' => $newTotal, 'changed' => $diff !== 0]);

@@ -456,6 +456,12 @@
 						$whQtysAdj = $whQtyAll[$id] ?? [];
 						$whQtysAdjJson = htmlspecialchars(json_encode($whQtysAdj), ENT_QUOTES);
 						$firstWH = $warehouses[0] ?? null;
+						// A part with no per-warehouse rows yet (legacy stock kept only in parts.qoh)
+						// would otherwise show 0 here; show its real on-hand in the first warehouse.
+						if ($firstWH && empty($whQtysAdj) && (int)$qoh !== 0) {
+							$whQtysAdj[$firstWH['id']] = (int)$qoh;
+							$whQtysAdjJson = htmlspecialchars(json_encode($whQtysAdj), ENT_QUOTES);
+						}
 						$firstWHQty = $firstWH ? ((int)($whQtysAdj[$firstWH['id']] ?? 0)) : $qoh;
 						?>
 
@@ -973,8 +979,16 @@
 			var whId      = $("#"+record+"adjWH").val();
 			var $btn      = $(this);
 
-			var qohChanged = (newQty != origQty);
+			newQty = $.trim(newQty);
+			reason = $.trim(reason);
+			// A typed reason counts as intent to save the count, even if the number
+			// matches what the field loaded with (the server compares against the real qty).
+			var qohChanged = (newQty != origQty) || reason !== '';
 
+			if (qohChanged && !/^-?\d+$/.test(newQty)) {
+				alert('QOH must be a whole number.');
+				return;
+			}
 			if (qohChanged && !reason) {
 				alert('Please enter a reason for the quantity adjustment.');
 				return;
@@ -982,6 +996,7 @@
 
 			$btn.prop('disabled', true);
 			var errors = [];
+			var qohSaved = false;
 
 			// Step 2: save the QOH adjustment (independent of the part-field save,
 			// so a pure inventory change still goes through and reports its result).
@@ -989,8 +1004,12 @@
 				if (!qohChanged) { finish(); return; }
 				$.post('/ajax/inv_adj.php', { record: record, qty: newQty, reason: reason, warehouse_id: whId })
 					.done(function(resp) {
-						var total = (resp && typeof resp === 'object') ? resp.qoh : newQty;
-						$("#"+record+"rowQoh").text(total);
+						if (!resp || typeof resp !== 'object' || !resp.ok) {
+							errors.push('Inventory: ' + (typeof resp === 'string' && resp ? resp.replace(/^error:\s*/, '') : 'unexpected response'));
+							return;
+						}
+						qohSaved = true;
+						$("#"+record+"rowQoh").text(resp.qoh);
 						adjQty.data('original', newQty);
 						$("#"+record+"editQtyReason").val('');
 					})
@@ -1009,6 +1028,9 @@
 					return;
 				}
 				$btn.text('Changes saved');
+				// Reload after an inventory change so every QOH display (row, On-Hand,
+				// per-warehouse table, category totals, history) reflects the saved count.
+				if (qohSaved) { setTimeout(function() { location.reload(); }, 500); return; }
 				setTimeout(function() {
 					$("#"+record+"transArea").slideUp(200);
 					$btn.text('Save All Changes');
