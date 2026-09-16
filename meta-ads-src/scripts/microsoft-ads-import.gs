@@ -49,15 +49,26 @@ var SPREADSHEET_ID = 'PASTE_YOUR_SPREADSHEET_ID_HERE';
 var SHEET_NAME = 'Microsoft Export';
 
 /**
- * The scheduled report's name, which Microsoft puts in the subject line.
- * Matched as well as the sender so a report FORWARDED from another mailbox
- * still imports — a forward comes from the person who forwarded it, never
- * from microsoft.com, so a sender-only search silently ignores it.
+ * The scheduled report's name in Microsoft Advertising.
+ *
+ * Note this is NOT the subject line: every one of these mails is subject
+ * "Your scheduled report is ready to view", and the report name appears only
+ * in the body. So it is matched as a plain search term, which Gmail applies
+ * to the body — `subject:` would never match. Matching it at all is what
+ * lets a report FORWARDED from another mailbox still import, since a forward
+ * comes from whoever forwarded it rather than from microsoft.com.
  */
-var REPORT_SUBJECT = 'MRP Daily import';
+var REPORT_NAME = 'MRP Daily Import';
 
 /**
  * Gmail search that finds the report.
+ *
+ * `in:anywhere` because GmailApp.search, like the Gmail UI, skips Trash and
+ * Spam unless told otherwise — and these reports are exactly the kind of
+ * automated mail that gets swept into one or the other. An entire fortnight
+ * of them sat in Trash while the import reported finding no email at all,
+ * which is a miserable thing to debug from the outside. Reading them
+ * wherever they landed costs nothing and removes the failure mode.
  *
  * Thirty days rather than seven: each email is a rolling snapshot, so the
  * lookback is also the recovery window. At seven days, a fortnight of the
@@ -66,7 +77,7 @@ var REPORT_SUBJECT = 'MRP Daily import';
  * lapse heal itself instead of quietly costing history.
  */
 var GMAIL_QUERY =
-  '(from:(microsoft.com) OR subject:("' + REPORT_SUBJECT + '")) ' +
+  'in:anywhere (from:(microsoft.com) OR "' + REPORT_NAME + '") ' +
   'has:attachment newer_than:30d';
 
 /** Never keep more than this many days of history in the tab. */
