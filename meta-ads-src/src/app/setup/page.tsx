@@ -16,6 +16,42 @@ import type { AccountInfo } from "@/lib/types";
 
 type Fields = Record<string, string>;
 
+interface TestOutcome {
+  ok: boolean;
+  message: string;
+  hint?: string;
+}
+
+/** The outcome of a "test these credentials" click. Renders nothing until one. */
+function TestResult({ result }: { result: TestOutcome | null }) {
+  if (!result) return null;
+  return (
+    <div
+      style={{
+        marginTop: "0.75rem",
+        padding: "0.7rem 0.85rem",
+        borderRadius: 8,
+        borderLeft: `3px solid ${
+          result.ok ? "var(--status-good)" : "var(--status-critical)"
+        }`,
+        background: "var(--surface-sunken)",
+        fontSize: "0.875rem",
+        lineHeight: 1.5,
+      }}
+    >
+      <div style={{ color: "var(--text-primary)" }}>
+        {result.ok ? "✓ " : "✕ "}
+        {result.message}
+      </div>
+      {result.hint && (
+        <div className="secondary" style={{ marginTop: "0.3rem" }}>
+          {result.hint}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const EMPTY: Fields = {
   META_ACCESS_TOKEN: "",
   META_AD_ACCOUNT_ID: "",
@@ -42,9 +78,9 @@ export default function SetupPage() {
   const [accounts, setAccounts] = useState<AccountInfo[] | null>(null);
   const [testing, setTesting] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [testResult, setTestResult] = useState<
-    { ok: boolean; message: string; hint?: string } | null
-  >(null);
+  const [testResult, setTestResult] = useState<TestOutcome | null>(null);
+  const [shopifyTesting, setShopifyTesting] = useState(false);
+  const [shopifyTest, setShopifyTest] = useState<TestOutcome | null>(null);
   const [saved, setSaved] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -71,6 +107,36 @@ export default function SetupPage() {
   function set(key: string, value: string) {
     setFields((f) => ({ ...f, [key]: value }));
     setSaved(false);
+  }
+
+  async function testShopify() {
+    setShopifyTesting(true);
+    setShopifyTest(null);
+    try {
+      const res = await fetch(api("/api/setup/shopify"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          SHOPIFY_STORE_DOMAIN: fields.SHOPIFY_STORE_DOMAIN,
+          SHOPIFY_CLIENT_ID: fields.SHOPIFY_CLIENT_ID,
+          SHOPIFY_CLIENT_SECRET: fields.SHOPIFY_CLIENT_SECRET,
+          SHOPIFY_ADMIN_TOKEN: fields.SHOPIFY_ADMIN_TOKEN,
+        }),
+      });
+      const body = await res.json();
+      setShopifyTest({
+        ok: Boolean(body.ok),
+        message: body.message ?? body.error ?? "Request failed",
+        hint: body.hint,
+      });
+    } catch (err) {
+      setShopifyTest({
+        ok: false,
+        message: err instanceof Error ? err.message : "Request failed",
+      });
+    } finally {
+      setShopifyTesting(false);
+    }
   }
 
   async function testToken() {
@@ -200,29 +266,7 @@ export default function SetupPage() {
           </button>
         </div>
 
-        {testResult && (
-          <div
-            style={{
-              marginTop: "0.75rem",
-              padding: "0.7rem 0.85rem",
-              borderRadius: 8,
-              borderLeft: `3px solid ${testResult.ok ? "var(--status-good)" : "var(--status-critical)"}`,
-              background: "var(--surface-sunken)",
-              fontSize: "0.875rem",
-              lineHeight: 1.5,
-            }}
-          >
-            <div style={{ color: "var(--text-primary)" }}>
-              {testResult.ok ? "✓ " : "✕ "}
-              {testResult.message}
-            </div>
-            {testResult.hint && (
-              <div className="secondary" style={{ marginTop: "0.3rem" }}>
-                {testResult.hint}
-              </div>
-            )}
-          </div>
-        )}
+        <TestResult result={testResult} />
       </Section>
 
       {/* --- Step 2: the account ------------------------------------------ */}
@@ -484,6 +528,13 @@ export default function SetupPage() {
           60 days). These are exchanged for a short-lived token automatically, so
           there is nothing to re-paste when it expires.
         </span>
+
+        <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.6rem", flexWrap: "wrap" }}>
+          <button className="control" onClick={testShopify} disabled={shopifyTesting}>
+            {shopifyTesting ? "Checking with Shopify…" : "Test this connection"}
+          </button>
+        </div>
+        <TestResult result={shopifyTest} />
 
         <details style={{ marginTop: "0.6rem" }}>
           <summary style={{ ...helpStyle, cursor: "pointer" }}>

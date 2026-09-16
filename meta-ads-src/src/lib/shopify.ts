@@ -24,9 +24,32 @@ export function isShopifyConfigured(): boolean {
   );
 }
 
-/** The store's *.myshopify.com domain, with any pasted scheme stripped. */
-function storeDomain(): string {
-  return getConfig("SHOPIFY_STORE_DOMAIN")!.replace(/^https?:\/\//, "").replace(/\/+$/, "");
+/**
+ * The credentials a Shopify call runs with.
+ *
+ * Overridable so the setup page can test a pasted Client ID and secret before
+ * they are written to disk — a bad paste should be caught there rather than
+ * surfacing as a broken dashboard later.
+ */
+export interface ShopifyCredentials {
+  domain: string;
+  token?: string;
+  clientId?: string;
+  clientSecret?: string;
+}
+
+/** Strips a pasted scheme and trailing slash off a *.myshopify.com domain. */
+function cleanDomain(domain: string): string {
+  return domain.replace(/^https?:\/\//, "").replace(/\/+$/, "");
+}
+
+function configuredCredentials(): ShopifyCredentials {
+  return {
+    domain: cleanDomain(getConfig("SHOPIFY_STORE_DOMAIN") ?? ""),
+    token: getConfig("SHOPIFY_ADMIN_TOKEN"),
+    clientId: getConfig("SHOPIFY_CLIENT_ID"),
+    clientSecret: getConfig("SHOPIFY_CLIENT_SECRET"),
+  };
 }
 
 /**
@@ -53,24 +76,25 @@ interface TokenResponse {
  * way keeps working untouched. Otherwise this runs the same client-credentials
  * exchange the MRP does in `includes/shopify.php`, against the same app.
  */
-async function getAccessToken(): Promise<string> {
-  const stat = getConfig("SHOPIFY_ADMIN_TOKEN");
-  if (stat) return stat;
+async function getAccessToken(
+  creds: ShopifyCredentials,
+  { useCache = true }: { useCache?: boolean } = {},
+): Promise<string> {
+  if (creds.token) return creds.token;
 
   // A two-minute buffer, so a token that expires mid-request does not fail it.
-  if (tokenCache && tokenCache.expiresAt > Date.now() + 120_000) {
+  if (useCache && tokenCache && tokenCache.expiresAt > Date.now() + 120_000) {
     return tokenCache.token;
   }
 
-  const clientId = getConfig("SHOPIFY_CLIENT_ID");
-  const clientSecret = getConfig("SHOPIFY_CLIENT_SECRET");
+  const { clientId, clientSecret } = creds;
   if (!clientId || !clientSecret) {
     throw new Error(
       "Shopify needs either an admin API token or a Client ID and secret. Add them on the setup page.",
     );
   }
 
-  const res = await fetch(`https://${storeDomain()}/admin/oauth/access_token`, {
+  const res = await fetch(`https://${creds.domain}/admin/oauth/access_token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
@@ -99,11 +123,13 @@ async function getAccessToken(): Promise<string> {
     throw new Error(`Could not get a Shopify access token: ${detail}`);
   }
 
-  tokenCache = {
-    token: body.access_token,
-    expiresAt: Date.now() + (body.expires_in ?? 86_399) * 1000,
-  };
-  return tokenCache.token;
+  if (useCache) {
+    tokenCache = {
+      token: body.access_token,
+      expiresAt: Date.now() + (body.expires_in ?? 86_399) * 1000,
+    };
+  }
+  return body.access_token;
 }
 
 interface ExclusionRules {
@@ -202,8 +228,9 @@ export async function getShopifyRevenue(
 ): Promise<ShopifyRevenue | null> {
   if (!isShopifyConfigured()) return null;
 
-  const token = await getAccessToken();
-  const endpoint = `https://${storeDomain()}/admin/api/${API_VERSION}/graphql.json`;
+  const creds = configuredCredentials();
+  const token = await getAccessToken(creds);
+  const endpoint = `https://${creds.domain}/admin/api/${API_VERSION}/graphql.json`;
   const rules = readRules();
 
   // Shopify's search syntax takes plain dates and interprets them in the
@@ -364,5 +391,110 @@ function dayKeyInTimezone(iso: string, timezone: string): string {
     }).format(new Date(iso));
   } catch {
     return iso.slice(0, 10);
+  }
+}
+
+/**
+ * Verifies credentials by using them, for the setup page's Test button.
+ *
+ * Checks the scope as well as the connection. A token that authenticates but
+ * lacks `read_orders` would otherwise pass a naive shop-name check and then
+ * fail on the dashboard, which is exactly the confusing outcome testing before
+ * saving is meant to prevent. Never throws — the setup page renders the
+ * message either way.
+ */
+export async function testShopifyConnection(
+  overrides: Partial<ShopifyCredentials> = {},
+): Promise<{ ok: boolean; message: string; hint?: string }> {
+  const stored = configuredCredentials();
+  const creds: ShopifyCredentials = {
+    domain: overrides.domain ? cleanDomain(overrides.domain) : stored.domain,
+    token: overrides.token ?? stored.token,
+    clientId: overrides.clientId ?? stored.clientId,
+    clientSecret: overrides.clientSecret ?? stored.clientSecret,
+  };
+
+  if (!creds.domain) {
+    return { ok: false, message: "Enter your store domain first." };
+  }
+  if (!creds.token && !(creds.clientId && creds.clientSecret)) {
+    return {
+      ok: false,
+      message: "Enter a Client ID and secret (or an admin API token) first.",
+    };
+  }
+
+  try {
+    // useCache: false — a test of unsaved credentials must not become the
+    // token the dashboard then runs on.
+    const token = await getAccessToken(creds, { useCache: false });
+
+    const res = await fetch(
+      `https://${creds.domain}/admin/api/${API_VERSION}/graphql.json`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Shopify-Access-Token": token,
+        },
+        body: JSON.stringify({
+          query: `{
+            shop { name }
+            orders(first: 1, sortKey: CREATED_AT, reverse: true) {
+              edges { node { name } }
+            }
+          }`,
+        }),
+        cache: "no-store",
+      },
+    );
+
+    if (res.status === 401 || res.status === 403) {
+      return {
+        ok: false,
+        message: `Shopify rejected the credentials (HTTP ${res.status}).`,
+        hint: "Check the app is installed on this store and the credentials match it.",
+      };
+    }
+    if (!res.ok) {
+      return { ok: false, message: `Shopify returned HTTP ${res.status}.` };
+    }
+
+    const body = (await res.json()) as {
+      data?: { shop?: { name: string }; orders?: { edges: { node: { name: string } }[] } };
+      errors?: { message: string }[];
+    };
+
+    if (body.errors?.length) {
+      const detail = body.errors.map((e) => e.message).join("; ");
+      return {
+        ok: false,
+        message: `Shopify: ${detail}`,
+        hint: /access denied|scope/i.test(detail)
+          ? "The app is missing the read_orders scope. Add it in the Dev Dashboard, then reinstall the app on the store."
+          : undefined,
+      };
+    }
+
+    const shop = body.data?.shop?.name;
+    if (!shop) {
+      return { ok: false, message: "Shopify replied, but not with this store's details." };
+    }
+
+    const sawOrder = Boolean(body.data?.orders?.edges?.length);
+    return {
+      ok: true,
+      message: sawOrder
+        ? `Connected to ${shop}, and orders are readable.`
+        : `Connected to ${shop}, but no orders came back.`,
+      hint: sawOrder
+        ? undefined
+        : "That is fine for an empty store; otherwise check the app has read_orders.",
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      message: err instanceof Error ? err.message : "Could not reach Shopify.",
+    };
   }
 }
