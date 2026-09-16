@@ -17,7 +17,93 @@ import type { DateRange, ExclusionReason, ShopifyRevenue } from "./types";
 const API_VERSION = "2025-01";
 
 export function isShopifyConfigured(): boolean {
-  return hasConfig("SHOPIFY_STORE_DOMAIN") && hasConfig("SHOPIFY_ADMIN_TOKEN");
+  if (!hasConfig("SHOPIFY_STORE_DOMAIN")) return false;
+  return (
+    hasConfig("SHOPIFY_ADMIN_TOKEN") ||
+    (hasConfig("SHOPIFY_CLIENT_ID") && hasConfig("SHOPIFY_CLIENT_SECRET"))
+  );
+}
+
+/** The store's *.myshopify.com domain, with any pasted scheme stripped. */
+function storeDomain(): string {
+  return getConfig("SHOPIFY_STORE_DOMAIN")!.replace(/^https?:\/\//, "").replace(/\/+$/, "");
+}
+
+/**
+ * A client-credentials token and when it expires, held in module scope.
+ *
+ * Shopify's Dev Dashboard apps have no permanent token — they exchange a
+ * Client ID and secret for one that lasts about a day. Caching it here matters:
+ * without it every page load would spend a round trip re-minting a token that
+ * is still perfectly valid, and Shopify rate-limits the token endpoint.
+ */
+let tokenCache: { token: string; expiresAt: number } | null = null;
+
+interface TokenResponse {
+  access_token?: string;
+  expires_in?: number;
+  error?: string;
+  error_description?: string;
+}
+
+/**
+ * Resolves a usable Admin API token.
+ *
+ * A static `shpat_` token wins when one is set, so a store configured the old
+ * way keeps working untouched. Otherwise this runs the same client-credentials
+ * exchange the MRP does in `includes/shopify.php`, against the same app.
+ */
+async function getAccessToken(): Promise<string> {
+  const stat = getConfig("SHOPIFY_ADMIN_TOKEN");
+  if (stat) return stat;
+
+  // A two-minute buffer, so a token that expires mid-request does not fail it.
+  if (tokenCache && tokenCache.expiresAt > Date.now() + 120_000) {
+    return tokenCache.token;
+  }
+
+  const clientId = getConfig("SHOPIFY_CLIENT_ID");
+  const clientSecret = getConfig("SHOPIFY_CLIENT_SECRET");
+  if (!clientId || !clientSecret) {
+    throw new Error(
+      "Shopify needs either an admin API token or a Client ID and secret. Add them on the setup page.",
+    );
+  }
+
+  const res = await fetch(`https://${storeDomain()}/admin/oauth/access_token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "client_credentials",
+      client_id: clientId,
+      client_secret: clientSecret,
+    }),
+    cache: "no-store",
+  });
+
+  let body: TokenResponse = {};
+  try {
+    body = (await res.json()) as TokenResponse;
+  } catch {
+    // Leave body empty; the messages below cover it.
+  }
+
+  if (res.status === 401 || res.status === 403) {
+    throw new Error(
+      `Shopify rejected the Client ID/secret (HTTP ${res.status}). Check the credentials, and that the app is installed on this store.`,
+    );
+  }
+  if (!body.access_token) {
+    const detail =
+      body.error_description ?? body.error ?? `unexpected response (HTTP ${res.status})`;
+    throw new Error(`Could not get a Shopify access token: ${detail}`);
+  }
+
+  tokenCache = {
+    token: body.access_token,
+    expiresAt: Date.now() + (body.expires_in ?? 86_399) * 1000,
+  };
+  return tokenCache.token;
 }
 
 interface ExclusionRules {
@@ -116,9 +202,8 @@ export async function getShopifyRevenue(
 ): Promise<ShopifyRevenue | null> {
   if (!isShopifyConfigured()) return null;
 
-  const domain = getConfig("SHOPIFY_STORE_DOMAIN")!.replace(/^https?:\/\//, "");
-  const token = getConfig("SHOPIFY_ADMIN_TOKEN")!;
-  const endpoint = `https://${domain}/admin/api/${API_VERSION}/graphql.json`;
+  const token = await getAccessToken();
+  const endpoint = `https://${storeDomain()}/admin/api/${API_VERSION}/graphql.json`;
   const rules = readRules();
 
   // Shopify's search syntax takes plain dates and interprets them in the
@@ -164,8 +249,12 @@ export async function getShopifyRevenue(
     });
 
     if (!res.ok) {
+      // A token that expired early is the one recoverable case here, so drop
+      // the cache: the next request mints a fresh one rather than repeating
+      // this failure until the old token's nominal expiry passes.
+      if (res.status === 401) tokenCache = null;
       throw new Error(
-        `Shopify returned HTTP ${res.status}. Check SHOPIFY_ADMIN_TOKEN has the read_orders scope.`,
+        `Shopify returned HTTP ${res.status}. Check the app has the read_orders scope.`,
       );
     }
 

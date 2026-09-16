@@ -37,6 +37,11 @@ export const CONFIG_KEYS = [
   "MICROSOFT_SHEET_CSV_URL",
   "SHOPIFY_STORE_DOMAIN",
   "SHOPIFY_ADMIN_TOKEN",
+  // Dev Dashboard apps have no permanent token: they exchange a Client ID and
+  // secret for one that expires in about a day. These let the dashboard reuse
+  // the app the MRP already has installed rather than needing a second one.
+  "SHOPIFY_CLIENT_ID",
+  "SHOPIFY_CLIENT_SECRET",
   "SHOPIFY_EXCLUDE_TAGS",
   "SHOPIFY_EXCLUDE_ABOVE",
   "SHOPIFY_EXCLUDE_B2B",
@@ -50,6 +55,7 @@ export type ConfigKey = (typeof CONFIG_KEYS)[number];
 export const SECRET_KEYS: ConfigKey[] = [
   "META_ACCESS_TOKEN",
   "SHOPIFY_ADMIN_TOKEN",
+  "SHOPIFY_CLIENT_SECRET",
   "ANTHROPIC_API_KEY",
   // Not a token, but it works like one: a published sheet needs no sign-in,
   // so the URL alone grants read access to the figures.

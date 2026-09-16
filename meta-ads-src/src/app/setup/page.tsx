@@ -28,6 +28,8 @@ const EMPTY: Fields = {
   ANTHROPIC_API_KEY: "",
   SHOPIFY_STORE_DOMAIN: "",
   SHOPIFY_ADMIN_TOKEN: "",
+  SHOPIFY_CLIENT_ID: "",
+  SHOPIFY_CLIENT_SECRET: "",
   SHOPIFY_EXCLUDE_TAGS: "",
   SHOPIFY_EXCLUDE_ABOVE: "",
   SHOPIFY_EXCLUDE_B2B: "",
@@ -405,7 +407,11 @@ export default function SetupPage() {
       <Section
         step="5"
         title="Optional extras"
-        done={Boolean(present.ANTHROPIC_API_KEY || present.SHOPIFY_ADMIN_TOKEN)}
+        done={Boolean(
+          present.ANTHROPIC_API_KEY ||
+            present.SHOPIFY_ADMIN_TOKEN ||
+            present.SHOPIFY_CLIENT_SECRET,
+        )}
       >
         <p style={helpStyle}>
           Everything above already gives you the full dashboard. These two add
@@ -450,6 +456,40 @@ export default function SetupPage() {
             />
           </label>
           <label style={{ flex: "1 1 220px" }}>
+            <span style={labelStyle}>Shopify client ID</span>
+            <input
+              value={fields.SHOPIFY_CLIENT_ID}
+              onChange={(e) => set("SHOPIFY_CLIENT_ID", e.target.value)}
+              placeholder="from the app's Settings tab"
+              spellCheck={false}
+              style={{ ...inputStyle, fontFamily: "ui-monospace, monospace" }}
+            />
+          </label>
+          <label style={{ flex: "1 1 220px" }}>
+            <span style={labelStyle}>Shopify client secret</span>
+            <input
+              value={fields.SHOPIFY_CLIENT_SECRET}
+              onChange={(e) => set("SHOPIFY_CLIENT_SECRET", e.target.value)}
+              placeholder="from the app's Settings tab"
+              spellCheck={false}
+              style={{ ...inputStyle, fontFamily: "ui-monospace, monospace" }}
+            />
+          </label>
+        </div>
+        <span style={{ ...helpStyle, display: "block", marginTop: "0.3rem" }}>
+          Use the same app the MRP already uses: its Client ID and secret are on
+          the MRP&apos;s Integrations page, and the app needs the{" "}
+          <code style={codeStyle}>read_orders</code> scope (plus{" "}
+          <code style={codeStyle}>read_all_orders</code> to see further back than
+          60 days). These are exchanged for a short-lived token automatically, so
+          there is nothing to re-paste when it expires.
+        </span>
+
+        <details style={{ marginTop: "0.6rem" }}>
+          <summary style={{ ...helpStyle, cursor: "pointer" }}>
+            Or use a permanent admin API token instead
+          </summary>
+          <label style={{ display: "block", marginTop: "0.5rem" }}>
             <span style={labelStyle}>Shopify admin API token</span>
             <input
               value={fields.SHOPIFY_ADMIN_TOKEN}
@@ -458,13 +498,12 @@ export default function SetupPage() {
               spellCheck={false}
               style={{ ...inputStyle, fontFamily: "ui-monospace, monospace" }}
             />
+            <span style={{ ...helpStyle, display: "block", marginTop: "0.3rem" }}>
+              For a custom app created in the Shopify admin rather than the Dev
+              Dashboard. Set this and it wins over the Client ID and secret above.
+            </span>
           </label>
-        </div>
-        <span style={{ ...helpStyle, display: "block", marginTop: "0.3rem" }}>
-          Shopify admin → Settings → Apps and sales channels → Develop apps →
-          Create an app → Admin API scopes → tick <code style={codeStyle}>read_orders</code>{" "}
-          → Install.
-        </span>
+        </details>
       </Section>
 
       {/* --- Step 5: wholesale exclusions --------------------------------- */}
