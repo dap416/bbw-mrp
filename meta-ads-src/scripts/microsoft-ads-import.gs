@@ -49,10 +49,25 @@ var SPREADSHEET_ID = 'PASTE_YOUR_SPREADSHEET_ID_HERE';
 var SHEET_NAME = 'Microsoft Export';
 
 /**
- * Gmail search that finds the report. Widen it if the mail is not being
- * picked up: `from:` alone plus an attachment is usually enough.
+ * The scheduled report's name, which Microsoft puts in the subject line.
+ * Matched as well as the sender so a report FORWARDED from another mailbox
+ * still imports — a forward comes from the person who forwarded it, never
+ * from microsoft.com, so a sender-only search silently ignores it.
  */
-var GMAIL_QUERY = 'from:(microsoft.com) has:attachment newer_than:7d';
+var REPORT_SUBJECT = 'MRP Daily import';
+
+/**
+ * Gmail search that finds the report.
+ *
+ * Thirty days rather than seven: each email is a rolling snapshot, so the
+ * lookback is also the recovery window. At seven days, a fortnight of the
+ * trigger not running meant those days could never be imported again — the
+ * mail that carried them had aged out of the search. Thirty days makes a
+ * lapse heal itself instead of quietly costing history.
+ */
+var GMAIL_QUERY =
+  '(from:(microsoft.com) OR subject:("' + REPORT_SUBJECT + '")) ' +
+  'has:attachment newer_than:30d';
 
 /** Never keep more than this many days of history in the tab. */
 var MAX_HISTORY_DAYS = 120;
@@ -175,9 +190,31 @@ function parseReport(text) {
     spend: indexOfAny(header, ['spend', 'cost']),
     impressions: indexOfAny(header, ['impressions', 'impr']),
     clicks: indexOfAny(header, ['clicks']),
-    conversions: indexOfAny(header, ['conversions', 'conv']),
-    revenue: indexOfAny(header, ['revenue', 'conv value', 'conversion value']),
+    conversions: indexOfAny(header, ['conversions', 'conv', 'conversions qualified']),
+    revenue: indexOfAny(header, [
+      'revenue',
+      'conv value',
+      'conv val',
+      'conversion value',
+      'conversion revenue',
+    ]),
   };
+
+  /*
+    A column we cannot find is imported as zero for every row, which looks
+    exactly like a real zero on the dashboard — "no conversions" reads as an
+    ad problem rather than an import one. Name it in the log instead, so the
+    cause is findable without diffing the sheet against Microsoft by hand.
+  */
+  if (col.conversions === -1 || col.revenue === -1) {
+    var missing = [];
+    if (col.conversions === -1) missing.push('conversions');
+    if (col.revenue === -1) missing.push('revenue');
+    Logger.log(
+      'WARNING: no ' + missing.join(' or ') + ' column found, so those import ' +
+      'as zero. Add the metric to the report in Microsoft Advertising, or add ' +
+      'its column name to parseReport. Header was: ' + header.join(', '));
+  }
 
   if (col.spend === -1) {
     Logger.log('No spend/cost column. Header was: ' + header.join(', '));
@@ -212,12 +249,41 @@ function parseReport(text) {
   return rows;
 }
 
+/**
+ * Drops the qualifiers Microsoft puts in front of a metric when an account
+ * tracks more than one kind of it — "All conversions", "Conversions (all)".
+ * Both mean the column we want, and neither matches its plain name.
+ */
+function stripQualifiers(header) {
+  return String(header || '')
+    .replace(/^(all|total) /, '')
+    .replace(/ (all|total)$/, '')
+    .trim();
+}
+
+/**
+ * The column index for any of `names`, or -1.
+ *
+ * Exact matches are taken across every column FIRST, so a header that says
+ * exactly what we want always wins over one that only matches once its
+ * qualifier is stripped. Matching stays whole-string in both passes:
+ * substring matching would let the name "conv" swallow a "Conv. value"
+ * column and file revenue as conversions.
+ */
 function indexOfAny(cells, names) {
   for (var i = 0; i < cells.length; i++) {
     for (var n = 0; n < names.length; n++) {
       if (cells[i] === names[n]) return i;
     }
   }
+
+  for (var i2 = 0; i2 < cells.length; i2++) {
+    var bare = stripQualifiers(cells[i2]);
+    for (var n2 = 0; n2 < names.length; n2++) {
+      if (bare === names[n2]) return i2;
+    }
+  }
+
   return -1;
 }
 
