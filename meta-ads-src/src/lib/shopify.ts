@@ -137,10 +137,14 @@ interface ExclusionRules {
   above: number | null;
   b2b: boolean;
   draftOrders: boolean;
+  pos: boolean;
 }
 
 /** Shopify's `sourceName` for an order created from a draft. */
 const DRAFT_ORDER_SOURCE = "shopify_draft_order";
+
+/** Shopify's `sourceName` for an order rung up on Point of Sale. */
+const POS_SOURCE = "pos";
 
 function readRules(): ExclusionRules {
   const tags = (getConfig("SHOPIFY_EXCLUDE_TAGS") ?? "")
@@ -157,13 +161,18 @@ function readRules(): ExclusionRules {
   const b2b = (getConfig("SHOPIFY_EXCLUDE_B2B") ?? "true").toLowerCase() !== "false";
   const draftOrders =
     (getConfig("SHOPIFY_EXCLUDE_DRAFT_ORDERS") ?? "true").toLowerCase() !== "false";
+  // Also on by default: a Point of Sale order was rung up in person, at the
+  // shop or a trade show, so no online ad campaign produced it. Leaving it in
+  // makes a good show week look like a good ad week.
+  const pos = (getConfig("SHOPIFY_EXCLUDE_POS") ?? "true").toLowerCase() !== "false";
 
-  return { tags, above, b2b, draftOrders };
+  return { tags, above, b2b, draftOrders, pos };
 }
 
 export function describeRules(rules: ExclusionRules): string[] {
   const out: string[] = [];
   if (rules.draftOrders) out.push("orders created from a draft");
+  if (rules.pos) out.push("orders taken on Point of Sale");
   if (rules.tags.length) {
     out.push(`orders tagged ${rules.tags.map((t) => `“${t}”`).join(" or ")}`);
   }
@@ -359,6 +368,13 @@ function exclusionFor(
   // more so than a tag someone has to remember to apply.
   if (rules.draftOrders && order.sourceName === DRAFT_ORDER_SOURCE) {
     return "Created from a draft order";
+  }
+
+  // Same reasoning as drafts: the channel itself settles it, with no tag to
+  // remember. Shopify reports POS orders as "pos" plus app-specific variants
+  // such as "pos_pro", so the prefix is what is matched.
+  if (rules.pos && (order.sourceName ?? "").toLowerCase().startsWith(POS_SOURCE)) {
+    return "Point of Sale (in person)";
   }
 
   const tags = (order.tags ?? []).map((t) => t.toLowerCase());

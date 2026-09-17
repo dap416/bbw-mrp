@@ -794,13 +794,13 @@ function Tiles({ data }: { data: DashboardData }) {
         <StatTile
           label={
             data.shopify.excludedOrders > 0
-              ? "Blended ROAS · retail store revenue ÷ Meta spend"
+              ? "Blended ROAS · online retail revenue ÷ Meta spend"
               : "Blended ROAS · all store revenue ÷ Meta spend"
           }
           value={multiple(data.blendedRoas)}
           note={
             data.shopify.excludedOrders > 0
-              ? `${money(data.shopify.totalRevenue, data.shopify.currency, { compact: true })} across ${data.shopify.orderCount} orders, after excluding ${money(data.shopify.excludedRevenue, data.shopify.currency, { compact: true })} of wholesale`
+              ? `${money(data.shopify.totalRevenue, data.shopify.currency, { compact: true })} across ${data.shopify.orderCount} orders, after excluding ${money(data.shopify.excludedRevenue, data.shopify.currency, { compact: true })} of wholesale and in-person orders`
               : `${money(data.shopify.totalRevenue, data.shopify.currency, { compact: true })} across ${data.shopify.orderCount} Shopify orders`
           }
           />

@@ -69,6 +69,7 @@ const EMPTY: Fields = {
   SHOPIFY_EXCLUDE_TAGS: "",
   SHOPIFY_EXCLUDE_ABOVE: "",
   SHOPIFY_EXCLUDE_B2B: "",
+  SHOPIFY_EXCLUDE_POS: "",
 };
 
 export default function SetupPage() {
@@ -560,11 +561,13 @@ export default function SetupPage() {
       {/* --- Step 5: wholesale exclusions --------------------------------- */}
       <Section
         step="6"
-        title="Exclude wholesale orders"
+        title="Exclude non-ad orders"
         done={Boolean(present.SHOPIFY_EXCLUDE_TAGS || present.SHOPIFY_EXCLUDE_ABOVE)}
       >
         <p style={helpStyle}>
-          A few large wholesale orders will swamp a month of retail. One £3,000
+          Orders no ad produced distort blended ROAS. In-person Point of Sale
+          sales are one source; a few large wholesale orders are the other, and
+          they will swamp a month of retail. One £3,000
           B2B order against £2,000 of ad spend adds 1.5x to blended ROAS by
           itself, which makes the number track invoicing rather than ad
           performance. These rules keep those orders out of the Shopify figures.
@@ -629,6 +632,32 @@ export default function SetupPage() {
             A blunt catch-all for untagged wholesale. Set it well above your
             largest genuine retail order, or you will quietly delete your best
             customers from the numbers.
+          </span>
+        </label>
+
+        <label
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            gap: "0.5rem",
+            marginBottom: "0.9rem",
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={fields.SHOPIFY_EXCLUDE_POS !== "false"}
+            onChange={(e) =>
+              set("SHOPIFY_EXCLUDE_POS", e.target.checked ? "true" : "false")
+            }
+            style={{ marginTop: "0.2rem" }}
+          />
+          <span style={{ fontSize: "0.875rem", color: "var(--text-primary)" }}>
+            Exclude orders taken on Point of Sale
+            <span style={{ ...helpStyle, display: "block", margin: "0.2rem 0 0" }}>
+              On by default. A POS order was rung up in person — at the shop or
+              a trade show — so no online ad produced it, and a good show week
+              would otherwise read as a good ad week.
+            </span>
           </span>
         </label>
 
