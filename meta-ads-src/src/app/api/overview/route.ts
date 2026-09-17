@@ -4,7 +4,7 @@ import {
   comparisonRange,
   rangeFromPreset,
   todayIn,
-  type CompareMode,
+  parseCompareMode,
 } from "@/lib/dates";
 import { getConfig } from "@/lib/config";
 import { EMPTY_METRICS, sumMetrics } from "@/lib/meta";
@@ -41,9 +41,7 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 export async function GET(request: Request) {
   const url = new URL(request.url);
 
-  const compareMode = (url.searchParams.get("compare") === "previous_year"
-    ? "previous_year"
-    : "previous_period") as CompareMode;
+  const compareMode = parseCompareMode(url.searchParams.get("compare"));
 
   // "Yesterday" has to mean one thing across three platforms, so the range is
   // anchored on a stated reporting timezone rather than on any one account's.

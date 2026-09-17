@@ -17,7 +17,7 @@ import type {
   Preset,
 } from "./types";
 
-type CompareModeAlias = "previous_period" | "previous_year";
+type CompareModeAlias = "previous_period" | "previous_year" | "previous_year_dow";
 
 /**
  * Synthetic data so the dashboard can be seen before any credentials exist,

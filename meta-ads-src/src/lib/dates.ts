@@ -84,7 +84,27 @@ export function rangeFromPreset(preset: Preset, timezone: string): DateRange {
   }
 }
 
-export type CompareMode = "previous_period" | "previous_year";
+export type CompareMode = "previous_period" | "previous_year" | "previous_year_dow";
+
+export const COMPARE_MODES: CompareMode[] = [
+  "previous_period",
+  "previous_year",
+  "previous_year_dow",
+];
+
+/** Reads the ?compare= param, falling back to the previous period. */
+export function parseCompareMode(value: string | null): CompareMode {
+  return COMPARE_MODES.includes(value as CompareMode)
+    ? (value as CompareMode)
+    : "previous_period";
+}
+
+/** Same calendar date one year back; Feb 29 lands on Feb 28. */
+function sameDateLastYear(key: string): string {
+  const [y, m, d] = key.split("-").map(Number);
+  const lastDay = new Date(Date.UTC(y - 1, m, 0)).getUTCDate();
+  return toKey(new Date(Date.UTC(y - 1, m - 1, Math.min(d, lastDay))));
+}
 
 /**
  * The comparison window. "previous_period" is the immediately preceding
@@ -98,14 +118,25 @@ export function comparisonRange(
   const days = dayCount(range);
 
   if (mode === "previous_year") {
+    // Calendar-date alignment: Sep 1-7 against last year's Sep 1-7.
+    return {
+      range: {
+        since: sameDateLastYear(range.since),
+        until: sameDateLastYear(range.until),
+      },
+      label: "same dates last year",
+    };
+  }
+
+  if (mode === "previous_year_dow") {
+    // -364 days (52 weeks) keeps every day on the same weekday, which usually
+    // matters more than calendar-date alignment for ad performance.
     return {
       range: {
         since: addDays(range.since, -364),
         until: addDays(range.until, -364),
       },
-      // -364 rather than -365 keeps weekday alignment, which matters more
-      // than calendar-date alignment for ad performance.
-      label: "same period last year",
+      label: "same weekdays last year",
     };
   }
 

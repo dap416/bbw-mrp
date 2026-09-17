@@ -5,7 +5,7 @@ import {
   dayCount,
   rangeFromPreset,
   todayIn,
-  type CompareMode,
+  parseCompareMode,
 } from "@/lib/dates";
 import { applyAdjustments, inRange, readAdjustments } from "@/lib/adjustments";
 import { getConfig, hasConfig } from "@/lib/config";
@@ -36,9 +36,7 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const accountId = getConfig("META_AD_ACCOUNT_ID");
 
-  const compareModeParam = (url.searchParams.get("compare") === "previous_year"
-    ? "previous_year"
-    : "previous_period") as CompareMode;
+  const compareModeParam = parseCompareMode(url.searchParams.get("compare"));
 
   // Sample data, for seeing the dashboard before credentials are wired up.
   // Always flagged as demo in the payload's warnings so it cannot be mistaken

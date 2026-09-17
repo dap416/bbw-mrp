@@ -26,7 +26,18 @@ import type {
   Preset,
 } from "@/lib/types";
 
-type CompareMode = "previous_period" | "previous_year";
+type CompareMode = "previous_period" | "previous_year" | "previous_year_dow";
+
+/** A preset, or "custom" for an explicit since/until picked by hand. */
+type RangeChoice = Preset | "custom";
+
+/** Local YYYY-MM-DD, offset by whole days. Only seeds the custom pickers. */
+function localDay(offset: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + offset);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
 
 const PRESETS: Preset[] = [
   "today",
@@ -77,7 +88,11 @@ export default function Page() {
    * conversions keep climbing for days after the click — so the page carries a
    * standing notice saying so whenever the range runs to today.
    */
-  const [preset, setPreset] = useState<Preset>("today");
+  const [preset, setPreset] = useState<RangeChoice>("today");
+  const [customRange, setCustomRange] = useState(() => ({
+    since: localDay(-7),
+    until: localDay(-1),
+  }));
   const [compare, setCompare] = useState<CompareMode>("previous_period");
   const [level, setLevel] = useState<Exclude<Level, "account">>("campaign");
   /**
@@ -132,7 +147,12 @@ export default function Page() {
     setLoading(true);
     setError(null);
 
-    const query = `preset=${preset}&compare=${compare}`;
+    // Custom ranges go as explicit since/until, which both routes prefer over
+    // the preset. Demo data is preset-only, so it keeps a preset fallback.
+    const query =
+      preset === "custom"
+        ? `since=${customRange.since}&until=${customRange.until}&preset=last_7d&compare=${compare}`
+        : `preset=${preset}&compare=${compare}`;
     const wantMeta = view === "meta";
 
     try {
@@ -175,7 +195,7 @@ export default function Page() {
     } finally {
       if (id === requestId.current) setLoading(false);
     }
-  }, [preset, compare, demo, view]);
+  }, [preset, customRange, compare, demo, view]);
 
   useEffect(() => {
     void load();
@@ -223,9 +243,11 @@ export default function Page() {
         overview={overview}
         view={view}
         preset={preset}
+        customRange={customRange}
         compare={compare}
         loading={loading}
         onPreset={setPreset}
+        onCustomRange={setCustomRange}
         onCompare={setCompare}
         onRefresh={load}
       />
@@ -524,19 +546,23 @@ function Header({
   overview,
   view,
   preset,
+  customRange,
   compare,
   loading,
   onPreset,
+  onCustomRange,
   onCompare,
   onRefresh,
 }: {
   data: DashboardData | null;
   overview: OverviewData | null;
   view: View;
-  preset: Preset;
+  preset: RangeChoice;
+  customRange: { since: string; until: string };
   compare: CompareMode;
   loading: boolean;
-  onPreset: (p: Preset) => void;
+  onPreset: (p: RangeChoice) => void;
+  onCustomRange: (r: { since: string; until: string }) => void;
   onCompare: (c: CompareMode) => void;
   onRefresh: () => void;
 }) {
@@ -596,7 +622,7 @@ function Header({
         <select
           className="control"
           value={preset}
-          onChange={(e) => onPreset(e.target.value as Preset)}
+          onChange={(e) => onPreset(e.target.value as RangeChoice)}
           aria-label="Date range"
         >
           {PRESETS.map((p) => (
@@ -604,7 +630,12 @@ function Header({
               {PRESET_LABELS[p]}
             </option>
           ))}
+          <option value="custom">Custom dates…</option>
         </select>
+
+        {preset === "custom" && (
+          <CustomRangeInputs value={customRange} onChange={onCustomRange} />
+        )}
 
         <select
           className="control"
@@ -613,7 +644,8 @@ function Header({
           aria-label="Comparison period"
         >
           <option value="previous_period">vs previous period</option>
-          <option value="previous_year">vs last year</option>
+          <option value="previous_year">vs same dates last year</option>
+          <option value="previous_year_dow">vs same weekdays last year</option>
         </select>
 
         <button className="control" onClick={onRefresh} disabled={loading}>
@@ -878,5 +910,51 @@ function Footnote({ data }: { data: DashboardData }) {
       Compared against the {data.compareLabel} ({data.compareRange.since} to{" "}
       {data.compareRange.until}).
     </p>
+  );
+}
+
+/**
+ * Two date pickers for a custom range. Edits are held locally and applied on
+ * "Apply", so picking the start date doesn't fire a fetch for a half-set range.
+ */
+function CustomRangeInputs({
+  value,
+  onChange,
+}: {
+  value: { since: string; until: string };
+  onChange: (r: { since: string; until: string }) => void;
+}) {
+  const [since, setSince] = useState(value.since);
+  const [until, setUntil] = useState(value.until);
+  const valid = Boolean(since && until && since <= until);
+  const dirty = since !== value.since || until !== value.until;
+
+  return (
+    <span style={{ display: "inline-flex", gap: "0.35rem", alignItems: "center", flexWrap: "wrap" }}>
+      <input
+        type="date"
+        className="control"
+        value={since}
+        max={until || undefined}
+        onChange={(e) => setSince(e.target.value)}
+        aria-label="Start date"
+      />
+      <span className="muted">to</span>
+      <input
+        type="date"
+        className="control"
+        value={until}
+        min={since || undefined}
+        onChange={(e) => setUntil(e.target.value)}
+        aria-label="End date"
+      />
+      <button
+        className="control"
+        disabled={!valid || !dirty}
+        onClick={() => onChange({ since, until })}
+      >
+        Apply
+      </button>
+    </span>
   );
 }
