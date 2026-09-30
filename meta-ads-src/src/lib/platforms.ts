@@ -14,6 +14,16 @@ export const PLATFORMS = ["meta", "google", "microsoft"] as const;
 
 export type Platform = (typeof PLATFORMS)[number];
 
+/**
+ * The platforms whose spend goes into the blended ROAS denominator.
+ *
+ * Microsoft is deliberately left out at the owner's instruction, so blended
+ * ROAS reads as shop revenue over Meta and Google spend. Microsoft still
+ * appears everywhere else - its own tab, total spend, the platform
+ * comparison - it just does not move the blended figure.
+ */
+export const BLENDED_SPEND_PLATFORMS: Platform[] = ["meta", "google"];
+
 /** Includes the combined roll-up, which is a view rather than a platform. */
 export type PlatformView = Platform | "all";
 

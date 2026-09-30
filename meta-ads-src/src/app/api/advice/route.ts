@@ -495,7 +495,7 @@ function buildOverviewBrief(data: OverviewData): string {
       `${money(data.shopify.totalRevenue, data.shopify.currency)} across ${data.shopify.orderCount} orders, net of exclusions.`,
     );
     lines.push(
-      `Blended ROAS (shop revenue / total ad spend across every platform): ${multiple(data.blendedRoas)}. This is the trustworthy profitability figure; the summed attributed ROAS above is not.`,
+      `Blended ROAS (shop revenue / Meta and Google spend - Microsoft spend is deliberately excluded from this figure): ${multiple(data.blendedRoas)}. This is the trustworthy profitability figure; the summed attributed ROAS above is not. Never recompute it against total spend.`,
     );
     if (data.shopify.activeRules.length) {
       lines.push(`Revenue exclusion rules in force: ${data.shopify.activeRules.join("; ")}.`);

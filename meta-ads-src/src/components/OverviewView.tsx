@@ -81,10 +81,10 @@ export function OverviewView({ data }: { data: OverviewData }) {
           {data.blendedRoas !== null ? (
             <StatTile
               hero
-              label={`Blended ROAS · Shopify revenue ÷ all ad spend · target ${data.targets.roas.toFixed(1)}x`}
+              label={`Blended ROAS · Shopify revenue ÷ Meta and Google spend · target ${data.targets.roas.toFixed(1)}x`}
               value={multiple(data.blendedRoas)}
               trend={roasTrend}
-              note="Shop revenue over total spend"
+              note={`Shop revenue over ${money(data.blendedSpend, c, { compact: true })} of Meta and Google spend · Microsoft excluded`}
             />
           ) : (
             <StatTile

@@ -316,8 +316,13 @@ export interface OverviewData {
     revenue: Record<string, number>;
   }[];
   comparison: PlatformComparisonRow[];
-  /** Blended: Shopify revenue over total spend across all three platforms. */
+  /**
+   * Blended: Shopify revenue over the spend of BLENDED_SPEND_PLATFORMS, which
+   * is Meta and Google - Microsoft is held out of this figure.
+   */
   shopify: ShopifyRevenue | null;
+  /** The denominator actually used, so the UI can name it honestly. */
+  blendedSpend: number;
   blendedRoas: number | null;
   targets: { roas: number; cpa: number | null };
   findings: Finding[];

@@ -8,7 +8,7 @@ import {
 } from "@/lib/dates";
 import { getConfig } from "@/lib/config";
 import { EMPTY_METRICS, sumMetrics } from "@/lib/meta";
-import { PLATFORMS } from "@/lib/platforms";
+import { BLENDED_SPEND_PLATFORMS, PLATFORMS } from "@/lib/platforms";
 import { loadPlatform } from "@/lib/providers";
 import { buildBalanceFindings, buildComparison } from "@/lib/balance";
 import { getShopifyRevenue, isShopifyConfigured } from "@/lib/shopify";
@@ -101,6 +101,12 @@ export async function GET(request: Request) {
     }
   }
 
+  // The blended denominator is not total spend: Microsoft is held out of it.
+  // See BLENDED_SPEND_PLATFORMS.
+  const blendedSpend = platforms
+    .filter((p) => BLENDED_SPEND_PLATFORMS.includes(p.platform))
+    .reduce((s, p) => s + p.totals.spend, 0);
+
   const attributedTotal = platforms.reduce((s, p) => s + p.totals.revenue, 0);
   if (shopify && attributedTotal > shopify.totalRevenue * 1.2) {
     warnings.push(
@@ -122,8 +128,9 @@ export async function GET(request: Request) {
     dailyByPlatform,
     comparison,
     shopify,
+    blendedSpend,
     blendedRoas:
-      shopify && totals.spend > 0 ? shopify.totalRevenue / totals.spend : null,
+      shopify && blendedSpend > 0 ? shopify.totalRevenue / blendedSpend : null,
     targets: { roas: targetRoas, cpa: targetCpa },
     findings,
     warnings,
