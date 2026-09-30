@@ -13,6 +13,7 @@ import { HourlyCharts } from "@/components/HourlyCharts";
 import { OverviewView } from "@/components/OverviewView";
 import { PlatformTabs } from "@/components/PlatformTabs";
 import { PlatformView } from "@/components/PlatformView";
+import { ShopifyRevenueDialog } from "@/components/ShopifyRevenueDialog";
 import { StatTile } from "@/components/StatTile";
 import { TrendCharts } from "@/components/TrendCharts";
 import { PRESET_LABELS } from "@/lib/dates";
@@ -718,6 +719,8 @@ function Tiles({ data }: { data: DashboardData }) {
   const roasTrend = data.daily.map((d) => d.metrics.roas ?? 0);
   const spendTrend = data.daily.map((d) => d.metrics.spend);
   const revenueTrend = data.daily.map((d) => d.metrics.revenue);
+  // What the Shopify figure behind blended ROAS is made of.
+  const [showShopify, setShowShopify] = useState(false);
 
   return (
     <section>
@@ -798,6 +801,8 @@ function Tiles({ data }: { data: DashboardData }) {
               : "Blended ROAS · all store revenue ÷ Meta spend"
           }
           value={multiple(data.blendedRoas)}
+          onClick={() => setShowShopify(true)}
+          actionLabel="What's in this?"
           note={
             data.shopify.excludedOrders > 0
               ? `${money(data.shopify.totalRevenue, data.shopify.currency, { compact: true })} across ${data.shopify.orderCount} orders, after excluding ${money(data.shopify.excludedRevenue, data.shopify.currency, { compact: true })} of wholesale and in-person orders`
@@ -806,6 +811,14 @@ function Tiles({ data }: { data: DashboardData }) {
           />
         )}
       </div>
+
+      {showShopify && data.shopify && (
+        <ShopifyRevenueDialog
+          shopify={data.shopify}
+          range={data.range}
+          onClose={() => setShowShopify(false)}
+        />
+      )}
     </section>
   );
 }

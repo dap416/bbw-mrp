@@ -15,6 +15,12 @@ import type { Metrics } from "@/lib/types";
  * Starts at link clicks, never total clicks: total clicks include likes,
  * shares and profile taps that were never headed for the site, and using them
  * invents a drop-off at the first step that did not happen.
+ *
+ * Every stage is a count of EVENTS, not of people, and Meta attributes each
+ * event on its own. One shopper adding three items fires three add-to-cart
+ * events; someone who clicked last week and returns directly today has a
+ * checkout in this period with no click in it. So a step can legitimately
+ * exceed 100%, and the panel says so rather than showing it as healthy.
  */
 
 interface Stage {
@@ -47,31 +53,31 @@ export function FunnelPanel({
       key: "linkClicks",
       label: "Link clicks",
       value: totals.linkClicks,
-      hint: "People who clicked through to your site",
+      hint: "Clicks through to your site",
     },
     {
       key: "landingPageViews",
       label: "Landing page views",
       value: totals.landingPageViews,
-      hint: "Arrived and the page loaded",
+      hint: "Page loads recorded after a click",
     },
     {
       key: "addToCart",
-      label: "Added to cart",
+      label: "Add-to-cart events",
       value: totals.addToCart,
-      hint: "Picked something",
+      hint: "One per item added, not per person",
     },
     {
       key: "initiateCheckout",
-      label: "Started checkout",
+      label: "Checkout starts",
       value: totals.initiateCheckout,
-      hint: "Committed to buying",
+      hint: "Counted again if someone restarts",
     },
     {
       key: "purchases",
-      label: "Purchased",
+      label: "Purchases",
       value: totals.purchases,
-      hint: "Paid",
+      hint: "Orders Meta attributed to an ad",
     },
   ];
 
@@ -113,7 +119,9 @@ export function FunnelPanel({
   // The weakest step is the one furthest below its benchmark in relative
   // terms, so a step at half its expected rate outranks one a few points off.
   const scored = steps
-    .filter((s) => s.rate !== null && s.from.value >= 20)
+    // A step over 100% is an attribution artefact, not a strong step, and it
+    // must not win "weakest" by having a hugely negative shortfall either.
+    .filter((s) => s.rate !== null && s.rate <= 1 && s.from.value >= 20)
     .map((s) => ({ step: s, shortfall: 1 - s.rate! / s.benchmark }));
   const weakest =
     scored.length > 0
@@ -143,9 +151,10 @@ export function FunnelPanel({
     <div className="card" style={{ padding: "1.25rem" }}>
       <h2 style={headingStyle}>Where customers drop off</h2>
       <p className="muted" style={{ margin: "0 0 1.25rem", fontSize: "0.8125rem", lineHeight: 1.5 }}>
-        Each step shows how many continued and how many were lost. Starts at
-        link clicks — total clicks include likes and shares that were never
-        headed for your site.
+        Each step shows how many carried through to the next and how many were
+        lost. Starts at link clicks — total clicks include likes and shares
+        that were never headed for your site. These are counts of events, not
+        of people: one shopper can fire several.
       </p>
 
       <div style={{ display: "grid", gap: 0 }}>
@@ -201,7 +210,12 @@ export function FunnelPanel({
         style={{ margin: "1rem 0 0", fontSize: "0.75rem", lineHeight: 1.5 }}
       >
         Typical rates are rules of thumb for ecommerce, not targets. Your own
-        history is the better comparison once you have a few months of it.
+        history is the better comparison once you have a few months of it. A
+        step above 100% means Meta recorded more events at that stage than the
+        one before it — usually several events per shopper, or conversions
+        attributed to clicks that fall outside this date range. Short ranges
+        make it more likely. If it persists over a long range, check Events
+        Manager for duplicate events.
       </p>
     </div>
   );
@@ -258,7 +272,10 @@ function StageRow({ stage, share }: { stage: Stage; share: number }) {
 }
 
 function StepRow({ step, isWeak }: { step: Step; isWeak: boolean }) {
-  const healthy = step.rate !== null && step.rate >= step.benchmark;
+  // More events at this stage than the one before it. Real, and always an
+  // artefact of how the events are counted rather than a performance signal.
+  const over = step.rate !== null && step.rate > 1;
+  const healthy = !over && step.rate !== null && step.rate >= step.benchmark;
   return (
     <div
       style={{
@@ -282,10 +299,16 @@ function StepRow({ step, isWeak }: { step: Step; isWeak: boolean }) {
         <span
           aria-hidden="true"
           style={{
-            color: isWeak ? "var(--status-critical)" : healthy ? "var(--status-good)" : "var(--text-muted)",
+            color: over
+              ? "var(--status-warning)"
+              : isWeak
+                ? "var(--status-critical)"
+                : healthy
+                  ? "var(--status-good)"
+                  : "var(--text-muted)",
           }}
         >
-          {isWeak ? "▼" : healthy ? "✓" : "↓"}
+          {over ? "!" : isWeak ? "▼" : healthy ? "✓" : "↓"}
         </span>
         <span
           style={{
@@ -295,9 +318,16 @@ function StepRow({ step, isWeak }: { step: Step; isWeak: boolean }) {
         >
           {percent(step.rate, 1)} continue
         </span>
-        <span className="muted">
-          {count(step.lost)} lost · {step.benchmarkNote}
-        </span>
+        {over ? (
+          <span className="muted">
+            More {step.to.label.toLowerCase()} than {step.from.label.toLowerCase()} —
+            events counted per action, and attributed across date ranges
+          </span>
+        ) : (
+          <span className="muted">
+            {count(step.lost)} lost · {step.benchmarkNote}
+          </span>
+        )}
         {isWeak && (
           <span
             style={{

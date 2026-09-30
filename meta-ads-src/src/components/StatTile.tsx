@@ -15,6 +15,8 @@ export function StatTile({
   trend,
   hero = false,
   note,
+  onClick,
+  actionLabel,
 }: {
   label: string;
   value: string;
@@ -23,9 +25,53 @@ export function StatTile({
   /** Exactly one tile per view should be the hero. */
   hero?: boolean;
   note?: string;
+  /** Makes the whole tile a button, for tiles with detail worth opening. */
+  onClick?: () => void;
+  /** The affordance shown in the corner, e.g. "Details". Needs onClick. */
+  actionLabel?: string;
 }) {
+  const clickable = Boolean(onClick);
   return (
-    <div className="card" style={{ padding: hero ? "1.25rem 1.4rem" : "1rem 1.1rem" }}>
+    <div
+      className="card"
+      // Kept as a div with a button role rather than a real <button>: the
+      // tile holds a sparkline and block layout that a button element fights.
+      // The role plus tabIndex plus the key handler give it the same
+      // keyboard and screen-reader behaviour.
+      {...(clickable
+        ? {
+            role: "button" as const,
+            tabIndex: 0,
+            onClick,
+            onKeyDown: (e: React.KeyboardEvent) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onClick?.();
+              }
+            },
+          }
+        : {})}
+      style={{
+        padding: hero ? "1.25rem 1.4rem" : "1rem 1.1rem",
+        cursor: clickable ? "pointer" : undefined,
+        textAlign: "left",
+        position: "relative",
+      }}
+    >
+      {clickable && actionLabel && (
+        <span
+          className="muted no-print"
+          style={{
+            position: "absolute",
+            top: "0.7rem",
+            right: "0.9rem",
+            fontSize: "0.6875rem",
+            textDecoration: "underline",
+          }}
+        >
+          {actionLabel}
+        </span>
+      )}
       <div
         style={{
           fontSize: "0.8125rem",

@@ -1,9 +1,12 @@
 "use client";
 
+import { useState } from "react";
+
 import { AdvicePanel } from "./AdvicePanel";
 import { FindingsPanel } from "./FindingsPanel";
 import { PlatformComparison } from "./PlatformComparison";
 import { SpendMixChart } from "./SpendMixChart";
+import { ShopifyRevenueDialog } from "./ShopifyRevenueDialog";
 import { StatTile } from "./StatTile";
 import { count, delta, money, multiple } from "@/lib/format";
 import type { OverviewData } from "@/lib/types";
@@ -25,6 +28,9 @@ export function OverviewView({ data }: { data: OverviewData }) {
   const roasTrend = data.daily.map((d) => d.metrics.roas ?? 0);
 
   const live = data.platforms.filter((s) => s.totals.spend > 0);
+
+  // What the Shopify figure is made of. Opened from either tile that shows it.
+  const [showShopify, setShowShopify] = useState(false);
 
   return (
     <>
@@ -84,6 +90,8 @@ export function OverviewView({ data }: { data: OverviewData }) {
               label={`Blended ROAS · Shopify revenue ÷ Meta and Google spend · target ${data.targets.roas.toFixed(1)}x`}
               value={multiple(data.blendedRoas)}
               trend={roasTrend}
+              onClick={data.shopify ? () => setShowShopify(true) : undefined}
+              actionLabel="What's in this?"
               note={`Shop revenue over ${money(data.blendedSpend, c, { compact: true })} of Meta and Google spend · Microsoft excluded`}
             />
           ) : (
@@ -124,10 +132,20 @@ export function OverviewView({ data }: { data: OverviewData }) {
               label="Shopify revenue"
               value={money(data.shopify.totalRevenue, c, { compact: true })}
               note={`${count(data.shopify.orderCount)} orders, net of exclusions`}
+              onClick={() => setShowShopify(true)}
+              actionLabel="Details"
             />
           )}
         </div>
       </section>
+
+      {showShopify && data.shopify && (
+        <ShopifyRevenueDialog
+          shopify={data.shopify}
+          range={data.range}
+          onClose={() => setShowShopify(false)}
+        />
+      )}
 
       <SpendMixChart data={data} currency={c} />
 
