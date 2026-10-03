@@ -62,6 +62,14 @@
 		  $pickWhFilter
 	")->fetchAll();
 
+	// Qty already on the open pick list per order, so Pick All / Add to List never over-pick
+	$pickedByOrder = [];
+	foreach ($picks as $pk) $pickedByOrder[(int)$pk['ordid']] = ($pickedByOrder[(int)$pk['ordid']] ?? 0) + (int)$pk['qty'];
+	$anyToPick = false;
+	foreach ($ordersPending as $o) {
+		if ((int)$o['qty'] - (int)$o['buildqty'] - ($pickedByOrder[(int)$o['id']] ?? 0) > 0) { $anyToPick = true; break; }
+	}
+
 	// Detect warehouse from the open pick list (auto for finalize)
 	$pickWarehouseId   = null;
 	$pickWarehouseName = null;
@@ -250,7 +258,14 @@
 			<?php endif; ?>
 		</span>
 		<?php if (count($ordersPending)): ?>
-		<span class="badge bg-warning text-dark"><?php echo count($ordersPending); ?> pending</span>
+		<span class="d-flex align-items-center gap-2">
+			<?php if ($canEditBuild && $anyToPick): ?>
+			<button id="pickAllBtn" class="btn btn-sm btn-success" data-whid="<?php echo (int)$activeWH; ?>" title="Add the full remaining qty of every order below to the pick list">
+				<i class="ti ti-checklist me-1"></i>Pick All Line Items
+			</button>
+			<?php endif; ?>
+			<span class="badge bg-warning text-dark"><?php echo count($ordersPending); ?> pending</span>
+		</span>
 		<?php else: ?>
 		<span style="background:#ecfdf5;color:#065f46;font-size:0.72rem;padding:3px 10px;border-radius:20px;font-weight:700;">All Caught Up</span>
 		<?php endif; ?>
@@ -275,6 +290,8 @@
 		<tbody>
 		<?php foreach ($ordersPending as $order):
 			$remaining = (int)$order['qty'] - (int)$order['buildqty'];
+			$onList    = $pickedByOrder[(int)$order['id']] ?? 0;
+			$toPick    = max(0, $remaining - $onList);
 			$su = $order['source_until'] ?? '';
 			$explUntil = ($su && $su !== '0000-00-00' && $su > date('Y-m-d')) ? $su : date('Y-m-d', strtotime('+90 days'));
 		?>
@@ -308,17 +325,29 @@
 			<td class="text-center text-muted"><?php echo number_format($order['buildqty']); ?></td>
 			<td class="text-center"><span class="remaining-badge"><?php echo number_format($remaining); ?></span></td>
 			<td>
+				<?php if ($toPick > 0): ?>
 				<div class="d-flex align-items-center gap-2">
-					<input type="number" min="1" max="<?php echo $remaining; ?>"
+					<input type="number" min="1" max="<?php echo $toPick; ?>"
 						placeholder="Qty" class="form-control form-control-sm qty-input"
 						id="qty_<?php echo $order['id']; ?>" />
 					<button class="btn btn-sm btn-primary add-pick-btn"
 						data-orderid="<?php echo $order['id']; ?>"
 						data-prodid="<?php echo $order['prodid']; ?>"
-						data-max="<?php echo $remaining; ?>">
+						data-max="<?php echo $toPick; ?>">
 						Add to List
 					</button>
+					<button class="btn btn-sm btn-outline-success pick-all-row-btn text-nowrap"
+						data-orderid="<?php echo $order['id']; ?>"
+						title="Add all <?php echo $toPick; ?> to the pick list">
+						Pick All (<?php echo number_format($toPick); ?>)
+					</button>
 				</div>
+				<?php else: ?>
+				<span class="text-success small fw-semibold"><i class="ti ti-check"></i> All on pick list</span>
+				<?php endif; ?>
+				<?php if ($onList > 0 && $toPick > 0): ?>
+				<div class="text-muted" style="font-size:0.68rem;"><?php echo number_format($onList); ?> already on pick list</div>
+				<?php endif; ?>
 			</td>
 			<td class="text-center">
 				<button class="btn btn-sm btn-outline-danger remove-order-btn"
@@ -616,6 +645,21 @@ $('.add-pick-btn').on('click', function() {
 	$.post('/ajax/build/add_prod.php', { prodid: prodId, qty: qty, orderid: orderId }, function() {
 		location.reload();
 	});
+});
+
+function pickAll($btn, data) {
+	var label = $btn.html();
+	$btn.prop('disabled', true).text('Adding…');
+	$.post('/ajax/build/pick_all.php', data, function(res) {
+		if (String(res).indexOf('ok') === 0) { location.reload(); }
+		else { alert(res); $btn.prop('disabled', false).html(label); }
+	});
+}
+$('.pick-all-row-btn').on('click', function() {
+	pickAll($(this), { orderid: $(this).data('orderid') });
+});
+$('#pickAllBtn').on('click', function() {
+	pickAll($(this), { warehouse_id: $(this).data('whid') });
 });
 
 $('.remove-order-btn').on('click', function() {
