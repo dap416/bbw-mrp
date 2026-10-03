@@ -931,6 +931,16 @@
 		return h + '</tbody></table>';
 	}
 
+	// How many of "Can build" depend on raw-material POs that haven't been received yet.
+	function onOrderUnits(it) {
+		if (it.buildable == null || it.buildable_on_hand == null) return 0;
+		return Math.max(0, it.buildable - it.buildable_on_hand);
+	}
+	function onOrderNote(it) {
+		var n = onOrderUnits(it);
+		return n > 0 ? '<div style="font-size:0.62rem;color:#b45309;white-space:nowrap;" title="' + n + ' of these need raw materials that are on order but not yet received. Only ' + it.buildable_on_hand + ' can be built from what is on the shelf.">' + n + ' on order, not rec\'d</div>' : '';
+	}
+
 	function aiExplain(it) {
 		var d = it.demand || 0, h = it.have || 0, b = it.to_build || 0, bld = (it.buildable == null ? null : it.buildable);
 		var html = '<div class="p-2" style="background:#f8f9fb;"><div class="small">';
@@ -963,16 +973,19 @@
 			html += '<div><strong>Build</strong> = 0 — stock already covers demand' + (h > d ? ' (' + (h - d) + ' left over carries into next season)' : '') + '</div>';
 		}
 		if (it.limit) {
-			html += '<div class="mt-1"><strong>Can build now</strong> from raw on hand: ' + (bld == null ? '-' : bld) +
+			html += '<div class="mt-1"><strong>Can build</strong> from raw on hand + on order: ' + (bld == null ? '-' : bld) +
 				' — limited by <strong>' + esc(it.limit.desc || it.limit.part) + '</strong> (' + esc(it.limit.part) + '): ' +
-				it.limit.pool + ' on hand ÷ ' + it.limit.per_unit + ' per unit</div>';
+				it.limit.pool + ' available ÷ ' + it.limit.per_unit + ' per unit</div>';
+			if (onOrderUnits(it) > 0) {
+				html += '<div style="color:#b45309;"><i class="ti ti-truck"></i> ' + onOrderUnits(it) + ' of those depend on raw materials <strong>on order but not yet received</strong> — only ' + it.buildable_on_hand + ' can be built from what\'s on the shelf today.</div>';
+			}
 		}
 		if (it.bom && it.bom.length) {
-			html += '<table class="table table-sm mt-2 mb-0"><thead><tr><th class="small">Part</th><th class="small text-end">Per unit</th><th class="small text-end">On hand (entering)</th><th class="small text-end">Can make</th></tr></thead><tbody>';
+			html += '<table class="table table-sm mt-2 mb-0"><thead><tr><th class="small">Part</th><th class="small text-end">Per unit</th><th class="small text-end">Available (entering)</th><th class="small text-end">Can make</th></tr></thead><tbody>';
 			it.bom.forEach(function(p){
 				var cls = (bld != null && p.can_make === bld) ? 'fw-bold' : '';
 				html += '<tr class="' + cls + '"><td class="small"><strong>' + esc(p.desc || p.part) + '</strong> <span class="text-muted">' + esc(p.part) + '</span></td>' +
-					'<td class="small text-end">' + p.per_unit + '</td><td class="small text-end text-muted">' + p.pool + '</td><td class="small text-end">' + p.can_make + '</td></tr>';
+					'<td class="small text-end">' + p.per_unit + '</td><td class="small text-end text-muted">' + p.pool + (p.on_order > 0 ? ' <span style="color:#b45309;font-size:0.65rem;" title="Includes raw POs not yet received">(incl. ' + p.on_order + ' on order)</span>' : '') + '</td><td class="small text-end">' + p.can_make + '</td></tr>';
 			});
 			html += '</tbody></table>';
 		}
@@ -1360,7 +1373,7 @@
 									'<td class="text-end small text-muted">' + (it.have||0) + '</td>' +
 									'<td class="text-end small text-muted">' + (it.demand||0) + '</td>' +
 										'<td class="text-end small ' + (it.to_build>0?'stat-neg':'stat-pos') + '"' + ((it.has_amazon && it.amazon && (it.amazon.to_build||0)>0) ? ' title="' + (it.amazon.to_build||0) + ' built fresh for the Amazon PO (separate packaging) + ' + ((it.regular&&it.regular.to_build)||0) + ' regular — retail stock can\'t fill the Amazon order. Expand for the split."' : '') + '>' + it.to_build + '</td>' +
-									'<td class="text-end small ' + cbCls + '">' + (it.buildable==null?'-':it.buildable) + '</td></tr>' +
+									'<td class="text-end small ' + cbCls + '">' + (it.buildable==null?'-':it.buildable) + onOrderNote(it) + '</td></tr>' +
 										'<tr id="' + rid + '" class="ai-detail" style="display:none;"><td colspan="5" class="p-0">' + aiExplain(it) + '</td></tr>';
 							});
 							cards += '</tbody></table>';

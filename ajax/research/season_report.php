@@ -33,7 +33,8 @@
 	// 20: current (in-progress) season now windows demand from today→season end, not the whole quarter.
 	// 21: order-by dates for the current season anchor to today (plan_from), not the quarter start.
 	// 22: [Amazon] twin's committed units counted as already-built on hand (no phantom fresh build).
-	$SEASON_SCHEMA = 22;
+	// 23: animator items carry buildable_on_hand (excludes raw POs not yet received) so the UI can flag on-order reliance.
+	$SEASON_SCHEMA = 23;
 
 	$db = db_connect();
 
@@ -179,17 +180,21 @@
 			$info = $animBuild[$i][$s['key']];
 			if ($info['demand'] <= 0 && $info['build'] <= 0) continue;
 			$cap = null; $limit = null; $bomDetail = [];
+			$capOH = null;   // same, but without raw POs not yet received (on hand used first)
 			foreach (($a['bom'] ?? []) as $bl) {
 				$q = (int)$bl['qty_per_unit']; if ($q <= 0) continue;
 				$poolEnter = (int)($enteringPool[$bl['part']] ?? 0);
+				$oo   = (int)($partMeta[$bl['part']]['on_order'] ?? 0);
 				$can  = intdiv(max(0, $poolEnter), $q);
+				$canOH = intdiv(max(0, $poolEnter - $oo), $q);
+				if ($capOH === null || $canOH < $capOH) $capOH = $canOH;
 				$desc = $partMeta[$bl['part']]['description'] ?? '';
-				$bomDetail[] = ['part' => $bl['part'], 'desc' => $desc, 'per_unit' => $q, 'pool' => $poolEnter, 'can_make' => $can];
+				$bomDetail[] = ['part' => $bl['part'], 'desc' => $desc, 'per_unit' => $q, 'pool' => $poolEnter, 'on_order' => $oo, 'can_make' => $can];
 				if ($cap === null || $can < $cap) { $cap = $can; $limit = ['part' => $bl['part'], 'desc' => $desc, 'per_unit' => $q, 'pool' => $poolEnter]; }
 			}
 			$items[] = [
 				'sku' => $a['sku'] ?: '(no SKU)', 'demand' => $info['demand'],
-				'have' => $info['entering'], 'to_build' => $info['build'], 'buildable' => $cap,
+				'have' => $info['entering'], 'to_build' => $info['build'], 'buildable' => $cap, 'buildable_on_hand' => $capOH,
 				'limit' => $limit, 'bom' => $bomDetail, 'is_amazon' => !empty($a['is_amazon']),
 				'sources' => $a['demand_sources'][$s['key']] ?? demand_sources_empty(),
 				// Where the on-hand stock physically sits (same for every season — it's today's stock).
@@ -207,7 +212,7 @@
 			$sku = $it['sku'];
 			if (!isset($merged[$sku])) {
 				$merged[$sku] = ['sku' => $sku, 'demand' => 0, 'have' => 0, 'to_build' => 0,
-					'buildable' => null, 'limit' => null, 'bom' => [], 'sources' => demand_sources_empty(),
+					'buildable' => null, 'buildable_on_hand' => null, 'limit' => null, 'bom' => [], 'sources' => demand_sources_empty(),
 					'at_arkansas' => 0, 'at_oregon' => 0, 'at_shows' => 0, 'at_shows_detail' => [],
 					'regular' => ['demand' => 0, 'have' => 0, 'to_build' => 0],
 					'amazon'  => ['demand' => 0, 'have' => 0, 'to_build' => 0], 'has_amazon' => false];
@@ -217,7 +222,7 @@
 			$merged[$sku]['sources'] = merge_demand_sources($merged[$sku]['sources'], $it['sources']);
 			if (!empty($it['is_amazon'])) $merged[$sku]['has_amazon'] = true;
 			else {
-				$merged[$sku]['bom'] = $it['bom']; $merged[$sku]['buildable'] = $it['buildable']; $merged[$sku]['limit'] = $it['limit'];
+				$merged[$sku]['bom'] = $it['bom']; $merged[$sku]['buildable'] = $it['buildable']; $merged[$sku]['buildable_on_hand'] = $it['buildable_on_hand']; $merged[$sku]['limit'] = $it['limit'];
 				// Physical location of stock lives on the base product ([Amazon] twins hold none).
 				foreach (['at_arkansas', 'at_oregon', 'at_shows'] as $k) $merged[$sku][$k] = (int)$it[$k];
 				$merged[$sku]['at_shows_detail'] = $it['at_shows_detail'];
